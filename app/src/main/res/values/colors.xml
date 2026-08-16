@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The panel is IPS, not OLED, so black buys no meaningful power saving.
+         It is here purely for the industrial look. -->
+    <color name="node_bg">#FF000000</color>
+
+    <!-- Three tiers of monochrome, nothing else. Lifted across the board from
+         the original E8/8A/4A ramp, which read too dim on this panel at the
+         low backlight DESK mode runs at. -->
+    <color name="node_primary">#FFFFFFFF</color>
+    <color name="node_secondary">#FFC4C4C4</color>
+    <color name="node_dim">#FF858585</color>
+
+    <!-- The one non-monochrome element: today's date. Amber, for the vintage
+         instrument/terminal reference the ARCHIVE mode is heading toward.
+         Change this single value to restyle the accent. -->
+    <color name="node_accent">#FFFFB000</color>
+</resources>

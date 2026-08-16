@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Sizes are in dp, not sp, on purpose. NODE is a fixed-function appliance:
+         MIUI's system font-scale slider must not be able to reflow the layout.
+         Lint's SpUsage warning is suppressed in the layout for this reason. -->
+    <dimen name="node_date">18dp</dimen>
+    <dimen name="node_footer">12dp</dimen>
+    <dimen name="node_temp">20dp</dimen>
+
+    <!-- Landscape: only ~393dp of height to work with, so vertical padding is
+         much tighter than the horizontal. -->
+    <dimen name="node_margin">30dp</dimen>
+    <dimen name="node_margin_top">16dp</dimen>
+    <dimen name="node_margin_bottom">14dp</dimen>
+</resources>

@@ -1,0 +1,59 @@
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+}
+
+android {
+    namespace = "dev.node01.afterlife"
+    compileSdk = 34
+    buildToolsVersion = "34.0.0"
+
+    defaultConfig {
+        applicationId = "dev.node01.afterlife"
+        // The target hardware is a Redmi Note 8 on Android 11 (API 30). Pinning
+        // minSdk to 30 lets us use WindowInsetsController directly with no
+        // legacy systemUiVisibility fallback path.
+        minSdk = 30
+        targetSdk = 34
+        versionCode = 1
+        versionName = "1.0"
+    }
+
+    buildTypes {
+        debug {
+            isMinifyEnabled = false
+        }
+        release {
+            isMinifyEnabled = false
+            isShrinkResources = false
+        }
+    }
+
+    // JDK 21 runs the build, but we compile to 17 bytecode. Deliberately NOT
+    // using jvmToolchain(17) -- only JDK 21 is installed on this machine, and a
+    // toolchain request would trigger auto-provisioning.
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
+    // No BuildConfig, no Compose, no view binding, no resource shrinking.
+    buildFeatures {
+        buildConfig = false
+    }
+
+    packaging {
+        resources {
+            excludes += setOf("META-INF/*.version", "kotlin/**", "**/*.kotlin_metadata")
+        }
+    }
+}
+
+// Intentionally empty. NODE has no third-party dependencies; kotlin-stdlib is
+// contributed automatically by the Kotlin Android plugin.
+dependencies {
+}

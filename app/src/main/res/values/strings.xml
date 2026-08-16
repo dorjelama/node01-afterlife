@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">NODE</string>
+
+    <!-- Every string here reports real state. Decorative labels were removed.
+         Numbers are substituted as strings (%s, not %d) because they are
+         rendered with Devanagari digits by Bs.neDigits before formatting. -->
+
+    <!-- %1$s is the battery percentage. One element reports power, not two. -->
+    <string name="power_fmt">ब्याट्री %1$s%%</string>
+    <string name="power_charging_fmt">ब्याट्री %1$s%%  चार्ज हुँदै</string>
+    <string name="power_unknown">ब्याट्री --</string>
+
+    <!-- Runtime estimate. %2$s hours, %3$s minutes. Only shown once the
+         estimate is plausible; NODE says nothing rather than guessing.
+         घ = घण्टा (hours), मि = मिनेट (minutes), बाँकी = remaining. -->
+    <string name="power_left_fmt">ब्याट्री %1$s%%  %2$sघ %3$sमि बाँकी</string>
+    <string name="power_left_min_fmt">ब्याट्री %1$s%%  %2$sमि बाँकी</string>
+    <string name="power_to_full_fmt">ब्याट्री %1$s%%  चार्ज %2$sघ %3$sमि</string>
+
+    <!-- से = सेल्सियस (Celsius). -->
+    <string name="temp_fmt">%1$s°से</string>
+    <string name="temp_unknown">--°से</string>
+</resources>

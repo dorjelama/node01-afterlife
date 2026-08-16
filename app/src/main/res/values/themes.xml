@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Parented to platform Theme.Material, NOT Theme.DeviceDefault, which MIUI
+         reskins with its own colours and widget styling. Material gives us a
+         predictable, unbranded base on stock MIUI. -->
+    <style name="Theme.Node" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/node_bg</item>
+        <item name="android:colorBackground">@color/node_bg</item>
+
+        <!-- CRITICAL. MIUI runs with system dark mode on (ui_night_mode=2) and
+             applies force-dark to app content in the render thread, which
+             inverts bright drawing. It crushed the white clock hands to near
+             black (#FFFFFF measured rendering as #1B) while leaving mid-greys
+             and text alone. NODE is already a dark design and must opt out. -->
+        <item name="android:forceDarkAllowed">false</item>
+        <item name="android:isLightTheme">false</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowContentTransitions">false</item>
+
+        <!-- No activity transitions. Nothing in NODE animates. -->
+        <item name="android:windowAnimationStyle">@null</item>
+
+        <!-- Bars are hidden at runtime via WindowInsetsController; these keep
+             them black during the brief window before that runs. -->
+        <item name="android:statusBarColor">@color/node_bg</item>
+        <item name="android:navigationBarColor">@color/node_bg</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+</resources>
