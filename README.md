@@ -27,6 +27,9 @@ one screen, no notifications, no scrolling, nothing to tap through.
 | **Temperature** | Local reading via [Open-Meteo](https://open-meteo.com), refreshed hourly. Dims when stale |
 | **Power** | Battery percentage plus runtime remaining, from measured drain rather than the fuel gauge |
 
+**Swipe horizontally** to switch modes. `FOCUS` drops everything but the time — a large
+12-hour readout with AM/PM, nothing else on screen. The chosen mode persists across restarts.
+
 Every element reports real state. The first draft had decorative labels — `NODE_01`, `LOCAL`,
 `SYSTEM // IDLE` — and they were removed once it became clear one of them displayed nothing at
 all. If it is on screen, it means something.
@@ -151,8 +154,9 @@ Gradle wrapper and the screenshot.
 
 ## Roadmap
 
-Only `DESK` is implemented. `Mode` already carries the per-mode brightness and screen-hold
-behaviour, so the rest are additive:
+`DESK` and `FOCUS` are implemented and reachable by swiping. `Mode` carries the per-mode
+brightness and screen-hold behaviour, and adding an entry to `modes` in `NodeActivity` puts a
+new mode into the rotation, so the rest are additive:
 
 - **TERMINAL** — restrained system-status readout
 - **ARCHIVE** — 1970s–90s instrument panel aesthetic

@@ -10,7 +10,9 @@ import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
+import android.view.GestureDetector
 import android.view.MotionEvent
+import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
@@ -18,6 +20,7 @@ import android.widget.TextView
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
@@ -40,6 +43,10 @@ class NodeActivity : Activity() {
     private lateinit var calendarView: CalendarView
     private lateinit var powerView: TextView
     private lateinit var tempView: TextView
+    private lateinit var deskPane: View
+    private lateinit var focusPane: View
+    private lateinit var focusTimeView: TextView
+    private lateinit var focusAmPmView: TextView
 
     private val weather = WeatherClient()
     private var tempC: Double? = null
@@ -54,8 +61,14 @@ class NodeActivity : Activity() {
      */
     private val prefs by lazy { getSharedPreferences("node", MODE_PRIVATE) }
 
-    /** v1.0 ships DESK only. Mode switching lands with the other modes. */
-    private val mode: Mode = Mode.DESK
+    /**
+     * Modes reachable by swiping, in order. Adding a mode here is all that is
+     * needed to put it in the rotation.
+     */
+    private val modes = listOf(Mode.DESK, Mode.FOCUS)
+
+    /** Restored from prefs, so the appliance comes back the way it was left. */
+    private var mode: Mode = Mode.DESK
 
     private var receiverRegistered = false
     private var quietHoursActive = false
@@ -81,6 +94,12 @@ class NodeActivity : Activity() {
         calendarView = findViewById(R.id.node_calendar)
         powerView = findViewById(R.id.node_power)
         tempView = findViewById(R.id.node_temp)
+        deskPane = findViewById(R.id.desk_pane)
+        focusPane = findViewById(R.id.focus_pane)
+        focusTimeView = findViewById(R.id.focus_time)
+        focusAmPmView = findViewById(R.id.focus_ampm)
+
+        mode = modes.getOrElse(prefs.getInt(KEY_MODE, 0)) { Mode.DESK }
 
         configureWindow()
         applyMode(mode)
@@ -172,8 +191,21 @@ class NodeActivity : Activity() {
     }
 
     private fun applyMode(mode: Mode) {
+        val focus = mode == Mode.FOCUS
+        deskPane.visibility = if (focus) View.GONE else View.VISIBLE
+        focusPane.visibility = if (focus) View.VISIBLE else View.GONE
         applyScreenPolicy(LocalDateTime.now().hour)
         Log.i(TAG, "mode=$mode brightness=${mode.brightness} keepOn=${mode.keepScreenOn}")
+    }
+
+    /** Steps [delta] places through [modes], wrapping, and persists the choice. */
+    private fun cycleMode(delta: Int) {
+        val next = modes[((modes.indexOf(mode) + delta) % modes.size + modes.size) % modes.size]
+        if (next == mode) return
+        mode = next
+        prefs.edit().putInt(KEY_MODE, modes.indexOf(next)).apply()
+        applyMode(next)
+        render()
     }
 
     /**
@@ -212,7 +244,36 @@ class NodeActivity : Activity() {
 
     // -- touch -------------------------------------------------------------
 
+    /**
+     * Horizontal fling switches mode. Flings that begin in the bottom edge strip
+     * are ignored so they cannot fight the navigation-bar swipe, and a fling has
+     * to be clearly more horizontal than vertical to count.
+     */
+    private val gestures by lazy {
+        GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onFling(
+                e1: MotionEvent?,
+                e2: MotionEvent,
+                velocityX: Float,
+                velocityY: Float,
+            ): Boolean {
+                val start = e1 ?: return false
+                if (start.y >= window.decorView.height * (1f - BARS_SWIPE_ZONE)) return false
+
+                val dx = e2.x - start.x
+                val dy = e2.y - start.y
+                if (abs(dx) < SWIPE_MIN_PX) return false
+                if (abs(dx) < abs(dy) * SWIPE_DOMINANCE) return false
+
+                // Swipe left goes forward, the way pages advance.
+                cycleMode(if (dx < 0) 1 else -1)
+                return true
+            }
+        })
+    }
+
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        gestures.onTouchEvent(ev)
         if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
             // Only a touch starting in the bottom edge strip can be the start of
             // a swipe-up for the navigation bar. Anything else -- tapping the
@@ -266,6 +327,14 @@ class NodeActivity : Activity() {
     /** One pass. Called on entry and once per minute thereafter. */
     private fun render() {
         val now = LocalDateTime.now()
+
+        if (mode == Mode.FOCUS) {
+            // Time and nothing else. Still minute-resolution -- no seconds, so
+            // this remains one redraw per tick.
+            focusTimeView.text = FOCUS_TIME_FORMAT.format(now)
+            focusAmPmView.text = FOCUS_AMPM_FORMAT.format(now).uppercase(Locale.US)
+        }
+
         // Both views no-op unless their own value actually changed, so the
         // calendar only really redraws at midnight.
         clockView.setTime(now.hour, now.minute)
@@ -440,6 +509,20 @@ class NodeActivity : Activity() {
 
         /** Past this the window no longer describes current conditions. */
         const val DRAIN_ANCHOR_MAX_AGE_MS = 24L * 60L * 60L * 1000L
+
+        const val KEY_MODE = "mode_index"
+
+        /** Minimum horizontal travel for a fling to count as a mode switch. */
+        const val SWIPE_MIN_PX = 120f
+
+        /** How much more horizontal than vertical a switching fling must be. */
+        const val SWIPE_DOMINANCE = 1.5f
+
+        // 12-hour, no leading zero: "9:05" reads better than "09:05" at this size.
+        val FOCUS_TIME_FORMAT: DateTimeFormatter =
+            DateTimeFormatter.ofPattern("h:mm", Locale.US)
+        val FOCUS_AMPM_FORMAT: DateTimeFormatter =
+            DateTimeFormatter.ofPattern("a", Locale.US)
 
         const val KEY_ANCHOR_MS = "drain_anchor_ms"
         const val KEY_ANCHOR_PCT = "drain_anchor_pct"

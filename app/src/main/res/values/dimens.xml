@@ -7,6 +7,10 @@
     <dimen name="node_footer">12dp</dimen>
     <dimen name="node_temp">20dp</dimen>
 
+    <!-- FOCUS mode: time only, sized to dominate the landscape pane. -->
+    <dimen name="focus_time">190dp</dimen>
+    <dimen name="focus_ampm">30dp</dimen>
+
     <!-- Landscape: only ~393dp of height to work with, so vertical padding is
          much tighter than the horizontal. -->
     <dimen name="node_margin">30dp</dimen>

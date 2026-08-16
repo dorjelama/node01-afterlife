@@ -20,19 +20,25 @@
     textSize values are dp (see dimens.xml) so the system font-scale slider
     cannot reflow a fixed-function appliance layout. Hence SpUsage below.
 -->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/node_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/node_bg"
-    android:orientation="vertical"
-    android:paddingStart="@dimen/node_margin"
-    android:paddingEnd="@dimen/node_margin"
-    android:paddingTop="@dimen/node_margin_top"
-    android:paddingBottom="@dimen/node_margin_bottom"
     android:filterTouchesWhenObscured="true"
     tools:ignore="SpUsage">
+
+    <!-- ===================== DESK ===================== -->
+    <LinearLayout
+        android:id="@+id/desk_pane"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:paddingStart="@dimen/node_margin"
+        android:paddingEnd="@dimen/node_margin"
+        android:paddingTop="@dimen/node_margin_top"
+        android:paddingBottom="@dimen/node_margin_bottom">
 
     <!-- header: current temperature only. Dims when the reading goes stale. -->
     <TextView
@@ -101,3 +107,40 @@
         tools:text="ब्याट्री ३७%  २घ ४४मि बाँकी" />
 
 </LinearLayout>
+
+    <!-- ===================== FOCUS =====================
+         Time and nothing else. Swipe horizontally to reach it.
+    -->
+    <LinearLayout
+        android:id="@+id/focus_pane"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/focus_time"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="@color/node_primary"
+            android:textSize="@dimen/focus_time"
+            android:fontFamily="monospace"
+            android:letterSpacing="0.02"
+            android:includeFontPadding="false"
+            tools:text="10:47" />
+
+        <TextView
+            android:id="@+id/focus_ampm"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:textColor="@color/node_secondary"
+            android:textSize="@dimen/focus_ampm"
+            android:fontFamily="monospace"
+            android:letterSpacing="0.42"
+            android:includeFontPadding="false"
+            tools:text="PM" />
+    </LinearLayout>
+
+</FrameLayout>

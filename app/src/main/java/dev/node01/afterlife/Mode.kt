@@ -26,6 +26,12 @@ enum class Mode(
      */
     DESK(brightness = 0.01f, keepScreenOn = true),
 
+    /**
+     * Time and nothing else: a large 12-hour digital readout. Same power
+     * behaviour as [DESK] -- still one redraw per minute, still no seconds.
+     */
+    FOCUS(brightness = 0.01f, keepScreenOn = true),
+
     /** Restrained system-status readout. */
     TERMINAL(brightness = 0.14f, keepScreenOn = true),
 
