@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NODE</title>
+<!-- Empty icon: the browser's own /favicon.ico request would only hit a 404. -->
+<link rel="icon" href="data:,">
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #000; color: #c4c4c4;
+               font: 14px/1.4 ui-monospace, Menlo, Consolas, monospace; }
+  body { display: flex; flex-direction: column; }
+  img { flex: 1; min-height: 0; width: 100%; object-fit: contain; }
+  nav { display: flex; gap: 12px; padding: 12px 16px; }
+  button, a { color: inherit; background: none; border: 1px solid #555; border-radius: 0;
+              padding: 8px 14px; font: inherit; text-decoration: none; cursor: pointer; }
+  button[aria-pressed="true"] { color: #ffb000; border-color: #ffb000; }
+</style>
+</head>
+<body>
+<img id="live" src="video" alt="Live view from the NODE camera">
+<nav>
+  <button id="sound" type="button" aria-pressed="false">Sound</button>
+  <a href="rec/">Recordings</a>
+</nav>
+<script>
+// Video is an MJPEG stream the <img> plays natively. If it drops (the phone
+// left the NODE app, or Wi-Fi blinked), keep retrying.
+const live = document.getElementById('live');
+live.onerror = () => setTimeout(() => { live.src = 'video?' + Date.now(); }, 2000);
+
+// Sound is raw 16-bit mono PCM at 48 kHz, scheduled with plain Web Audio.
+// AudioWorklet and WebCodecs would be tidier, but both need HTTPS and the
+// phone only speaks plain HTTP on the LAN.
+const RATE = 48000;
+const LEAD = 0.15;      // seconds of buffer against Wi-Fi jitter
+const MAX_LAG = 0.5;    // past this, drop audio to catch up with the video
+const button = document.getElementById('sound');
+let ctx = null;
+
+function stopSound() {
+  if (ctx) ctx.close();
+  ctx = null;
+  button.setAttribute('aria-pressed', 'false');
+}
+
+// Browsers only allow audio to start from a click.
+button.onclick = () => {
+  if (ctx) return stopSound();
+  const audio = ctx = new AudioContext({ sampleRate: RATE });
+  button.setAttribute('aria-pressed', 'true');
+  play(audio).catch(() => {}).finally(() => { if (ctx === audio) stopSound(); });
+};
+
+async function play(audio) {
+  // The context's clock stands still until the audio device is up; chunks
+  // scheduled before then would pile up as permanent extra delay.
+  await audio.resume();
+  const res = await fetch('audio', { cache: 'no-store' });
+  if (!res.ok) throw new Error('audio ' + res.status);
+  const reader = res.body.getReader();
+  let carry = new Uint8Array(0);  // an odd trailing byte from the last read
+  let next = 0;                   // when the next chunk starts, in context time
+  let catchingUp = false;
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      // Sound may have been switched off while the read was pending.
+      if (done || audio.state === 'closed') return;
+      const bytes = new Uint8Array(carry.length + value.length);
+      bytes.set(carry);
+      bytes.set(value, carry.length);
+      const even = bytes.length & ~1;
+      carry = bytes.slice(even);
+      if (even === 0) continue;
+
+      const pcm = new Int16Array(bytes.slice(0, even).buffer);
+      const now = audio.currentTime;
+      if (next < now) next = now + LEAD;             // first chunk, or an underrun
+      if (next > now + MAX_LAG) catchingUp = true;   // a backlog arrived at once
+      if (catchingUp && next > now + LEAD) continue; // drop sound until back in sync
+      catchingUp = false;
+
+      const buffer = audio.createBuffer(1, pcm.length, RATE);
+      const samples = buffer.getChannelData(0);
+      for (let i = 0; i < pcm.length; i++) samples[i] = pcm[i] / 32768;
+      const source = audio.createBufferSource();
+      source.buffer = buffer;
+      source.connect(audio.destination);
+      source.start(next);
+      next += buffer.duration;
+    }
+  } finally {
+    reader.cancel();
+  }
+}
+</script>
+</body>
+</html>

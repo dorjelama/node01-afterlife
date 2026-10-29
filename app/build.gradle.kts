@@ -15,8 +15,8 @@ android {
         // legacy systemUiVisibility fallback path.
         minSdk = 30
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "2.0"
     }
 
     buildTypes {
@@ -53,7 +53,8 @@ android {
     }
 }
 
-// Intentionally empty. NODE has no third-party dependencies; kotlin-stdlib is
-// contributed automatically by the Kotlin Android plugin.
+// No runtime dependencies: kotlin-stdlib is contributed automatically by the
+// Kotlin Android plugin. JUnit is test-only and never reaches the APK.
 dependencies {
+    testImplementation("junit:junit:4.13.2")
 }

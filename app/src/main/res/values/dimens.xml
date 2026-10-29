@@ -3,17 +3,7 @@
     <!-- Sizes are in dp, not sp, on purpose. NODE is a fixed-function appliance:
          MIUI's system font-scale slider must not be able to reflow the layout.
          Lint's SpUsage warning is suppressed in the layout for this reason. -->
-    <dimen name="node_date">18dp</dimen>
-    <dimen name="node_footer">12dp</dimen>
-    <dimen name="node_temp">20dp</dimen>
-
-    <!-- FOCUS mode: time only, sized to dominate the landscape pane. -->
-    <dimen name="focus_time">190dp</dimen>
-    <dimen name="focus_ampm">30dp</dimen>
-
-    <!-- Landscape: only ~393dp of height to work with, so vertical padding is
-         much tighter than the horizontal. -->
-    <dimen name="node_margin">30dp</dimen>
-    <dimen name="node_margin_top">16dp</dimen>
-    <dimen name="node_margin_bottom">14dp</dimen>
+    <dimen name="cam_status">28dp</dimen>
+    <dimen name="cam_url">18dp</dimen>
+    <dimen name="cam_gap">18dp</dimen>
 </resources>

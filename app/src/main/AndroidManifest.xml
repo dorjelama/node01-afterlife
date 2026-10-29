@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- The only permission NODE holds. Used for exactly one HTTPS request per
-         hour, to Open-Meteo, for the current temperature. No location
-         permission: the station coordinates are fixed in Station.kt. -->
+    <!-- NODE's three permissions. CAMERA and RECORD_AUDIO are used only while
+         the activity is in front; INTERNET lets the LAN server accept viewers.
+         No storage permission: clips live in the app's own folder. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <application
         android:allowBackup="false"
@@ -29,8 +31,9 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Makes NODE *selectable* as Home. MIUI keeps its own launcher as
-                 default until the user deliberately switches in Settings. -->
+            <!-- Makes NODE *selectable* as Home, so after a reboot it comes
+                 straight back and resumes recording. MIUI keeps its own
+                 launcher as default until the user deliberately switches. -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.HOME" />
