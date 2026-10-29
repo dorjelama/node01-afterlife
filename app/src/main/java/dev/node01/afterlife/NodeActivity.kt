@@ -237,9 +237,31 @@ class NodeActivity : Activity() {
 
         // Window-scoped backlight override. Needs no permission and is reverted
         // by the system the moment NODE loses the foreground.
-        window.attributes = window.attributes.apply {
-            screenBrightness = if (quiet) 0f else mode.brightness
+        //
+        // Only write when the value actually changes: assigning window.attributes
+        // forces a relayout, and a relayout surfaces the system bars on this
+        // device. Switching mode must not cost a relayout.
+        val target = if (quiet) 0f else mode.brightness
+        if (window.attributes.screenBrightness != target) {
+            window.attributes = window.attributes.apply {
+                screenBrightness = target
+            }
         }
+    }
+
+    /**
+     * True near any edge the system claims for its own gestures. In landscape
+     * this device puts the navigation bar on the *right* edge, not the bottom,
+     * so guarding only the bottom left mode-switch swipes fighting it.
+     */
+    private fun isEdgeTouch(x: Float, y: Float): Boolean {
+        val w = window.decorView.width
+        val h = window.decorView.height
+        if (w == 0 || h == 0) return false
+        return x <= w * EDGE_ZONE ||
+            x >= w * (1f - EDGE_ZONE) ||
+            y >= h * (1f - EDGE_ZONE) ||
+            y <= h * EDGE_ZONE
     }
 
     // -- touch -------------------------------------------------------------
@@ -258,7 +280,8 @@ class NodeActivity : Activity() {
                 velocityY: Float,
             ): Boolean {
                 val start = e1 ?: return false
-                if (start.y >= window.decorView.height * (1f - BARS_SWIPE_ZONE)) return false
+                // Never compete with a system edge gesture.
+                if (isEdgeTouch(start.x, start.y)) return false
 
                 val dx = e2.x - start.x
                 val dy = e2.y - start.y
@@ -269,18 +292,27 @@ class NodeActivity : Activity() {
                 cycleMode(if (dx < 0) 1 else -1)
                 return true
             }
+
+            /**
+             * Undim on a tap only, never on a swipe. Undimming writes
+             * window.attributes, which relayouts and surfaces the system bars,
+             * so a mode swipe must not go anywhere near it.
+             */
+            override fun onSingleTapUp(e: MotionEvent): Boolean {
+                undimTemporarily()
+                return true
+            }
         })
     }
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         gestures.onTouchEvent(ev)
         if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
-            // Only a touch starting in the bottom edge strip can be the start of
-            // a swipe-up for the navigation bar. Anything else -- tapping the
-            // dial or the calendar -- must never surface it.
-            barsRequestedBySwipe =
-                ev.y >= window.decorView.height * (1f - BARS_SWIPE_ZONE)
-            undimTemporarily()
+            // Only a touch starting at a system edge may be reaching for the
+            // navigation bar. Anything starting in the middle -- a tap on the
+            // dial, or a mode swipe -- must never surface it. Undimming happens
+            // in onSingleTapUp, so a swipe never touches window.attributes.
+            barsRequestedBySwipe = isEdgeTouch(ev.x, ev.y)
             if (!barsRequestedBySwipe) hideSystemBars()
         }
         return super.dispatchTouchEvent(ev)
@@ -542,8 +574,12 @@ class NodeActivity : Activity() {
          */
         const val BARS_REHIDE_MS = 3_000L
 
-        /** Fraction of screen height at the bottom that can start a bar swipe. */
-        const val BARS_SWIPE_ZONE = 0.12f
+        /**
+         * Fraction of each edge reserved for system gestures. In landscape this
+         * device places the navigation bar on the right edge, so all four are
+         * guarded rather than just the bottom.
+         */
+        const val EDGE_ZONE = 0.10f
 
         const val QUIET_START_HOUR = 23
         const val QUIET_END_HOUR = 7
