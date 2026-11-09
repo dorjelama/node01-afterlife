@@ -8,27 +8,31 @@ import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.URLDecoder
 import java.security.MessageDigest
-import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
 /**
- * NODE's whole interface: a small HTTP/1.1 server on the LAN, one thread per
- * connection.
+ * NODE's door to the LAN: a small HTTP/1.1 server, one thread per connection.
  *
- * Every path sits under a random key -- `/<key>/...`, shown on the phone's
- * screen -- so finding the port is not enough to open the camera or the
- * microphone. It is plain HTTP: anyone able to sniff the Wi-Fi can read the key
- * and the streams. Home LAN only; never port-forward it.
+ * - `GET  /<key>/`        the page: send a desk note, set up Claude Code
+ * - `POST /<key>/claude`  a Claude Code hook event, as the hook's own JSON
+ * - `POST /<key>/note`    a desk note, as a form: `text`, `in` (minutes)
+ *
+ * Every path sits under a random key shown on the phone's screen; anything
+ * else is a 404. It is plain HTTP, so anyone able to sniff the Wi-Fi can read
+ * the key and what is sent. Home LAN only; never port-forward it. There is no
+ * camera route: what the camera sees never leaves the phone.
+ *
+ * [onClaude] and [onNote] are called on the connection's thread.
  *
  * One instance per session: [start], then [stop], then discard.
  */
 class HttpServer(
     private val key: String,
     private val page: ByteArray,
-    private val recorder: LoopRecorder,
-    private val jpegHub: Hub,
-    private val pcmHub: Hub,
+    private val onClaude: (Map<String, String>) -> Unit,
+    private val onNote: (text: String, inMinutes: Int) -> Unit,
 ) {
     @Volatile
     private var socket: ServerSocket? = null
@@ -52,7 +56,6 @@ class HttpServer(
         }
     }
 
-    /** Live streams notice within a second and hang up. */
     fun stop() {
         socket?.close()
         socket = null
@@ -62,87 +65,59 @@ class HttpServer(
         client.use {
             try {
                 client.soTimeout = REQUEST_TIMEOUT_MS
-                // Live chunks are small; Nagle would hold their tails for an ACK.
-                client.tcpNoDelay = true
-                val path = readGetPath(BufferedInputStream(client.getInputStream())) ?: return
+                val input = BufferedInputStream(client.getInputStream())
                 val out = BufferedOutputStream(client.getOutputStream(), OUT_BUFFER_BYTES)
-                when (val r = route(path, key)) {
+                val head = readHead(input) ?: return
+                when (route(head.method, head.path, key)) {
                     Route.Page -> send(out, 200, "text/html; charset=utf-8", page)
-                    Route.Video -> streamVideo(out)
-                    Route.Audio -> streamAudio(out)
-                    Route.Clips -> send(out, 200, "text/html; charset=utf-8", clipList())
-                    is Route.Clip -> sendClip(out, r.name)
+                    Route.Claude -> readBody(head, input, out)?.let { body ->
+                        respond(out, 204)
+                        onClaude(JsonFields.extract(String(body, Charsets.UTF_8), ClaudeSessions.FIELDS))
+                    }
+                    Route.Note -> readBody(head, input, out)?.let { body ->
+                        val form = parseForm(String(body, Charsets.UTF_8))
+                        respond(out, 204)
+                        onNote(form["text"].orEmpty(), form["in"]?.toIntOrNull() ?: 0)
+                    }
                     Route.NotFound -> notFound(out)
                 }
                 out.flush()
             } catch (e: Exception) {
-                // Usually the viewer closed the tab or left Wi-Fi range. Whatever a
-                // client does, it costs that connection only: an uncaught exception
-                // here would take the camera down with it.
+                // A client that hangs up or sends nonsense costs its own
+                // connection only: uncaught, it would take NODE down with it.
             }
         }
     }
 
     /**
-     * Each boundary goes out right after its frame, not ahead of the next one:
-     * browsers only show a part once they see the boundary that ends it.
+     * Keeps the first [KEEP_BYTES] of the body and reads past the rest. Hook
+     * events after a tool call carry the tool's whole output, but the fields
+     * NODE wants are all small. Null, with the reply already sent, if the body
+     * cannot be taken.
      */
-    private fun streamVideo(out: OutputStream) {
-        out.write(head(200, "multipart/x-mixed-replace; boundary=frame"))
-        out.write(BOUNDARY)
-        out.flush()
-        relay(jpegHub) { jpeg ->
-            out.write("Content-Type: image/jpeg\r\nContent-Length: ${jpeg.size}\r\n\r\n".toByteArray())
-            out.write(jpeg)
-            out.write(CRLF)
-            out.write(BOUNDARY)
+    private fun readBody(head: Head, input: InputStream, out: OutputStream): ByteArray? {
+        if (head.chunked || head.contentLength < 0) return null.also { respond(out, 411) }
+        if (head.contentLength > MAX_BODY_BYTES) return null.also { respond(out, 413) }
+        if (head.expectContinue) {
+            // curl waits a full second for this before sending a large body.
+            out.write("HTTP/1.1 100 Continue\r\n\r\n".toByteArray())
             out.flush()
         }
-    }
-
-    /** Raw signed 16-bit little-endian mono PCM at 48 kHz; the page plays it with Web Audio. */
-    private fun streamAudio(out: OutputStream) {
-        out.write(head(200, "application/octet-stream"))
-        relay(pcmHub) { pcm ->
-            out.write(pcm)
-            out.flush()
+        val kept = ByteArray(minOf(head.contentLength, KEEP_BYTES.toLong()).toInt())
+        var got = 0
+        while (got < kept.size) {
+            val n = input.read(kept, got, kept.size - got)
+            if (n < 0) return null
+            got += n
         }
-    }
-
-    /** Copies [hub] to one viewer until it hangs up or the server stops. */
-    private fun relay(hub: Hub, write: (ByteArray) -> Unit) {
-        val queue = hub.subscribe()
-        try {
-            while (socket != null) {
-                val chunk = queue.poll(1, TimeUnit.SECONDS) ?: continue
-                write(chunk)
-            }
-        } finally {
-            hub.unsubscribe(queue)
+        var left = head.contentLength - kept.size
+        val scratch = ByteArray(OUT_BUFFER_BYTES)
+        while (left > 0) {
+            val n = input.read(scratch, 0, minOf(left, scratch.size.toLong()).toInt())
+            if (n < 0) return null
+            left -= n
         }
-    }
-
-    // Clip names are fixed to [LoopRecorder.CLIP_NAME], so they need no HTML escaping.
-    private fun clipList(): ByteArray = buildString {
-        append("<!doctype html><html lang=en><meta charset=utf-8>")
-        append("<meta name=viewport content=\"width=device-width, initial-scale=1\">")
-        append("<title>NODE recordings</title>")
-        append("<style>body{margin:0;padding:16px;background:#000;color:#c4c4c4;")
-        append("font:14px/1.6 ui-monospace,monospace}a{color:#ffb000}li{margin:6px 0}</style>")
-        append("<p><a href=\"../\">&larr; live</a></p>")
-        val clips = recorder.finishedClips()
-        if (clips.isEmpty()) append("<p>No finished clips yet.</p>")
-        append("<ul>")
-        for (f in clips) {
-            append("<li><a href=\"${f.name}\" download>${f.name}</a> ${f.length() / 1_000_000} MB</li>")
-        }
-        append("</ul></html>")
-    }.toByteArray()
-
-    private fun sendClip(out: OutputStream, name: String) {
-        val file = recorder.finishedClip(name) ?: return notFound(out)
-        out.write(head(200, "video/mp4", file.length()))
-        file.inputStream().use { it.copyTo(out, OUT_BUFFER_BYTES) }
+        return kept
     }
 
     private fun notFound(out: OutputStream) = send(out, 404, "text/plain", "not found\n".toByteArray())
@@ -152,9 +127,14 @@ class HttpServer(
         out.write(body)
     }
 
-    private fun head(status: Int, type: String, length: Long = -1): ByteArray = buildString {
-        append("HTTP/1.1 $status ${if (status == 200) "OK" else "Not Found"}\r\n")
-        append("Content-Type: $type\r\n")
+    private fun respond(out: OutputStream, status: Int) {
+        out.write(head(status, null, if (status == 204) -1 else 0))
+        out.flush()
+    }
+
+    private fun head(status: Int, type: String?, length: Long): ByteArray = buildString {
+        append("HTTP/1.1 $status ${REASONS[status] ?: "Error"}\r\n")
+        if (type != null) append("Content-Type: $type\r\n")
         if (length >= 0) append("Content-Length: $length\r\n")
         append("Cache-Control: no-store\r\n")
         append("Connection: close\r\n\r\n")
@@ -162,58 +142,91 @@ class HttpServer(
 
     sealed interface Route {
         data object Page : Route
-        data object Video : Route
-        data object Audio : Route
-        data object Clips : Route
-        data class Clip(val name: String) : Route
+        data object Claude : Route
+        data object Note : Route
         data object NotFound : Route
     }
 
+    internal data class Head(
+        val method: String,
+        val path: String,
+        /** -1 when the request did not say. */
+        val contentLength: Long,
+        val expectContinue: Boolean,
+        val chunked: Boolean,
+    )
+
     companion object {
-        const val PORT = 8080
+        const val PORT = 8081
 
         private const val REQUEST_TIMEOUT_MS = 5_000
         private const val OUT_BUFFER_BYTES = 64 * 1024
         private const val MAX_LINE = 8 * 1024
         private const val MAX_HEADERS = 100
-        private val CRLF = "\r\n".toByteArray()
-        private val BOUNDARY = "--frame\r\n".toByteArray()
 
-        /** Pure, so the key check and the path-traversal guard are unit-tested. */
-        internal fun route(path: String, key: String): Route {
+        /** Of each body, only this much is kept. */
+        const val KEEP_BYTES = 64 * 1024
+
+        /** Bodies past this are refused unread. */
+        const val MAX_BODY_BYTES = 16L * 1024 * 1024
+
+        private val REASONS = mapOf(
+            200 to "OK",
+            204 to "No Content",
+            404 to "Not Found",
+            411 to "Length Required",
+            413 to "Content Too Large",
+        )
+
+        /** Pure, so the key check is unit-tested. Wrong method is a 404 too. */
+        internal fun route(method: String, path: String, key: String): Route {
             val prefix = "/$key/".toByteArray()
             val head = path.take(prefix.size).toByteArray()
-            // Constant-time: the key is all that stands between the LAN and the microphone.
+            // Constant-time: the key is all that stands between the LAN and NODE.
             if (!MessageDigest.isEqual(head, prefix)) return Route.NotFound
             val rest = path.substring(prefix.size).substringBefore('?')
-            val clip = rest.removePrefix("rec/")
             return when {
-                rest == "" -> Route.Page
-                rest == "video" -> Route.Video
-                rest == "audio" -> Route.Audio
-                rest == "rec/" -> Route.Clips
-                rest.startsWith("rec/") && LoopRecorder.CLIP_NAME.matches(clip) -> Route.Clip(clip)
+                method == "GET" && rest == "" -> Route.Page
+                method == "POST" && rest == "claude" -> Route.Claude
+                method == "POST" && rest == "note" -> Route.Note
                 else -> Route.NotFound
             }
         }
 
         /**
-         * Reads the request head, bounded so a misbehaving client cannot grow
-         * memory, and returns the path of a GET. Null for anything else.
+         * Reads the request line and headers, bounded so a misbehaving client
+         * cannot grow memory. Null for anything malformed.
          */
-        private fun readGetPath(input: InputStream): String? {
+        internal fun readHead(input: InputStream): Head? {
             val requestLine = input.readLine() ?: return null
-            // Drain the headers too: closing with unread input resets the
-            // connection, and the browser may then drop the response.
+            var length = -1L
+            var expect = false
+            var chunked = false
             repeat(MAX_HEADERS) {
                 val header = input.readLine() ?: return null
                 if (header.isEmpty()) {
                     val parts = requestLine.split(' ')
-                    return if (parts.size == 3 && parts[0] == "GET") parts[1] else null
+                    return if (parts.size == 3) Head(parts[0], parts[1], length, expect, chunked) else null
+                }
+                val value = header.substringAfter(':', "").trim()
+                when (header.substringBefore(':').trim().lowercase()) {
+                    "content-length" -> length = value.toLongOrNull()?.takeIf { it >= 0 } ?: -1L
+                    "expect" -> expect = value.equals("100-continue", ignoreCase = true)
+                    "transfer-encoding" -> chunked = !value.equals("identity", ignoreCase = true)
                 }
             }
             return null
         }
+
+        /** `a=1&b=two+words` -> {a=1, b=two words}. Malformed escapes drop that pair. */
+        internal fun parseForm(body: String): Map<String, String> =
+            body.split('&').mapNotNull { pair ->
+                if (pair.isEmpty()) return@mapNotNull null
+                runCatching {
+                    URLDecoder.decode(pair.substringBefore('='), "UTF-8") to
+                        URLDecoder.decode(pair.substringAfter('=', ""), "UTF-8")
+                }.getOrNull()
+            }.toMap()
 
         private fun InputStream.readLine(): String? {
             val line = StringBuilder()

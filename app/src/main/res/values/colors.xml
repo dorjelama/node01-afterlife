@@ -1,13 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- The panel is IPS, not OLED, so black buys no meaningful power saving.
-         It is here purely for the industrial look. -->
+         It is here purely for the industrial look. Lids are drawn in it too. -->
     <color name="node_bg">#FF000000</color>
+
+    <!-- The eyes. Soft white rather than pure white. -->
+    <color name="node_eye">#FFE8E8E8</color>
 
     <!-- Monochrome for everything that is merely information. -->
     <color name="node_secondary">#FFC4C4C4</color>
+    <color name="node_dim">#FF7A7A7A</color>
 
-    <!-- The one non-monochrome element: the recording status. Amber, for the
-         vintage instrument reference. Change this single value to restyle. -->
+    <!-- The one non-monochrome colour, and it means one thing: something needs
+         you. Amber, for the vintage instrument reference. -->
     <color name="node_accent">#FFFFB000</color>
 </resources>

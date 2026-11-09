@@ -1,14 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">NODE</string>
+    <string name="app_name">NODE Companion</string>
 
-    <!-- Every string here reports real state. Decorative labels were removed. -->
-    <string name="status_rec">● REC</string>
-    <string name="status_no_permission">NEEDS CAMERA + MICROPHONE PERMISSION</string>
-    <!-- %1$s is a short reason from the camera, encoder or server. -->
+    <!-- Every string here reports real state. -->
+    <string name="status_no_permission">NEEDS CAMERA PERMISSION · it cannot see you</string>
+    <!-- %1$s is a short reason from the camera or the server. -->
     <string name="status_error_fmt">ERROR  %1$s</string>
 
     <!-- %1$s address, %2$d port, %3$s the random URL key. -->
     <string name="url_fmt">http://%1$s:%2$d/%3$s/</string>
     <string name="url_no_wifi">NO WI-FI</string>
+
+    <!-- %1$s is the project folder Claude Code is running in. -->
+    <string name="caption_needs_you_fmt">NEEDS YOU · %1$s</string>
+    <string name="caption_done_fmt">DONE · %1$s</string>
+    <!-- Appended when more sessions are in the same state. %1$d is how many. -->
+    <string name="caption_more_fmt">" +%1$d"</string>
 </resources>

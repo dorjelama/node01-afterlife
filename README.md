@@ -1,21 +1,23 @@
-# NODE
+# NODE Companion
 
-**An old phone, rebuilt as a Wi-Fi camera.**
+**An old phone, rebuilt as a face on your desk.**
 
 A Redmi Note 8 running stock MIUI — bootloader locked, no root, no custom recovery — turned
-into a fixed-function camera appliance. Its rear camera is far better than any laptop webcam;
-NODE puts it on your network. Open a URL in any browser on the Wi-Fi to watch it live, with
-sound, while it records the last couple of hours to the phone in a loop.
+into a small desk companion. Two eyes on a black screen notice when you sit down, follow you,
+doze when you leave and sleep when the lights go off. When Claude Code on your PC needs your
+approval, they turn amber and chirp, so you can step away from the keyboard and still know.
 
 <p align="left">
   <img alt="platform" src="https://img.shields.io/badge/platform-Android%2011%2B%20(API%2030)-000000">
   <img alt="language" src="https://img.shields.io/badge/Kotlin-2.0.21-000000">
   <img alt="dependencies" src="https://img.shields.io/badge/runtime%20dependencies-zero-000000">
-  <img alt="permissions" src="https://img.shields.io/badge/permissions-INTERNET%20CAMERA%20RECORD__AUDIO-000000">
-  <img alt="apk size" src="https://img.shields.io/badge/APK-~2.4%20MB-000000">
+  <img alt="permissions" src="https://img.shields.io/badge/permissions-INTERNET%20CAMERA%20WAKE__LOCK-000000">
+  <img alt="cloud" src="https://img.shields.io/badge/cloud%20AI-none-000000">
 </p>
 
-NODE began life as a desk clock. That version lives on in git history at `9a42e35`.
+It installs as its own app, **NODE Companion** (`dev.node01.companion`), next to the NODE
+webcam (`dev.node01.afterlife`, on `feature/webcam`). NODE began life as a desk clock; that
+version lives on at `9a42e35`.
 
 ---
 
@@ -23,96 +25,115 @@ NODE began life as a desk clock. That version lives on in git history at `9a42e3
 
 | | |
 |---|---|
-| **Live view** | 1280×720 at up to 15 fps in any browser on the LAN. Nothing to install |
-| **Sound** | Live microphone audio on the same page — press **Sound** |
-| **Loop recording** | 1080p H.264 at 8 Mbps plus AAC audio, in 5-minute MP4 clips on the phone. The oldest go once the clips pass 8 GB, or when the phone drops below 2 GB free |
-| **Recordings** | Listed newest first and downloadable from the same page |
+| **Sees you** | The front camera's own face detection, done by the camera hardware. The eyes follow you, say hello with a double blink when you come back after a while, and look around the room when you have just left |
+| **Sleeps** | Away 2 minutes: sleepy and dim. Away 10 minutes, or the room dark: eyes closed, backlight at the panel minimum |
+| **Feels the desk** | Knock on the desk and it startles. Wave a hand over the top of the screen, or tap it, and it is pleased |
+| **Claude Code** | Through Claude Code hooks on your PC. While Claude works the eyes narrow and look toward the PC. When Claude needs approval or has a question: amber, wide, `NEEDS YOU · <project>`, one chirp. When it finishes: a happy face, `DONE · <project>`, a softer chirp — held until you have actually looked |
+| **Desk notes** | Send a short note from any browser, now or in a few minutes. It shows in amber; tap or wave to dismiss it |
 
-Video runs at 30 fps and, where the camera allows it, slows to 15 fps in a dim room rather
-than going dark.
+Amber means one thing: something needs you. Everything else is grey on black.
 
 ## Use it
 
-1. Build and install (below), open NODE, allow the camera and microphone.
-2. The screen shows `● REC` and an address such as `http://192.168.1.50:8080/k7m2x9qa4c/`.
-   **Tap the screen** to brighten it for 30 seconds — the tap also refreshes the address.
-3. Open that address on any phone, tablet or PC on the same Wi-Fi.
+1. Build and install (below), open **NODE Companion**, allow the camera.
+2. **Tap the screen** to see its address for 30 seconds, such as
+   `http://192.168.1.50:8081/k7m2x9qa4c/`.
+3. Open that address on any phone or PC on the same Wi-Fi. The page sends desk notes, has a
+   **Try it** row to test the Claude states, and shows the Claude Code hooks with the address
+   already filled in.
 
-The screen stays on at minimum brightness because Android only lets the app in front use the
-camera and microphone. Leaving NODE, or pressing the power button, stops recording and the
-live view; coming back resumes both. If the camera fails while NODE is in front — another app
-grabs it, a media service restarts — NODE says why on screen and tries again every 5 seconds.
+The screen stays on because Android only lets the app in front use the camera. Leaving NODE,
+or pressing the power button, stops everything; coming back resumes it.
 
-**As a Zoom / Teams / Meet webcam:** in [OBS Studio](https://obsproject.com) add a **Browser**
-source with the address, then press **Start Virtual Camera**. "OBS Virtual Camera" then appears
-as a webcam in every app. No extra code.
+## Claude Code
 
-## Recordings
+Add these hooks to `~/.claude/settings.json` on the PC, merged into any `hooks` you already
+have. The phone's own page shows this block with your address filled in, and copies it.
 
-Clips are named by the phone's local time, `NODE_yyyyMMdd_HHmmss.mp4`, in the app's own folder:
-
-```bash
-# Git Bash on Windows: stop it mangling the device path first
-export MSYS_NO_PATHCONV=1
-adb pull /sdcard/Android/data/dev.node01.afterlife/files/Movies/ clips
+```json
+{
+  "hooks": {
+    "UserPromptSubmit":  [{ "hooks": [{ "type": "command", "async": true, "command": "curl.exe -s -m 2 -H Content-Type:application/json --data-binary '@-' http://192.168.1.50:8081/k7m2x9qa4c/claude" }] }],
+    "PermissionRequest": [{ "hooks": [{ "type": "command", "async": true, "command": "curl.exe -s -m 2 -H Content-Type:application/json --data-binary '@-' http://192.168.1.50:8081/k7m2x9qa4c/claude" }] }],
+    "Notification":      [{ "hooks": [{ "type": "command", "async": true, "command": "curl.exe -s -m 2 -H Content-Type:application/json --data-binary '@-' http://192.168.1.50:8081/k7m2x9qa4c/claude" }] }],
+    "PostToolUse":       [{ "hooks": [{ "type": "command", "async": true, "command": "curl.exe -s -m 2 -H Content-Type:application/json --data-binary '@-' http://192.168.1.50:8081/k7m2x9qa4c/claude" }] }],
+    "Stop":              [{ "hooks": [{ "type": "command", "async": true, "command": "curl.exe -s -m 2 -H Content-Type:application/json --data-binary '@-' http://192.168.1.50:8081/k7m2x9qa4c/claude" }] }],
+    "SessionEnd":        [{ "hooks": [{ "type": "command", "async": true, "command": "curl.exe -s -m 2 -H Content-Type:application/json --data-binary '@-' http://192.168.1.50:8081/k7m2x9qa4c/claude" }] }]
+  }
+}
 ```
 
-- At about 1 MB/s, the 8 GB cap holds roughly **2 hours**. Change `CAP_BYTES` for more.
-- A clip is written as `.mp4.part` and renamed only once finalized. If the app is killed
-  mid-clip, that file has no index and will not play — it stays hidden as `.part` (a tool such
-  as `untrunc` can often recover it) and is pruned with the rest. At most one clip is lost.
-- **Uninstalling NODE deletes every clip** — Android wipes an app's folder with it. That
-  includes the uninstall forced when the signing key changes, e.g. building on another PC.
-  `adb install -r` with the same key keeps them.
+- Every hook runs **in the background** and curl gives up after 2 seconds, so a phone that is
+  asleep, away or switched off never slows Claude down.
+- `PermissionRequest` and the `permission_prompt`, `elicitation_dialog` and
+  `agent_needs_input` notifications mean **needs you**. The next `PostToolUse` — Claude
+  carrying on after you approve — clears it. `Stop` means **done**. `SessionEnd` forgets the
+  session.
+- Several sessions at once: the most urgent wins and the caption counts the rest (`+1`).
+- Hooks are best-effort, so nothing is claimed forever: "working" with no event for 20
+  minutes is dropped rather than shown as still busy.
+- Give the phone a **DHCP reservation** in your router, or its address — and these hooks —
+  will drift. Run `/hooks` in Claude Code to check they loaded.
+
+## Privacy
+
+- **Nothing the camera sees leaves the phone.** Frames are handed back to the camera unread;
+  only the rectangle of the largest face is used, as a gaze direction. Nothing is stored,
+  served or logged, and the server has no camera route.
+- **No microphone.** The permission is not even requested.
+- **No cloud AI.** Nothing is sent anywhere but your own LAN.
+- A hook event contains your prompt and the tools' input and output. NODE keeps only the event
+  name, session id, project folder and notification type, reads past the rest without keeping
+  it, and never logs it — but the whole event still crosses your Wi-Fi as **plain HTTP**.
+  Use it on a network you trust.
+- The random key in the address is the only thing between the network and NODE. Anything
+  without it gets a 404. Never port-forward 8081.
 
 ## Leaving it running
 
-- **Set NODE as the default Home app and the screen lock to None.** After a reboot or a crash
-  it then comes straight back and resumes recording without anyone touching it.
-- **Keep it on the charger, with airflow.** The camera and encoders run constantly and the
-  phone gets warm; if it throttles, the frame rate drops rather than the recording stopping.
-- **Check the battery for swelling now and then.** An old battery held at 100% and kept warm,
-  around the clock, is the real hazard of this project. A timer plug that lets it cycle helps.
-- **Flash wear:** at 8 Mbps NODE writes about 85 GB a day to old storage. For a static scene
-  `VIDEO_BITRATE = 4_000_000` looks nearly as good and halves both wear and space.
-
-## Security
-
-- The random key in the address is the only thing between the network and your camera and
-  microphone. Any path without it gets a 404. It is generated on first run, stored on the
-  phone and never in this repo. Clearing NODE's data issues a new key — and deletes the clips.
-- It is **plain HTTP**: anyone able to watch your Wi-Fi traffic can read the key and the
-  streams. Use it on a home network only and **never port-forward 8080**.
-- Recording audio needs consent in more places than recording video does. Know your local law.
+- **Set NODE Companion as the default Home app and the screen lock to None.** After a reboot
+  or a crash it then comes straight back without anyone touching it.
+- **Keep it on the charger, with airflow,** and check the battery for swelling now and then.
+  The front camera runs at its smallest size and 15 fps, far lighter than the webcam's 1080p
+  recording, but an old battery held at 100% around the clock is still the real hazard.
 
 ## Design principles
 
-**Nothing runs in the background.** The camera, encoders, microphone and server start in
-`onStart` and stop in `onStop`. A backgrounded NODE costs nothing.
+**Nothing runs in the background.** The camera, sensors, server, Wi-Fi lock and the face's own
+timers start in `onStart` and stop in `onStop`. A backgrounded NODE costs nothing.
 
-**Zero runtime dependencies.** No AndroidX, no CameraX, no HTTP library. Camera2, MediaCodec,
-MediaMuxer, AudioRecord and `java.net` are all in the platform. JUnit is test-only and never
-reaches the APK.
+**Answer at once.** Left alone, the phone's Wi-Fi dozes between packets and the first request
+after a quiet spell took up to three seconds to connect — longer than a hook waits. NODE holds
+a low-latency Wi-Fi lock, which Android honours only while the app is in front with the screen
+on.
 
-**Hardware does the heavy lifting.** H.264 and AAC come from the phone's hardware encoders.
-The only software work is the live JPEGs, and they are made only while someone is watching.
+**A still face costs nothing.** The eyes redraw only while they move. Blinks and glances are
+single delayed callbacks, not a frame loop.
 
-**Bounded everywhere.** A slow viewer drops frames instead of growing memory; the recordings
-never pass the cap or the free-space floor; a clip interrupted by a kill is hidden, not served.
+**Zero runtime dependencies.** Camera2's hardware face detection, `SensorManager`,
+`AudioTrack` and `java.net` are all in the platform. The two chirps are synthesized at start-up,
+so the repo carries no sound files. JUnit is test-only and never reaches the APK.
 
-**Honest status.** The screen shows what is actually happening — recording, or the reason not.
+**One pure function decides.** `Mood.decide` turns what NODE senses into what it shows, and is
+unit-tested like any other function. The activity only gathers inputs and draws the answer.
+
+**Honest status.** Amber only when something really needs you. If the camera cannot see, the
+screen says why.
 
 ## Requirements
 
 - JDK 17 or newer
 - Android SDK with platform 34 and build-tools 34.0.0
-- A device on Android 11+ (API 30) with a rear camera
+- A device on Android 11+ (API 30) with a front camera that has hardware face detection.
+  Check with `adb shell dumpsys media.camera` — the front camera's
+  `android.statistics.info.availableFaceDetectModes` must include `1` or `2`
 
 ## Build
 
 ```bash
 git clone <this-repo>
 cd node01-afterlife
+git switch feature/companion
 ./gradlew testDebugUnitTest assembleDebug     # gradlew.bat on Windows CMD/PowerShell
 ```
 
@@ -128,13 +149,14 @@ sdk.dir=/path/to/Android/Sdk
 ```bash
 adb devices -l
 adb install -r app/build/outputs/apk/debug/app-debug.apk
-adb shell pm grant dev.node01.afterlife android.permission.CAMERA        # or tap Allow
-adb shell pm grant dev.node01.afterlife android.permission.RECORD_AUDIO
 ```
 
+Then open NODE Companion and tap **Allow** for the camera. On MIUI, `adb shell pm grant` is
+refused without a Mi account, so the tap is needed.
+
 > **On MIUI**, sideloading is refused with `INSTALL_FAILED_USER_RESTRICTED` until you turn
-> **Developer options → Turn on MIUI optimization → OFF**. This is not an AOSP permission
-> problem and needs no Mi account. See [engineering notes](docs/ENGINEERING-NOTES.md).
+> **Developer options → Turn on MIUI optimization → OFF**. See
+> [engineering notes](docs/ENGINEERING-NOTES.md).
 
 ## Configure
 
@@ -142,44 +164,44 @@ Everything configurable is a constant — there is no settings screen, by design
 
 | What | Where |
 |---|---|
-| Recording size, bitrate and frame rate; live-view size, rate and JPEG quality | `Camcorder.kt` |
-| Clip length, size cap, free-space floor | `LoopRecorder.kt` |
-| Port | `HttpServer.kt` |
-| Screen brightness, tap-to-undim time, camera retry delay | `NodeActivity.kt` |
+| Which side the PC is on, timings for sleepy / asleep / greeting / startle | `Mood.kt` |
+| Eye size, spacing, how far they move, blink and glance timing | `FaceView.kt` |
+| Expression shapes | `Eyes.kt` |
+| Gaze direction flips for another phone or mount | `Presence.kt` (`GAZE_FLIP_X/Y`) |
+| Knock sensitivity, wave timing, how dark is dark | `Senses.kt` |
+| Chirp pitches and loudness | `Chirp.kt` |
+| How long "working" and "done" last | `ClaudeSessions.kt` |
+| Port, body limits | `HttpServer.kt` |
+| Brightness levels, tap-to-undim time | `NodeActivity.kt` |
 | Colours and type sizes | `res/values/colors.xml`, `res/values/dimens.xml` |
-
-The video sizes are fixed for this phone's rear camera. Another phone may need them changed.
 
 ## Limits
 
-- Recording stops whenever NODE is not in front — the power button included. Keeping it going
-  with the screen off would need a foreground service and a permanent notification.
-- Sound in the browser runs about 0.2 s behind real time, roughly matching the video. On an
-  iPhone the ring/silent switch mutes it.
-- A live tab with sound on holds two of the six connections a browser allows per site, so a
-  download can stall behind three or more of them.
-- Mount the phone so the text on its screen reads the right way up. Turned the other way,
-  the picture is upside down: there is no rotation setting.
+- It cannot see in a dark room, so in the dark it sleeps rather than pretending to follow you.
+- Everything stops whenever NODE is not in front — the power button included.
+- Only one Claude Code PC is expected; sessions from several PCs work, but share one face.
+- No reminders at a set clock time yet: a note is due now or in up to 24 hours from sending.
 
 ## Project structure
 
 ```
 app/src/main/java/dev/node01/afterlife/
-├── NodeActivity.kt    window setup, permissions, start/stop, retry, status and address
-├── Camcorder.kt       rear camera + microphone → H.264/AAC encoders, live JPEG + PCM
-├── LoopRecorder.kt    5-minute MP4 clips, oldest-first pruning
-├── HttpServer.kt      LAN server: live page, MJPEG, PCM audio, recordings
-└── Hub.kt             bounded fan-out of live chunks to viewers
+├── NodeActivity.kt    window, permissions, start/stop, gathers inputs, applies the look
+├── Mood.kt            the personality: inputs → expression, gaze, caption, brightness
+├── FaceView.kt        draws and animates the eyes
+├── Eyes.kt            expression shapes and easing
+├── Presence.kt        front camera face detection → gaze
+├── Senses.kt          knock, wave, dark room
+├── ClaudeSessions.kt  Claude Code sessions from hook events
+├── JsonFields.kt      reads four fields from a hook event, tolerating truncation
+├── Inbox.kt           desk notes
+├── Chirp.kt           the two sounds
+└── HttpServer.kt      LAN server: page, hook events, notes
 app/src/main/assets/
-└── index.html         the live page: video, sound, link to recordings
+└── index.html         the page: desk notes, Claude Code setup, test buttons
 ```
-
-The app icon is a vector, so the repository carries no binary image assets other than the
-Gradle wrapper.
 
 ## Notes
 
-Building against stock MIUI turned up a number of non-obvious platform behaviours — force-dark
-silently inverting bright drawing, blocked sideloads, blocked synthetic input and window
-relayouts surfacing the system bars. These are documented in
-**[docs/ENGINEERING-NOTES.md](docs/ENGINEERING-NOTES.md)**.
+Building against stock MIUI turned up a number of non-obvious platform behaviours. These are
+documented in **[docs/ENGINEERING-NOTES.md](docs/ENGINEERING-NOTES.md)**.

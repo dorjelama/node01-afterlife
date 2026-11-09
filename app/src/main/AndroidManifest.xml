@@ -1,12 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- NODE's three permissions. CAMERA and RECORD_AUDIO are used only while
-         the activity is in front; INTERNET lets the LAN server accept viewers.
-         No storage permission: clips live in the app's own folder. -->
+    <!-- CAMERA is the front camera's face detection, used only while the
+         activity is in front, and nothing it sees leaves the phone. INTERNET
+         lets the LAN server hear from the PC. WAKE_LOCK holds a low-latency
+         Wi-Fi lock, again only while in front, so a hook is answered at once
+         instead of after the radio wakes. No microphone. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
         android:allowBackup="false"
@@ -32,8 +34,8 @@
             </intent-filter>
 
             <!-- Makes NODE *selectable* as Home, so after a reboot it comes
-                 straight back and resumes recording. MIUI keeps its own
-                 launcher as default until the user deliberately switches. -->
+                 straight back. MIUI keeps its own launcher as default until
+                 the user deliberately switches. -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.HOME" />

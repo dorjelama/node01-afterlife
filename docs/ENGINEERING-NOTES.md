@@ -61,6 +61,63 @@ no root and no unlocked bootloader.
 off. UI interaction cannot be scripted over adb on this device — taps and swipes must be tested
 by hand.
 
+`adb shell input keyevent KEYCODE_WAKEUP` is worse: it exits cleanly and does nothing. The
+screen stays asleep, so check `dumpsys power | grep mWakefulness` rather than trusting it.
+
+---
+
+## MIUI blocks `pm grant`
+
+`adb shell pm grant <pkg> android.permission.CAMERA` fails with
+`SecurityException: grantRuntimePermission: Neither user 2000 nor current process has
+android.permission.GRANT_RUNTIME_PERMISSIONS`. MIUI gates it behind *USB debugging (Security
+settings)*, which wants a Mi account. The permission has to be granted by tapping **Allow** on
+the phone. A fresh install also waits behind the lock screen until someone unlocks it.
+
+---
+
+## Wi-Fi power save starves the LAN server
+
+**Symptom.** With NODE in front and the screen on, the first request after a quiet spell took
+1.5–4 s to connect, or timed out, while the very next one took 5 ms. Ping from the PC lost half
+its packets, with `Destination host unreachable` reported by the PC itself: its ARP requests
+were going unanswered.
+
+**Cause.** The phone's Wi-Fi sleeps between beacons whenever it is idle, screen on or not.
+Fine for a phone, fatal for a server that a Claude Code hook gives two seconds.
+
+**Fix.** Hold a `WIFI_MODE_FULL_LOW_LATENCY` lock (needs only the normal `WAKE_LOCK`
+permission) from `onStart` to `onStop`. Android honours it only for the foreground app with the
+screen on, which is exactly when NODE serves. Measured after 20 s idle: connect fell from
+timeouts to 3–120 ms. `adb shell dumpsys wifi | grep WifiLock` shows it held as `type=4`.
+
+**Then use 2.4 GHz.** Even with the lock active (`dumpsys wifi` counted 28 minutes of low-latency
+mode), on this router's 5 GHz network the phone stayed associated yet went unreachable for
+~20 s at a time, three times a minute — no disconnect in its log, and the wired PC-to-router
+path lossless. One minute of a request every 2 s: **20/30** delivered on 5 GHz
+(`dorjelama_wfn_5`, 5805 MHz) against **29/30** on 2.4 GHz (`dorjelama_wfn_2`, 2417 MHz), the
+single miss being the first request after switching. Keep the phone on 2.4 GHz and turn off
+auto-connect for the 5 GHz network, or Android drifts back to it.
+
+---
+
+## Front camera facts (Redmi Note 8)
+
+From `adb shell dumpsys media.camera`, camera `1`, facing front:
+
+| Key | Value |
+|---|---|
+| `availableFaceDetectModes` | `[0 1]`: OFF and SIMPLE, no FULL. Up to 10 faces |
+| `sensor.orientation` | 270 |
+| `supportedHardwareLevel` | 3 (LEVEL_3) |
+| `aeAvailableTargetFpsRanges` | `[15 15] [20 20] [7 24] [24 24]` |
+| Smallest YUV sizes | 320×240, 176×144, 160×120 |
+
+The companion runs it at 320×240 and a fixed 15 fps: enough for SIMPLE face detection, which
+the camera computes on the full sensor regardless of the stream size. With the activity locked
+to landscape the display rotation is 90°, so sensor orientation plus display rotation is 360°:
+no turn, only the front-camera mirror.
+
 ---
 
 ## Window relayout surfaces the system bars

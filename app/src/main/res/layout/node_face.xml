@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    NODE Companion, landscape. The face fills the screen; under it, a caption
+    when there is something to say, and the address only after a tap.
+
+                  (eyes)        (eyes)
+
+                NEEDS YOU · node01-afterlife
+              http://192.168.1.50:8081/k7m2x9qa4c/
+
+    textSize values are dp (see dimens.xml) so the system font-scale slider
+    cannot reflow a fixed-function appliance layout. Hence SpUsage below.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/node_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/node_bg"
+    android:filterTouchesWhenObscured="true"
+    tools:ignore="SpUsage">
+
+    <dev.node01.afterlife.FaceView
+        android:id="@+id/face"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="@dimen/text_margin"
+        android:gravity="center"
+        android:orientation="vertical">
+
+        <!-- What needs you, what is done, or a desk note. -->
+        <TextView
+            android:id="@+id/caption"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:maxLines="2"
+            android:ellipsize="end"
+            android:textColor="@color/node_secondary"
+            android:textSize="@dimen/caption"
+            android:fontFamily="monospace"
+            android:letterSpacing="0.06"
+            android:includeFontPadding="false"
+            android:visibility="invisible"
+            tools:text="NEEDS YOU · node01-afterlife"
+            tools:visibility="visible" />
+
+        <!-- The address, or why something is not working. Shown after a tap. -->
+        <TextView
+            android:id="@+id/status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/text_gap"
+            android:textColor="@color/node_dim"
+            android:textSize="@dimen/status"
+            android:fontFamily="monospace"
+            android:letterSpacing="0.04"
+            android:includeFontPadding="false"
+            android:visibility="invisible"
+            tools:text="http://192.168.1.50:8081/k7m2x9qa4c/"
+            tools:visibility="visible" />
+    </LinearLayout>
+
+</FrameLayout>

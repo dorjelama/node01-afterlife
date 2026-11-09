@@ -2,8 +2,10 @@
 <resources>
     <!-- Sizes are in dp, not sp, on purpose. NODE is a fixed-function appliance:
          MIUI's system font-scale slider must not be able to reflow the layout.
-         Lint's SpUsage warning is suppressed in the layout for this reason. -->
-    <dimen name="cam_status">28dp</dimen>
-    <dimen name="cam_url">18dp</dimen>
-    <dimen name="cam_gap">18dp</dimen>
+         Lint's SpUsage warning is suppressed in the layout for this reason.
+         The eyes size themselves from the screen height in FaceView. -->
+    <dimen name="caption">22dp</dimen>
+    <dimen name="status">14dp</dimen>
+    <dimen name="text_gap">10dp</dimen>
+    <dimen name="text_margin">22dp</dimen>
 </resources>

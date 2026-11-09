@@ -9,14 +9,16 @@ android {
     buildToolsVersion = "34.0.0"
 
     defaultConfig {
-        applicationId = "dev.node01.afterlife"
+        // Its own app, installed alongside the NODE webcam (dev.node01.afterlife,
+        // on feature/webcam). The Kotlin namespace stays shared.
+        applicationId = "dev.node01.companion"
         // The target hardware is a Redmi Note 8 on Android 11 (API 30). Pinning
         // minSdk to 30 lets us use WindowInsetsController directly with no
         // legacy systemUiVisibility fallback path.
         minSdk = 30
         targetSdk = 34
-        versionCode = 2
-        versionName = "2.0"
+        versionCode = 1
+        versionName = "1.0"
     }
 
     buildTypes {

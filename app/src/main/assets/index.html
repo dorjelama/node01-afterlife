@@ -3,97 +3,128 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>NODE</title>
+<title>NODE Companion</title>
 <!-- Empty icon: the browser's own /favicon.ico request would only hit a 404. -->
 <link rel="icon" href="data:,">
 <style>
   :root { color-scheme: dark; }
-  html, body { margin: 0; height: 100%; background: #000; color: #c4c4c4;
-               font: 14px/1.4 ui-monospace, Menlo, Consolas, monospace; }
-  body { display: flex; flex-direction: column; }
-  img { flex: 1; min-height: 0; width: 100%; object-fit: contain; }
-  nav { display: flex; gap: 12px; padding: 12px 16px; }
-  button, a { color: inherit; background: none; border: 1px solid #555; border-radius: 0;
-              padding: 8px 14px; font: inherit; text-decoration: none; cursor: pointer; }
-  button[aria-pressed="true"] { color: #ffb000; border-color: #ffb000; }
+  html, body { margin: 0; background: #000; color: #c4c4c4;
+               font: 14px/1.5 ui-monospace, Menlo, Consolas, monospace; }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 16px; letter-spacing: .12em; color: #e8e8e8; margin: 0 0 4px; }
+  h2 { font-size: 13px; letter-spacing: .12em; color: #e8e8e8; margin: 36px 0 8px; }
+  p { margin: 8px 0; color: #9a9a9a; }
+  form, .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  input, select, button { font: inherit; color: inherit; background: #000; border: 1px solid #555;
+                          border-radius: 0; padding: 8px 12px; }
+  input { flex: 1 1 260px; min-width: 0; }
+  button { cursor: pointer; }
+  button:hover, button:focus-visible { border-color: #ffb000; color: #ffb000; outline: none; }
+  textarea { width: 100%; box-sizing: border-box; height: 300px; resize: vertical; background: #0b0b0b;
+             color: #c4c4c4; border: 1px solid #333; padding: 12px; font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace; }
+  .said { min-height: 1.5em; color: #ffb000; }
+  code { color: #e8e8e8; }
 </style>
 </head>
 <body>
-<img id="live" src="video" alt="Live view from the NODE camera">
-<nav>
-  <button id="sound" type="button" aria-pressed="false">Sound</button>
-  <a href="rec/">Recordings</a>
-</nav>
+<main>
+<h1>NODE COMPANION</h1>
+<p>The face on your desk. Nothing it sees leaves the phone.</p>
+
+<h2>DESK NOTE</h2>
+<form id="note">
+  <input id="text" name="text" maxlength="140" required autocomplete="off"
+         placeholder="Back in 10 · stretch · drink water" aria-label="Note">
+  <select id="in" name="in" aria-label="When">
+    <option value="0">now</option>
+    <option value="5">in 5 min</option>
+    <option value="10">in 10 min</option>
+    <option value="15">in 15 min</option>
+    <option value="30">in 30 min</option>
+    <option value="60">in 1 hour</option>
+  </select>
+  <button type="submit">Send</button>
+</form>
+<p class="said" id="note-said" role="status"></p>
+<p>The note shows in amber under the eyes. Tap the screen or wave over its top edge to dismiss it.</p>
+
+<h2>CLAUDE CODE</h2>
+<p>Add these hooks to <code>~/.claude/settings.json</code> on the PC, merged into any
+<code>hooks</code> you already have. Each runs in the background and gives up after
+2 seconds, so a sleeping phone never slows Claude down. The address is filled in for
+this phone.</p>
+<textarea id="hooks" readonly spellcheck="false" aria-label="Hook settings"></textarea>
+<div class="row">
+  <button type="button" id="copy">Copy</button>
+  <span class="said" id="copy-said" role="status"></span>
+</div>
+<p>Try it without Claude:</p>
+<div class="row">
+  <button type="button" data-event="UserPromptSubmit">Working</button>
+  <button type="button" data-event="PermissionRequest">Needs you</button>
+  <button type="button" data-event="Stop">Done</button>
+  <button type="button" data-event="SessionEnd">Clear</button>
+</div>
+<p>NODE reads only the event name, session id, project folder and notification type of
+each event. Your prompts and tool output are sent over plain HTTP on your Wi-Fi, so keep
+this to a network you trust.</p>
+</main>
+
 <script>
-// Video is an MJPEG stream the <img> plays natively. If it drops (the phone
-// left the NODE app, or Wi-Fi blinked), keep retrying.
-const live = document.getElementById('live');
-live.onerror = () => setTimeout(() => { live.src = 'video?' + Date.now(); }, 2000);
+// Everything is relative to this page, which lives under the phone's key.
+const base = location.href.replace(/[?#].*$/, '').replace(/[^/]*$/, '');
 
-// Sound is raw 16-bit mono PCM at 48 kHz, scheduled with plain Web Audio.
-// AudioWorklet and WebCodecs would be tidier, but both need HTTPS and the
-// phone only speaks plain HTTP on the LAN.
-const RATE = 48000;
-const LEAD = 0.15;      // seconds of buffer against Wi-Fi jitter
-const MAX_LAG = 0.5;    // past this, drop audio to catch up with the video
-const button = document.getElementById('sound');
-let ctx = null;
-
-function stopSound() {
-  if (ctx) ctx.close();
-  ctx = null;
-  button.setAttribute('aria-pressed', 'false');
-}
-
-// Browsers only allow audio to start from a click.
-button.onclick = () => {
-  if (ctx) return stopSound();
-  const audio = ctx = new AudioContext({ sampleRate: RATE });
-  button.setAttribute('aria-pressed', 'true');
-  play(audio).catch(() => {}).finally(() => { if (ctx === audio) stopSound(); });
+// -- desk note ------------------------------------------------------------
+const noteSaid = document.getElementById('note-said');
+document.getElementById('note').onsubmit = async (e) => {
+  e.preventDefault();
+  const text = document.getElementById('text').value.trim();
+  const minutes = Number(document.getElementById('in').value);
+  if (!text) return;
+  try {
+    const res = await fetch('note', { method: 'POST', body: new URLSearchParams({ text, in: minutes }) });
+    if (!res.ok) throw new Error(res.status);
+    const at = new Date(Date.now() + minutes * 60000);
+    noteSaid.textContent = minutes === 0 ? 'Sent. Showing now.'
+      : 'Sent. Shows at ' + at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + '.';
+    document.getElementById('text').value = '';
+  } catch (err) {
+    noteSaid.textContent = 'Not sent: is NODE Companion open on the phone?';
+  }
 };
 
-async function play(audio) {
-  // The context's clock stands still until the audio device is up; chunks
-  // scheduled before then would pile up as permanent extra delay.
-  await audio.resume();
-  const res = await fetch('audio', { cache: 'no-store' });
-  if (!res.ok) throw new Error('audio ' + res.status);
-  const reader = res.body.getReader();
-  let carry = new Uint8Array(0);  // an odd trailing byte from the last read
-  let next = 0;                   // when the next chunk starts, in context time
-  let catchingUp = false;
+// -- Claude Code hooks ----------------------------------------------------
+// Single quotes around @- keep both Git Bash and PowerShell from reading it.
+const command = "curl.exe -s -m 2 -H Content-Type:application/json --data-binary '@-' " + base + 'claude';
+const hook = { type: 'command', command, async: true };
+const events = ['UserPromptSubmit', 'PermissionRequest', 'Notification', 'PostToolUse', 'Stop', 'SessionEnd'];
+const settings = { hooks: Object.fromEntries(events.map((e) => [e, [{ hooks: [hook] }]])) };
+const hooks = document.getElementById('hooks');
+hooks.value = JSON.stringify(settings, null, 2);
+
+const copySaid = document.getElementById('copy-said');
+document.getElementById('copy').onclick = async () => {
   try {
-    for (;;) {
-      const { value, done } = await reader.read();
-      // Sound may have been switched off while the read was pending.
-      if (done || audio.state === 'closed') return;
-      const bytes = new Uint8Array(carry.length + value.length);
-      bytes.set(carry);
-      bytes.set(value, carry.length);
-      const even = bytes.length & ~1;
-      carry = bytes.slice(even);
-      if (even === 0) continue;
-
-      const pcm = new Int16Array(bytes.slice(0, even).buffer);
-      const now = audio.currentTime;
-      if (next < now) next = now + LEAD;             // first chunk, or an underrun
-      if (next > now + MAX_LAG) catchingUp = true;   // a backlog arrived at once
-      if (catchingUp && next > now + LEAD) continue; // drop sound until back in sync
-      catchingUp = false;
-
-      const buffer = audio.createBuffer(1, pcm.length, RATE);
-      const samples = buffer.getChannelData(0);
-      for (let i = 0; i < pcm.length; i++) samples[i] = pcm[i] / 32768;
-      const source = audio.createBufferSource();
-      source.buffer = buffer;
-      source.connect(audio.destination);
-      source.start(next);
-      next += buffer.duration;
+    // The clipboard API needs HTTPS; on plain HTTP fall back to the old way.
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(hooks.value);
+    } else {
+      hooks.select();
+      if (!document.execCommand('copy')) throw new Error('copy');
     }
-  } finally {
-    reader.cancel();
+    copySaid.textContent = 'Copied.';
+  } catch (err) {
+    hooks.select();
+    copySaid.textContent = 'Selected: press Ctrl+C.';
   }
+};
+
+for (const button of document.querySelectorAll('[data-event]')) {
+  button.onclick = () => fetch('claude', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ hook_event_name: button.dataset.event, session_id: 'page-test', cwd: 'test' }),
+  }).catch(() => {});
 }
 </script>
 </body>

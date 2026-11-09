@@ -1,22 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Adaptive-icon foreground: a hollow square with a centre mark. Vector only,
-     so the repo carries no binary image assets. The 108x108 canvas has a 72x72
-     safe zone; everything here stays well inside it. -->
+<!-- Adaptive-icon foreground: the companion's two pill eyes, so it is easy to
+     tell from the NODE webcam's square. Vector only, so the repo carries no
+     binary image assets. The 108x108 canvas has a 72x72 safe zone; everything
+     here stays well inside it. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Outer frame -->
-    <path
-        android:strokeColor="#FFE8E8E8"
-        android:strokeWidth="3"
-        android:fillColor="#00000000"
-        android:pathData="M38,38 L70,38 L70,70 L38,70 Z" />
-
-    <!-- Centre mark -->
+    <!-- Left eye: 10 wide, 26 tall, fully rounded ends. -->
     <path
         android:fillColor="#FFE8E8E8"
-        android:pathData="M50,50 L58,50 L58,58 L50,58 Z" />
+        android:pathData="M42,41 A5,5 0 0 1 47,46 L47,62 A5,5 0 0 1 37,62 L37,46 A5,5 0 0 1 42,41 Z" />
+
+    <!-- Right eye. -->
+    <path
+        android:fillColor="#FFE8E8E8"
+        android:pathData="M66,41 A5,5 0 0 1 71,46 L71,62 A5,5 0 0 1 61,62 L61,46 A5,5 0 0 1 66,41 Z" />
 </vector>

@@ -3,36 +3,43 @@ package dev.node01.afterlife
 import android.Manifest
 import android.app.Activity
 import android.content.pm.PackageManager
+import android.net.wifi.WifiManager
 import android.os.Bundle
-import android.os.Environment
+import android.os.SystemClock
 import android.util.Log
 import android.view.MotionEvent
+import android.view.Surface
+import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
 import android.widget.TextView
-import java.io.File
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.security.SecureRandom
 
 /**
- * The whole of NODE: a Wi-Fi camera.
+ * The whole of NODE Companion: a face on the desk that notices you, and tells
+ * you when Claude Code on the PC needs you or has finished.
  *
- * While this activity is in the foreground the rear camera records loop clips
- * to the phone and serves a live view, with sound, to any browser on the LAN.
- * Leaving it stops everything -- nothing runs in the background. Android only
- * lets the app in front use the camera and microphone, which is why the screen
- * is held on, at the panel minimum, instead of being released.
+ * Everything starts in [onStart] and stops in [onStop] -- the camera, the
+ * sensors, the LAN server and the face's own timers. Nothing runs in the
+ * background. Android only lets the app in front use the camera, which is
+ * why the screen is held on.
+ *
+ * All state lives on the main thread. Every input -- a face, a knock, a hook
+ * event, the half-second heartbeat -- ends in [reevaluate], which asks [Mood]
+ * what to show.
  */
 class NodeActivity : Activity() {
 
+    private lateinit var face: FaceView
+    private lateinit var captionView: TextView
     private lateinit var statusView: TextView
-    private lateinit var urlView: TextView
 
     private val prefs by lazy { getSharedPreferences("node", MODE_PRIVATE) }
 
-    /** Random per install, persisted, so the address on the screen stays put. */
+    /** Random per install, persisted, so the address stays put. */
     private val urlKey by lazy {
         prefs.getString(KEY_URL_KEY, null) ?: newUrlKey().also {
             prefs.edit().putString(KEY_URL_KEY, it).apply()
@@ -41,39 +48,78 @@ class NodeActivity : Activity() {
 
     private val page by lazy { assets.open("index.html").use { it.readBytes() } }
 
-    private val recorder by lazy {
-        LoopRecorder(getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: File(filesDir, "clips"))
+    private val sessions = ClaudeSessions()
+    private val inbox by lazy { Inbox.decode(prefs.getString(KEY_INBOX, null)) }
+    private val chirp = Chirp()
+
+    private var presence: Presence? = null
+    private var senses: Senses? = null
+    private var server: HttpServer? = null
+
+    /**
+     * Without it the phone's Wi-Fi dozes between packets, and the first
+     * request after a quiet spell took up to three seconds to connect --
+     * longer than a hook waits. The system honours a low-latency lock only
+     * while the app is in front with the screen on, which NODE always is.
+     */
+    private val wifiLock by lazy {
+        applicationContext.getSystemService(WifiManager::class.java)
+            ?.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "node:lan")
+            ?.apply { setReferenceCounted(false) }
     }
 
-    // A couple of frames, or half a second of sound, per viewer before dropping.
-    private val jpegHub = Hub(capacity = 2)
-    private val pcmHub = Hub(capacity = 25)
+    // What NODE knows, in elapsedRealtime milliseconds.
+    private var faceAtMs = 0L
+    private var presentSinceMs = 0L
+    private var lastAbsenceMs = 0L
+    private var faceX = 0f
+    private var faceY = 0f
+    private var faceLogMs = 0L
+    private var dark = false
+    private var knockAtMs = NEVER
+    private var petAtMs = NEVER
+    private var undimUntilMs = 0L
+    private var tappedUrl = ""
+    private var shownNote: Inbox.Note? = null
+    private var lastLook: Look? = null
 
-    private var camcorder: Camcorder? = null
-    private var server: HttpServer? = null
+    /** What the status line would say if something were wrong; null if all is well. */
+    private var problem: String? = null
 
     /** True only while a touch that began at a screen edge is live. */
     private var barsRequestedBySwipe = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.node_cam)
-        statusView = findViewById(R.id.cam_status)
-        urlView = findViewById(R.id.cam_url)
+        setContentView(R.layout.node_face)
+        face = findViewById(R.id.face)
+        captionView = findViewById(R.id.caption)
+        statusView = findViewById(R.id.status)
         configureWindow()
     }
 
     override fun onStart() {
         super.onStart()
-        setBrightness(BRIGHTNESS)
-        if (PERMISSIONS.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }) {
-            startCamera()
-        } else {
-            statusView.setText(R.string.status_no_permission)
-            requestPermissions(PERMISSIONS, REQUEST_PERMISSIONS)
-        }
+        val now = SystemClock.elapsedRealtime()
+        // Nobody seen yet: treat the start as the moment you were last here.
+        faceAtMs = now - Mood.FACE_GRACE_MS - 1
+        presentSinceMs = now
+        lastAbsenceMs = 0L
+        lastLook = null
+
+        face.start()
+        chirp.start()
+        startSenses()
+        wifiLock?.acquire()
         startServer()
-        showUrl()
+        if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            startPresence()
+        } else {
+            problem = getString(R.string.status_no_permission)
+            requestPermissions(arrayOf(Manifest.permission.CAMERA), REQUEST_PERMISSIONS)
+        }
+        reevaluate()
+        heartbeat.run()
     }
 
     override fun onRequestPermissionsResult(
@@ -85,18 +131,23 @@ class NodeActivity : Activity() {
             grantResults.isNotEmpty() &&
             grantResults.all { it == PackageManager.PERMISSION_GRANTED }
         ) {
-            startCamera()
+            problem = null
+            startPresence()
         }
     }
 
     override fun onStop() {
         server?.stop()
         server = null
-        // Finalizes the clip in progress, so leaving NODE never costs footage.
-        stopCamera()
+        wifiLock?.release()
+        stopPresence()
+        senses?.stop()
+        senses = null
+        chirp.stop()
+        face.stop()
         // Do not leave delayed callbacks behind when the screen goes off.
-        urlView.removeCallbacks(restoreDim)
-        urlView.removeCallbacks(retryCamera)
+        statusView.removeCallbacks(heartbeat)
+        statusView.removeCallbacks(retryCamera)
         window.decorView.removeCallbacks(reHideBars)
         super.onStop()
     }
@@ -108,67 +159,224 @@ class NodeActivity : Activity() {
         if (hasFocus) hideSystemBars()
     }
 
-    // -- camera ------------------------------------------------------------
+    // -- what NODE shows ---------------------------------------------------
 
-    private fun startCamera() {
-        if (camcorder != null) return
-        statusView.setText(R.string.status_rec)
-        val cam = Camcorder(this, recorder, jpegHub, pcmHub, ::restartCamera)
-        camcorder = cam
-        try {
-            cam.start()
-        } catch (e: Exception) {
-            restartCamera(e.message ?: e.javaClass.simpleName)
+    /** Time-based moods -- a knock wearing off, sleep coming on -- need a pulse. */
+    private val heartbeat = object : Runnable {
+        override fun run() {
+            reevaluate()
+            statusView.removeCallbacks(this)
+            statusView.postDelayed(this, HEARTBEAT_MS)
         }
     }
 
-    private fun stopCamera() {
-        camcorder?.stop()
-        camcorder = null
+    private fun reevaluate() {
+        val now = SystemClock.elapsedRealtime()
+        val present = now - faceAtMs <= Mood.FACE_GRACE_MS
+        val presentFor = if (present) now - presentSinceMs else 0L
+        // You are looking: what NODE has been showing you counts as seen.
+        if (present) sessions.acknowledge(now, presentSinceMs)
+
+        val note = inbox.due(System.currentTimeMillis())
+        if (note != null && note != shownNote && !dark) chirp.attention()
+        shownNote = note
+
+        val look = Mood.decide(
+            Mood.Inputs(
+                present = present,
+                presentForMs = presentFor,
+                awayForMs = if (present) 0L else now - faceAtMs,
+                lastAbsenceMs = lastAbsenceMs,
+                faceX = faceX,
+                faceY = faceY,
+                dark = dark,
+                knockAgoMs = now - knockAtMs,
+                petAgoMs = now - petAtMs,
+                claude = sessions.summary(now),
+                note = note?.text,
+            ),
+        )
+        if (look != lastLook) {
+            if (look.expression != lastLook?.expression || look.caption != lastLook?.caption) {
+                Log.d(TAG, "look ${look.expression} ${look.light} caption=${look.caption != null}")
+            }
+            lastLook = look
+            face.show(look)
+            showCaption(look)
+        }
+        val undimmed = now < undimUntilMs
+        setBrightness(
+            when {
+                undimmed -> WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                look.light == Light.FULL -> WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                look.light == Light.DOZE -> DOZE_BRIGHTNESS
+                else -> MIN_BRIGHTNESS
+            },
+        )
+        showStatus(undimmed)
+    }
+
+    private fun showCaption(look: Look) {
+        val text = when (val c = look.caption) {
+            null -> null
+            is Caption.Note -> c.text
+            is Caption.NeedsYou -> getString(R.string.caption_needs_you_fmt, c.project) + more(c.others)
+            is Caption.Done -> getString(R.string.caption_done_fmt, c.project) + more(c.others)
+        }
+        captionView.text = text
+        captionView.setTextColor(getColor(if (look.amber) R.color.node_accent else R.color.node_secondary))
+        captionView.visibility = if (text == null) View.INVISIBLE else View.VISIBLE
+    }
+
+    private fun more(others: Int) = if (others > 0) getString(R.string.caption_more_fmt, others) else ""
+
+    /** A problem always; otherwise the address, for a while after a tap. */
+    private fun showStatus(undimmed: Boolean) {
+        val text = problem ?: if (undimmed) tappedUrl else null
+        if (statusView.text.toString() != text.orEmpty()) statusView.text = text
+        statusView.visibility = if (text == null) View.INVISIBLE else View.VISIBLE
+    }
+
+    // -- inputs ------------------------------------------------------------
+
+    private fun onFace(x: Float, y: Float) {
+        val now = SystemClock.elapsedRealtime()
+        if (now - faceAtMs > Mood.FACE_GRACE_MS) {
+            // Arrived. Remember how long you were gone, and say hello if it was a while.
+            lastAbsenceMs = now - faceAtMs
+            presentSinceMs = now
+            if (lastAbsenceMs >= Mood.SEARCH_MS) face.doubleBlink()
+        }
+        faceAtMs = now
+        faceX = x
+        faceY = y
+        // Enough to check the eyes point the right way, not a running log of you.
+        if (now - faceLogMs >= 1_000L) {
+            faceLogMs = now
+            Log.d(TAG, "face %.2f %.2f".format(x, y))
+        }
+        reevaluate()
+    }
+
+    private fun onKnock() {
+        knockAtMs = SystemClock.elapsedRealtime()
+        reevaluate()
+    }
+
+    /** A wave or a tap: dismisses a due note, otherwise pleases the face. */
+    private fun onPet() {
+        if (inbox.dismiss(System.currentTimeMillis())) {
+            saveInbox()
+        } else {
+            petAtMs = SystemClock.elapsedRealtime()
+        }
+        reevaluate()
+    }
+
+    private fun onDark(value: Boolean) {
+        dark = value
+        reevaluate()
+    }
+
+    /** On the main thread. Only four fields of the hook's JSON ever arrive here. */
+    private fun onClaude(fields: Map<String, String>) {
+        val now = SystemClock.elapsedRealtime()
+        val entered = sessions.onEvent(fields, now)
+        Log.d(TAG, "claude ${fields[ClaudeSessions.EVENT]} -> ${entered ?: "no change"}")
+        if (!dark) {
+            when (entered) {
+                ClaudeSessions.State.NEEDS_YOU -> chirp.attention()
+                ClaudeSessions.State.DONE -> chirp.done()
+                else -> Unit
+            }
+        }
+        reevaluate()
+    }
+
+    private fun onNote(text: String, inMinutes: Int) {
+        if (inbox.add(text, inMinutes, System.currentTimeMillis()) != null) saveInbox()
+        reevaluate()
+    }
+
+    private fun saveInbox() {
+        prefs.edit().putString(KEY_INBOX, inbox.encode()).apply()
+    }
+
+    // -- camera, sensors, server ---------------------------------------------
+
+    private fun startPresence() {
+        if (presence != null) return
+        val p = Presence(this, displayDegrees(), ::onFace, ::reevaluate, ::restartPresence)
+        presence = p
+        try {
+            p.start()
+        } catch (e: Exception) {
+            restartPresence(e.message ?: e.javaClass.simpleName)
+        }
+    }
+
+    private fun stopPresence() {
+        presence?.stop()
+        presence = null
     }
 
     /**
-     * The camera, an encoder or the microphone failed: another app took the
-     * camera, a media service restarted, the phone overheated. An appliance
-     * does not sit on an error, so tear down and try again shortly.
+     * The camera failed: another app took it, a media service restarted. An
+     * appliance does not sit on an error, so tear down and try again shortly.
+     * Until then NODE cannot see you, and says so.
      */
-    private fun restartCamera(reason: String) {
-        showError(reason)
-        stopCamera()
-        urlView.removeCallbacks(retryCamera)
-        urlView.postDelayed(retryCamera, RETRY_MS)
+    private fun restartPresence(reason: String) {
+        Log.e(TAG, reason)
+        problem = getString(R.string.status_error_fmt, reason)
+        stopPresence()
+        statusView.removeCallbacks(retryCamera)
+        statusView.postDelayed(retryCamera, RETRY_MS)
+        reevaluate()
     }
 
-    private val retryCamera = Runnable { startCamera() }
+    private val retryCamera = Runnable {
+        problem = null
+        startPresence()
+        reevaluate()
+    }
 
-    /**
-     * Independent of the camera: a busy port must not stop the recording, and
-     * a failed camera must not hide the clips already made.
-     */
+    private fun startSenses() {
+        if (senses != null) return
+        senses = Senses(this, ::onKnock, ::onPet, ::onDark).also { it.start() }
+    }
+
+    /** Independent of the camera: a busy port must not blind the face. */
     private fun startServer() {
         if (server != null) return
-        val http = HttpServer(urlKey, page, recorder, jpegHub, pcmHub)
+        // Requests arrive on the server's threads. Each is handed to the main
+        // thread, and dropped there if this server has since been stopped.
+        lateinit var http: HttpServer
+        http = HttpServer(
+            urlKey,
+            page,
+            onClaude = { fields -> mainExecutor.execute { if (server === http) onClaude(fields) } },
+            onNote = { text, minutes -> mainExecutor.execute { if (server === http) onNote(text, minutes) } },
+        )
         server = http
         try {
             http.start()
         } catch (e: Exception) {
-            showError("port ${HttpServer.PORT}: ${e.message}")
+            val reason = "port ${HttpServer.PORT}: ${e.message}"
+            Log.e(TAG, reason)
+            problem = getString(R.string.status_error_fmt, reason)
         }
     }
 
-    private fun showError(reason: String) {
-        Log.e(TAG, reason)
-        statusView.text = getString(R.string.status_error_fmt, reason)
+    private fun displayDegrees(): Int = when (display?.rotation) {
+        Surface.ROTATION_90 -> 90
+        Surface.ROTATION_180 -> 180
+        Surface.ROTATION_270 -> 270
+        else -> 0
     }
 
-    /** Re-read on every tap too: after a reboot NODE can start before Wi-Fi does. */
-    private fun showUrl() {
-        val address = wifiAddress()
-        urlView.text = if (address == null) {
-            getString(R.string.url_no_wifi)
-        } else {
-            getString(R.string.url_fmt, address, HttpServer.PORT, urlKey)
-        }
+    private fun urlText(): String {
+        val address = wifiAddress() ?: return getString(R.string.url_no_wifi)
+        return getString(R.string.url_fmt, address, HttpServer.PORT, urlKey)
     }
 
     /**
@@ -199,24 +407,20 @@ class NodeActivity : Activity() {
                 WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
         }
 
-        // Hold the screen for as long as NODE is in front: the camera and the
-        // microphone stop the moment it is not.
+        // Hold the screen for as long as NODE is in front: the camera stops the
+        // moment it is not.
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-        // A tap can surface the transient bars, and that is not a focus change,
-        // so onWindowFocusChanged never fires and they simply stay up. Watch the
-        // insets instead and put them away again shortly after they appear --
-        // long enough that a deliberate swipe can still reach Home or Recents.
+        // A tap, or a brightness change, can surface the transient bars, and
+        // that is not a focus change, so onWindowFocusChanged never fires and
+        // they simply stay up. Watch the insets instead and put them away again
+        // -- after a delay only if a deliberate edge swipe asked for them.
         window.decorView.setOnApplyWindowInsetsListener { v, insets ->
             if (insets.isVisible(WindowInsets.Type.systemBars())) {
                 v.removeCallbacks(reHideBars)
                 if (barsRequestedBySwipe) {
-                    // Deliberate swipe from the bottom edge: leave them up long
-                    // enough to actually press Home or Recents.
                     v.postDelayed(reHideBars, BARS_REHIDE_MS)
                 } else {
-                    // Nobody asked for these -- a window relayout surfaced them.
-                    // Put them straight back.
                     v.post(reHideBars)
                 }
             }
@@ -274,36 +478,24 @@ class NodeActivity : Activity() {
                 barsRequestedBySwipe = isEdgeTouch(ev.x, ev.y)
                 if (!barsRequestedBySwipe) hideSystemBars()
             }
-            // A tap in the middle wakes the screen to read the address.
-            MotionEvent.ACTION_UP -> if (!barsRequestedBySwipe) undimTemporarily()
+            // A tap in the middle: show the address for a while, and pet the face.
+            MotionEvent.ACTION_UP -> if (!barsRequestedBySwipe) {
+                // Re-read on every tap: after a reboot NODE can start before Wi-Fi does.
+                tappedUrl = urlText()
+                undimUntilMs = SystemClock.elapsedRealtime() + UNDIM_MS
+                onPet()
+            }
         }
         return super.dispatchTouchEvent(ev)
     }
 
-    /**
-     * Tap to read. Rather than picking an arbitrary brighter value, NODE drops
-     * its brightness override entirely so the phone's own brightness applies,
-     * then restores the dim after [UNDIM_MS].
-     *
-     * Like the camera retry, this delayed callback is one-shot, restarted
-     * rather than stacked, and torn down in [onStop] -- not a poll.
-     */
-    private fun undimTemporarily() {
-        showUrl()
-        setBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
-        urlView.removeCallbacks(restoreDim)
-        urlView.postDelayed(restoreDim, UNDIM_MS)
-    }
-
-    private val restoreDim = Runnable { setBrightness(BRIGHTNESS) }
-
     private companion object {
         const val TAG = "NODE"
 
-        val PERMISSIONS = arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
         const val REQUEST_PERMISSIONS = 1
 
         const val KEY_URL_KEY = "url_key"
+        const val KEY_INBOX = "inbox"
 
         /**
          * 32 symbols, without the easily confused 0/o and 1/l since the key is
@@ -312,14 +504,18 @@ class NodeActivity : Activity() {
         const val URL_KEY_ALPHABET = "abcdefghijkmnpqrstuvwxyz23456789"
         const val URL_KEY_LENGTH = 10
 
-        /**
-         * Panel minimum. On an IPS panel the backlight is the screen's whole
-         * power cost, and nobody needs to read it while it films them.
-         */
-        const val BRIGHTNESS = 0.01f
+        const val NEVER = -1_000_000_000L
 
-        /** How long a tap releases the dim for. */
+        /** Away a while: dim. On an IPS panel the backlight is the whole power cost. */
+        const val DOZE_BRIGHTNESS = 0.05f
+
+        /** Asleep: the panel minimum. The closed eyes are still just visible. */
+        const val MIN_BRIGHTNESS = 0.01f
+
+        /** How long a tap shows the address and lifts the dim. */
         const val UNDIM_MS = 30_000L
+
+        const val HEARTBEAT_MS = 500L
 
         /** Wait before reopening a failed camera; long enough not to thrash. */
         const val RETRY_MS = 5_000L
