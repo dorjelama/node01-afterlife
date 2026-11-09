@@ -3,7 +3,8 @@
 **An old phone, rebuilt as a face on your desk.**
 
 A Redmi Note 8 running stock MIUI — bootloader locked, no root, no custom recovery — turned
-into a small desk companion. Two eyes on a black screen notice when you sit down, follow you,
+into a small desk companion. Two dot-matrix eyes, lit on a panel of faint dots like an LED
+display, notice when you sit down, follow you,
 doze when you leave and sleep when the lights go off. When Claude Code on your PC needs your
 approval, they turn amber and chirp, so you can step away from the keyboard and still know.
 
@@ -28,10 +29,10 @@ version lives on at `9a42e35`.
 | **Sees you** | The front camera's own face detection, done by the camera hardware. The eyes follow you, say hello with a double blink when you come back after a while, and look around the room when you have just left |
 | **Sleeps** | Away 2 minutes: sleepy and dim. Away 10 minutes, or the room dark: eyes closed, backlight at the panel minimum |
 | **Feels the desk** | Knock on the desk and it startles. Wave a hand over the top of the screen, or tap it, and it is pleased |
-| **Claude Code** | Through Claude Code hooks on your PC. While Claude works the eyes narrow and look toward the PC. When Claude needs approval or has a question: amber, wide, `NEEDS YOU · <project>`, one chirp. When it finishes: a happy face, `DONE · <project>`, a softer chirp — held until you have actually looked |
+| **Claude Code** | Through Claude Code hooks on your PC. While Claude works the eyes narrow and look toward the PC. When Claude needs approval or has a question: amber, wide, a dot-matrix **!!** beside them, `NEEDS YOU · <project>`, one chirp. When it finishes: happy **^ ^** eyes, `DONE · <project>`, a softer chirp — held until you have actually looked |
 | **Desk notes** | Send a short note from any browser, now or in a few minutes. It shows in amber; tap or wave to dismiss it |
 
-Amber means one thing: something needs you. Everything else is grey on black.
+Amber means one thing: something needs you. Everything else is white dots on black.
 
 ## Use it
 
@@ -107,8 +108,9 @@ after a quiet spell took up to three seconds to connect — longer than a hook w
 a low-latency Wi-Fi lock, which Android honours only while the app is in front with the screen
 on.
 
-**A still face costs nothing.** The eyes redraw only while they move. Blinks and glances are
-single delayed callbacks, not a frame loop.
+**A still face costs nothing.** The eyes redraw only while they move, and then only the few
+hundred lit dots: the unlit grid is drawn once per screen size. Blinks and glances are single
+delayed callbacks, not a frame loop.
 
 **Zero runtime dependencies.** Camera2's hardware face detection, `SensorManager`,
 `AudioTrack` and `java.net` are all in the platform. The two chirps are synthesized at start-up,
@@ -165,7 +167,7 @@ Everything configurable is a constant — there is no settings screen, by design
 | What | Where |
 |---|---|
 | Which side the PC is on, timings for sleepy / asleep / greeting / startle | `Mood.kt` |
-| Eye size, spacing, how far they move, blink and glance timing | `FaceView.kt` |
+| Dot grid and dot size, eye size and spacing, how far they move, blink and glance timing | `FaceView.kt` |
 | Expression shapes | `Eyes.kt` |
 | Gaze direction flips for another phone or mount | `Presence.kt` (`GAZE_FLIP_X/Y`) |
 | Knock sensitivity, wave timing, how dark is dark | `Senses.kt` |
@@ -188,7 +190,7 @@ Everything configurable is a constant — there is no settings screen, by design
 app/src/main/java/dev/node01/afterlife/
 ├── NodeActivity.kt    window, permissions, start/stop, gathers inputs, applies the look
 ├── Mood.kt            the personality: inputs → expression, gaze, caption, brightness
-├── FaceView.kt        draws and animates the eyes
+├── FaceView.kt        the dot-matrix panel: draws and animates the eyes
 ├── Eyes.kt            expression shapes and easing
 ├── Presence.kt        front camera face detection → gaze
 ├── Senses.kt          knock, wave, dark room

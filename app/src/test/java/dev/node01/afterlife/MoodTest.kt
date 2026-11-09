@@ -77,6 +77,18 @@ class MoodTest {
         val look = Mood.decide(sitting.copy(note = "stretch", claude = Summary(State.NEEDS_YOU, "x", 0, false)))
         assertEquals(Caption.Note("stretch"), look.caption)
         assertTrue(look.amber)
+        assertTrue("Claude still waits, so the !! stays", look.exclaim)
+    }
+
+    @Test
+    fun exclaimOnlyWhileClaudeWaitsForYou() {
+        assertTrue(Mood.decide(sitting.copy(claude = Summary(State.NEEDS_YOU, "x", 0, false))).exclaim)
+        assertTrue(Mood.decide(away(Mood.SLEEP_MS).copy(claude = Summary(State.NEEDS_YOU, "x", 0, false))).exclaim)
+        assertFalse("a note alone", Mood.decide(sitting.copy(note = "stretch")).exclaim)
+        assertFalse(Mood.decide(sitting.copy(claude = Summary(State.DONE, "x", 0, false))).exclaim)
+        assertFalse(Mood.decide(sitting.copy(claude = Summary(State.WORKING, "x", 0, false))).exclaim)
+        assertFalse("a knock", Mood.decide(sitting.copy(knockAgoMs = 0)).exclaim)
+        assertFalse(Mood.decide(sitting).exclaim)
     }
 
     @Test

@@ -26,6 +26,8 @@ data class Look(
     val expression: Expression,
     val gaze: Gaze,
     val amber: Boolean,
+    /** A "!!" beside the eyes: Claude is waiting for your approval. */
+    val exclaim: Boolean,
     /** True while a desk knock is fresh; the face hops once as it starts. */
     val startled: Boolean,
     val caption: Caption?,
@@ -65,6 +67,8 @@ object Mood {
             else -> null
         }
         val amber = caption is Caption.Note || caption is Caption.NeedsYou
+        // Shown whenever Claude waits on you, even while a desk note has the caption.
+        val exclaim = c?.state == ClaudeSessions.State.NEEDS_YOU
         val startled = i.knockAgoMs < KNOCK_MS
 
         val face = Gaze.At(i.faceX, i.faceY)
@@ -95,7 +99,7 @@ object Mood {
             i.awayForMs < SEARCH_MS -> Light.FULL
             else -> Light.DOZE
         }
-        return Look(expression, gaze, amber, startled, caption, light)
+        return Look(expression, gaze, amber, exclaim, startled, caption, light)
     }
 
     /** A face seen this recently still counts as present: detection flickers. */

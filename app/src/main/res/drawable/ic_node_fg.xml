@@ -1,21 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Adaptive-icon foreground: the companion's two pill eyes, so it is easy to
-     tell from the NODE webcam's square. Vector only, so the repo carries no
-     binary image assets. The 108x108 canvas has a 72x72 safe zone; everything
-     here stays well inside it. -->
+<!-- Adaptive-icon foreground: the companion's two dot-matrix eyes, as on its
+     screen, so it is easy to tell from the NODE webcam's square. Vector only,
+     so the repo carries no binary image assets. The 108x108 canvas has a 72x72
+     safe zone; everything here stays well inside it. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Left eye: 10 wide, 26 tall, fully rounded ends. -->
     <path
         android:fillColor="#FFE8E8E8"
-        android:pathData="M42,41 A5,5 0 0 1 47,46 L47,62 A5,5 0 0 1 37,62 L37,46 A5,5 0 0 1 42,41 Z" />
-
-    <!-- Right eye. -->
-    <path
-        android:fillColor="#FFE8E8E8"
-        android:pathData="M66,41 A5,5 0 0 1 71,46 L71,62 A5,5 0 0 1 61,62 L61,46 A5,5 0 0 1 66,41 Z" />
+        android:pathData="M37.70,49.40 a1.7,1.7 0 1,0 3.40,0 a1.7,1.7 0 1,0 -3.40,0 M37.70,54.00 a1.7,1.7 0 1,0 3.40,0 a1.7,1.7 0 1,0 -3.40,0 M37.70,58.60 a1.7,1.7 0 1,0 3.40,0 a1.7,1.7 0 1,0 -3.40,0 M42.30,44.80 a1.7,1.7 0 1,0 3.40,0 a1.7,1.7 0 1,0 -3.40,0 M42.30,49.40 a1.7,1.7 0 1,0 3.40,0 a1.7,1.7 0 1,0 -3.40,0 M42.30,54.00 a1.7,1.7 0 1,0 3.40,0 a1.7,1.7 0 1,0 -3.40,0 M42.30,58.60 a1.7,1.7 0 1,0 3.40,0 a1.7,1.7 0 1,0 -3.40,0 M42.30,63.20 a1.7,1.7 0 1,0 3.40,0 a1.7,1.7 0 1,0 -3.40,0 M46.90,49.40 a1.7,1.7 0 1,0 3.40,0 a1.7,1.7 0 1,0 -3.40,0 M46.90,54.00 a1.7,1.7 0 1,0 3.40,0 a1.7,1.7 0 1,0 -3.40,0 M46.90,58.60 a1.7,1.7 0 1,0 3.40,0 a1.7,1.7 0 1,0 -3.40,0 M57.70,49.40 a1.7,1.7 0 1,0 3.40,0 a1.7,1.7 0 1,0 -3.40,0 M57.70,54.00 a1.7,1.7 0 1,0 3.40,0 a1.7,1.7 0 1,0 -3.40,0 M57.70,58.60 a1.7,1.7 0 1,0 3.40,0 a1.7,1.7 0 1,0 -3.40,0 M62.30,44.80 a1.7,1.7 0 1,0 3.40,0 a1.7,1.7 0 1,0 -3.40,0 M62.30,49.40 a1.7,1.7 0 1,0 3.40,0 a1.7,1.7 0 1,0 -3.40,0 M62.30,54.00 a1.7,1.7 0 1,0 3.40,0 a1.7,1.7 0 1,0 -3.40,0 M62.30,58.60 a1.7,1.7 0 1,0 3.40,0 a1.7,1.7 0 1,0 -3.40,0 M62.30,63.20 a1.7,1.7 0 1,0 3.40,0 a1.7,1.7 0 1,0 -3.40,0 M66.90,49.40 a1.7,1.7 0 1,0 3.40,0 a1.7,1.7 0 1,0 -3.40,0 M66.90,54.00 a1.7,1.7 0 1,0 3.40,0 a1.7,1.7 0 1,0 -3.40,0 M66.90,58.60 a1.7,1.7 0 1,0 3.40,0 a1.7,1.7 0 1,0 -3.40,0" />
 </vector>
