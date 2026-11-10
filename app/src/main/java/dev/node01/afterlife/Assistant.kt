@@ -144,9 +144,12 @@ object Assistant {
     private fun remind(t: String): Command {
         val ms = duration(t)
         val text = if (langOf(t) == Lang.NE) {
-            t.split(' ')
-                .filterNot { w -> NE_REMIND_WORDS.any { w.startsWith(it) } || unitOf(w) != null || numberWord(w) != null }
-                .joinToString(" ")
+            // Drop the reminding words and the "N minutes" phrase; what is left is the reminder.
+            val words = t.split(' ')
+            val unitAt = words.indexOfFirst { unitOf(it) != null }
+            words.filterIndexed { i, w ->
+                NE_REMIND_WORDS.none { w.startsWith(it) } && i != unitAt && !(i == unitAt - 1 && numberWord(w) != null)
+            }.joinToString(" ")
         } else {
             t.substringAfter("remind me", t)
                 .replace(Regex("""\b(in|after)\s+[\w\s'-]*?\b(seconds?|secs?|minutes?|mins?|hours?|hrs?)\b"""), " ")

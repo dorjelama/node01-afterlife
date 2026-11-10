@@ -5,10 +5,24 @@
          activity is in front, and nothing it sees leaves the phone. INTERNET
          lets the LAN server hear from the PC. WAKE_LOCK holds a low-latency
          Wi-Fi lock, again only while in front, so a hook is answered at once
-         instead of after the radio wakes. No microphone. -->
+         instead of after the radio wakes. RECORD_AUDIO is for voice commands:
+         the microphone is open only after a tap or a wave, for one sentence,
+         never in the background and never for a wake word. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- From Android 11 an app cannot even see the speech recognizer or the
+         text-to-speech engine unless it declares that it looks for them. -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
 
     <application
         android:allowBackup="false"

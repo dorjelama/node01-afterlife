@@ -12,19 +12,20 @@ import android.util.Log
 import kotlin.math.sqrt
 
 /**
- * The phone's other senses: a knock on the desk (accelerometer), a hand waved
- * over the top of the screen (proximity) and the room lights going off
- * (ambient light).
+ * The phone's other senses: a knock on the desk or a shake in the hand
+ * (accelerometer), a hand waved over the top of the screen (proximity) and
+ * the room lights going off (ambient light).
  *
- * Sensor events arrive on a private thread; [onKnock], [onWave] and [onDark]
- * are delivered on the main thread. Every listener is registered in [start]
- * and removed in [stop]. A missing sensor just means that sense is absent.
+ * Sensor events arrive on a private thread; [onKnock], [onWave], [onDark] and
+ * [onShake] are delivered on the main thread. Every listener is registered in
+ * [start] and removed in [stop]. A missing sensor just means that sense is absent.
  */
 class Senses(
     private val context: Context,
     private val onKnock: () -> Unit,
     private val onWave: () -> Unit,
     private val onDark: (Boolean) -> Unit,
+    private val onShake: () -> Unit,
 ) : SensorEventListener {
 
     @Volatile
@@ -40,6 +41,10 @@ class Senses(
     private var gz = 0f
     private var settled = 0
     private var lastKnockMs = 0L
+    private var lastHandledMs = 0L
+    private var shakeSinceMs = 0L
+    private var shakeSamples = 0
+    private var lastShakeMs = 0L
     private var nearSinceMs = -1L
     private var proximityRange = 0f
     private var dark = false
@@ -87,7 +92,9 @@ class Senses(
     /**
      * A knock is a short, sharp jolt on top of gravity. A slow low-pass tracks
      * gravity; what is left over is the jolt. A jolt big enough to be the phone
-     * being picked up or knocked over is not a knock.
+     * being picked up or knocked over is not a knock, nor is anything just
+     * after one, while gravity is still settling. Many such jolts close
+     * together are a shake.
      */
     private fun onAcceleration(v: FloatArray) {
         if (settled < SETTLE_SAMPLES) {
@@ -106,7 +113,23 @@ class Senses(
         val dz = v[2] - gz
         val jolt = sqrt(dx * dx + dy * dy + dz * dz)
         val now = SystemClock.elapsedRealtime()
-        if (jolt > KNOCK_MS2 && jolt < HANDLED_MS2 && now - lastKnockMs > KNOCK_REFRACTORY_MS) {
+        if (jolt >= HANDLED_MS2) lastHandledMs = now
+        if (jolt > SHAKE_MS2) {
+            if (now - shakeSinceMs > SHAKE_WINDOW_MS) {
+                shakeSinceMs = now
+                shakeSamples = 0
+            }
+            shakeSamples++
+            if (shakeSamples >= SHAKE_SAMPLES && now - lastShakeMs > SHAKE_REFRACTORY_MS) {
+                lastShakeMs = now
+                shakeSamples = 0
+                Log.d(TAG, "shake")
+                deliver(onShake)
+            }
+        }
+        if (jolt > KNOCK_MS2 && jolt < HANDLED_MS2 && now - lastKnockMs > KNOCK_REFRACTORY_MS &&
+            now - lastHandledMs > HANDLED_QUIET_MS
+        ) {
             lastKnockMs = now
             Log.d(TAG, "knock %.2f m/s²".format(jolt))
             deliver(onKnock)
@@ -173,6 +196,15 @@ class Senses(
         /** Past this the phone is being handled, not knocked near. */
         const val HANDLED_MS2 = 8f
         const val KNOCK_REFRACTORY_MS = 600L
+
+        /** No knocks this soon after the phone was handled: gravity is still settling. */
+        const val HANDLED_QUIET_MS = 1_000L
+
+        /** A shake: this many readings past [SHAKE_MS2] within [SHAKE_WINDOW_MS]. */
+        const val SHAKE_MS2 = 12f
+        const val SHAKE_SAMPLES = 6
+        const val SHAKE_WINDOW_MS = 1_000L
+        const val SHAKE_REFRACTORY_MS = 4_000L
 
         const val WAVE_MS = 1_500L
 

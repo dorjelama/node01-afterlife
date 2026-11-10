@@ -81,6 +81,45 @@ class MoodTest {
     }
 
     @Test
+    fun listeningShowsWhatItHears() {
+        val look = Mood.decide(sitting.copy(listening = true, heard = "what time"))
+        assertEquals(Caption.Heard("what time"), look.caption)
+        assertEquals("head tilted, listening", Expression.CURIOUS, look.expression)
+        assertEquals(Light.FULL, look.light)
+        assertFalse(look.amber)
+    }
+
+    @Test
+    fun listeningTakesTheCaptionButKeepsTheAlert() {
+        val look = Mood.decide(
+            sitting.copy(listening = true, heard = "", claude = Summary(State.NEEDS_YOU, "x", 0, false)),
+        )
+        assertEquals(Caption.Heard(""), look.caption)
+        assertTrue("still amber", look.amber)
+        assertTrue("still !!", look.exclaim)
+    }
+
+    @Test
+    fun aReplyShowsUntilSomethingMoreUrgent() {
+        assertEquals(Caption.Reply("It's 3:45 PM."), Mood.decide(sitting.copy(reply = "It's 3:45 PM.")).caption)
+        assertEquals(
+            Caption.Note("stretch"),
+            Mood.decide(sitting.copy(reply = "It's 3:45 PM.", note = "stretch")).caption,
+        )
+        assertEquals(Light.FULL, Mood.decide(away(Mood.SLEEP_MS).copy(reply = "Good night.")).light)
+    }
+
+    @Test
+    fun toldToSleepItSleepsUntilSomethingNeedsYou() {
+        val asleep = Mood.decide(sitting.copy(voiceAsleep = true))
+        assertEquals(Expression.CLOSED, asleep.expression)
+        assertEquals(Light.MIN, asleep.light)
+        val woken = Mood.decide(sitting.copy(voiceAsleep = true, claude = Summary(State.NEEDS_YOU, "x", 0, false)))
+        assertEquals(Expression.WIDE, woken.expression)
+        assertTrue(woken.amber)
+    }
+
+    @Test
     fun exclaimOnlyWhileClaudeWaitsForYou() {
         assertTrue(Mood.decide(sitting.copy(claude = Summary(State.NEEDS_YOU, "x", 0, false))).exclaim)
         assertTrue(Mood.decide(away(Mood.SLEEP_MS).copy(claude = Summary(State.NEEDS_YOU, "x", 0, false))).exclaim)

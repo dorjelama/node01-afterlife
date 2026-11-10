@@ -9,10 +9,10 @@ import kotlin.math.min
 import kotlin.math.sin
 
 /**
- * NODE's two sounds, synthesized once into static tracks: no sound files in
- * the repo and no permission needed. Rising for "needs you", falling and
- * softer for "done". They play as system sounds, so the phone's own system
- * volume and silent mode apply.
+ * NODE's sounds, synthesized once into static tracks: no sound files in the
+ * repo and no permission needed. Rising for "needs you", falling and softer
+ * for "done", a quick high blip when the microphone opens. They play as
+ * system sounds, so the phone's own system volume and silent mode apply.
  *
  * One instance per session: [start], then [stop], then discard.
  */
@@ -20,23 +20,30 @@ class Chirp {
 
     private var attention: AudioTrack? = null
     private var done: AudioTrack? = null
+    private var listen: AudioTrack? = null
 
     fun start() {
         attention = track(tone(880.0, 0.09) + tone(1320.0, 0.13), ATTENTION_GAIN)
         done = track(tone(1046.5, 0.09) + tone(784.0, 0.16), DONE_GAIN)
+        listen = track(tone(1318.5, 0.05) + tone(1760.0, 0.07), LISTEN_GAIN)
     }
 
     fun stop() {
         attention?.release()
         done?.release()
+        listen?.release()
         attention = null
         done = null
+        listen = null
     }
 
     /** Claude needs you, or a note is due. */
     fun attention() = play(attention)
 
     fun done() = play(done)
+
+    /** The microphone is open. */
+    fun listen() = play(listen)
 
     private fun play(track: AudioTrack?) {
         track ?: return
@@ -79,6 +86,7 @@ class Chirp {
         const val RATE = 44_100
         const val ATTENTION_GAIN = 0.5f
         const val DONE_GAIN = 0.3f
+        const val LISTEN_GAIN = 0.25f
 
         /** A sine with short fades at both ends, so it does not click. */
         fun tone(hz: Double, seconds: Double): ShortArray {

@@ -17,19 +17,21 @@ import android.widget.TextView
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.security.SecureRandom
+import java.time.LocalDateTime
 
 /**
- * The whole of NODE Companion: a face on the desk that notices you, and tells
- * you when Claude Code on the PC needs you or has finished.
+ * The whole of NODE Companion: a face on the desk that notices you, tells you
+ * when Claude Code on the PC needs you or has finished, and answers a few
+ * spoken questions after a tap or a wave.
  *
  * Everything starts in [onStart] and stops in [onStop] -- the camera, the
- * sensors, the LAN server and the face's own timers. Nothing runs in the
- * background. Android only lets the app in front use the camera, which is
- * why the screen is held on.
+ * sensors, the LAN server, speech and the face's own timers. Nothing runs in
+ * the background. Android only lets the app in front use the camera, which
+ * is why the screen is held on.
  *
  * All state lives on the main thread. Every input -- a face, a knock, a hook
- * event, the half-second heartbeat -- ends in [reevaluate], which asks [Mood]
- * what to show.
+ * event, a spoken sentence, the half-second heartbeat -- ends in
+ * [reevaluate], which asks [Mood] what to show.
  */
 class NodeActivity : Activity() {
 
@@ -55,6 +57,18 @@ class NodeActivity : Activity() {
     private var presence: Presence? = null
     private var senses: Senses? = null
     private var server: HttpServer? = null
+    private var listener: Listener? = null
+    private var speaker: Speaker? = null
+
+    // The voice assistant.
+    private var listening = false
+    private var heard = ""
+    private var replyText: String? = null
+    private var replyUntilMs = 0L
+    private var voiceAsleep = false
+
+    /** The language NODE listens for first and last answered in. */
+    private var voiceLang = Lang.EN
 
     /**
      * Without it the phone's Wi-Fi dozes between packets, and the first
@@ -112,12 +126,16 @@ class NodeActivity : Activity() {
         startSenses()
         wifiLock?.acquire()
         startServer()
-        if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+        voiceLang = runCatching { Lang.valueOf(prefs.getString(KEY_VOICE_LANG, null) ?: "") }.getOrDefault(Lang.EN)
+        speaker = Speaker(this)
+        listener = Listener(this, voiceEvents)
+        if (granted(Manifest.permission.CAMERA)) {
             startPresence()
         } else {
             problem = getString(R.string.status_no_permission)
-            requestPermissions(arrayOf(Manifest.permission.CAMERA), REQUEST_PERMISSIONS)
         }
+        val missing = PERMISSIONS.filterNot(::granted)
+        if (missing.isNotEmpty()) requestPermissions(missing.toTypedArray(), REQUEST_PERMISSIONS)
         reevaluate()
         heartbeat.run()
     }
@@ -127,14 +145,14 @@ class NodeActivity : Activity() {
         permissions: Array<out String>,
         grantResults: IntArray,
     ) {
-        if (requestCode == REQUEST_PERMISSIONS &&
-            grantResults.isNotEmpty() &&
-            grantResults.all { it == PackageManager.PERMISSION_GRANTED }
-        ) {
+        if (requestCode == REQUEST_PERMISSIONS && granted(Manifest.permission.CAMERA)) {
             problem = null
             startPresence()
         }
+        reevaluate()
     }
+
+    private fun granted(permission: String) = checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
 
     override fun onStop() {
         server?.stop()
@@ -143,6 +161,11 @@ class NodeActivity : Activity() {
         stopPresence()
         senses?.stop()
         senses = null
+        listener?.destroy()
+        listener = null
+        listening = false
+        speaker?.shutdown()
+        speaker = null
         chirp.stop()
         face.stop()
         // Do not leave delayed callbacks behind when the screen goes off.
@@ -178,8 +201,9 @@ class NodeActivity : Activity() {
         if (present) sessions.acknowledge(now, presentSinceMs)
 
         val note = inbox.due(System.currentTimeMillis())
-        if (note != null && note != shownNote && !dark) chirp.attention()
+        if (note != null && note != shownNote) announce(note)
         shownNote = note
+        if (replyText != null && now > replyUntilMs) replyText = null
 
         val look = Mood.decide(
             Mood.Inputs(
@@ -194,6 +218,10 @@ class NodeActivity : Activity() {
                 petAgoMs = now - petAtMs,
                 claude = sessions.summary(now),
                 note = note?.text,
+                listening = listening,
+                heard = heard,
+                reply = replyText,
+                voiceAsleep = voiceAsleep,
             ),
         )
         if (look != lastLook) {
@@ -222,10 +250,25 @@ class NodeActivity : Activity() {
             is Caption.Note -> c.text
             is Caption.NeedsYou -> getString(R.string.caption_needs_you_fmt, c.project) + more(c.others)
             is Caption.Done -> getString(R.string.caption_done_fmt, c.project) + more(c.others)
+            is Caption.Heard -> c.text.ifBlank { Assistant.listening(voiceLang) }
+            is Caption.Reply -> c.text
         }
         captionView.text = text
-        captionView.setTextColor(getColor(if (look.amber) R.color.node_accent else R.color.node_secondary))
+        // Amber only for what needs you; what you said and what NODE answers stay grey.
+        val alert = look.caption is Caption.Note || look.caption is Caption.NeedsYou
+        captionView.setTextColor(getColor(if (alert) R.color.node_accent else R.color.node_secondary))
         captionView.visibility = if (text == null) View.INVISIBLE else View.VISIBLE
+    }
+
+    /**
+     * A note, reminder or timer just came due: chirp, then read it out. Desk
+     * notes stay quiet in a dark room like every other alert; a reminder or
+     * timer you set by voice sounds regardless.
+     */
+    private fun announce(note: Inbox.Note) {
+        if (note.kind == Inbox.Kind.NOTE && dark) return
+        chirp.attention()
+        statusView.postDelayed({ speaker?.say(note.text, Assistant.langOf(note.text)) }, SPEAK_AFTER_CHIRP_MS)
     }
 
     private fun more(others: Int) = if (others > 0) getString(R.string.caption_more_fmt, others) else ""
@@ -263,14 +306,123 @@ class NodeActivity : Activity() {
         reevaluate()
     }
 
-    /** A wave or a tap: dismisses a due note, otherwise pleases the face. */
-    private fun onPet() {
-        if (inbox.dismiss(System.currentTimeMillis())) {
-            saveInbox()
-        } else {
-            petAtMs = SystemClock.elapsedRealtime()
+    private fun onShake() = face.play(Act.DIZZY)
+
+    /** From the page: an [Act] to play, or an [Expression] to hold for a few seconds. Anything else is ignored. */
+    private fun onFacePlay(name: String) {
+        val key = name.trim().uppercase()
+        Act.entries.firstOrNull { it.name == key }?.let { return face.play(it) }
+        Expression.entries.firstOrNull { it.name == key }?.let { face.preview(it, PREVIEW_MS) }
+    }
+
+    /**
+     * A wave or a tap. In order: dismiss a due note, wake from "go to sleep",
+     * stop listening, or start listening. Without a microphone it just
+     * pleases the face, as before voice.
+     */
+    private fun onPoke() {
+        when {
+            inbox.dismiss(System.currentTimeMillis()) -> {
+                saveInbox()
+                speaker?.stop()
+            }
+            voiceAsleep -> voiceAsleep = false
+            listening -> {
+                listener?.cancel()
+                listening = false
+            }
+            canListen() -> startListening()
+            else -> {
+                petAtMs = SystemClock.elapsedRealtime()
+                face.play(Act.JOY)
+            }
         }
         reevaluate()
+    }
+
+    // -- voice -------------------------------------------------------------
+
+    private fun canListen() = granted(Manifest.permission.RECORD_AUDIO) && listener?.available == true
+
+    private fun startListening() {
+        speaker?.stop()
+        replyText = null
+        heard = ""
+        listening = true
+        chirp.listen()
+        listener?.listen(voiceLang)
+    }
+
+    private val voiceEvents = object : Listener.Events {
+        override fun onListening() = reevaluate()
+
+        override fun onHeard(partial: String) {
+            heard = partial
+            reevaluate()
+        }
+
+        override fun onFinal(text: String) {
+            listening = false
+            if (text.isBlank()) reevaluate() else answer(text)
+        }
+
+        override fun onFailed(reason: String, silence: Boolean) {
+            listening = false
+            // Saying nothing is not an error worth reporting; anything else is shown.
+            if (!silence) say(reason.uppercase(), voiceLang, speak = false)
+            reevaluate()
+        }
+    }
+
+    /** Acts on a spoken sentence, then answers it on screen and aloud. */
+    private fun answer(text: String) {
+        val command = Assistant.parse(text)
+        var lang = Assistant.langOf(text)
+        val wall = System.currentTimeMillis()
+        val now = SystemClock.elapsedRealtime()
+        val facts = Assistant.Facts(
+            now = LocalDateTime.now(),
+            claude = sessions.summary(now),
+            timerRunning = inbox.timerRunning(wall),
+            noteDue = inbox.due(wall) != null,
+            address = wifiAddress()?.let { urlText() },
+        )
+        when (command) {
+            is Command.Timer -> command.ms?.let { inbox.add(Assistant.timeUp(lang), it, wall, Inbox.Kind.TIMER) }
+            is Command.Focus -> inbox.add(Assistant.focusDone(lang), command.ms, wall, Inbox.Kind.TIMER)
+            Command.CancelTimer -> inbox.cancelTimers(wall)
+            is Command.Remind -> inbox.add(command.text, command.ms, wall, Inbox.Kind.REMINDER)
+            is Command.Note -> inbox.add(command.text, 0L, wall, Inbox.Kind.NOTE)?.let {
+                // Shown at once; the spoken "noted" is announcement enough.
+                shownNote = inbox.due(wall)
+            }
+            Command.Dismiss -> inbox.dismiss(wall)
+            Command.Sleep -> voiceAsleep = true
+            Command.Wake -> voiceAsleep = false
+            Command.Thanks -> {
+                petAtMs = now
+                face.play(Act.LOVE)
+            }
+            Command.Address -> {
+                tappedUrl = urlText()
+                undimUntilMs = now + UNDIM_MS
+            }
+            is Command.Language -> lang = command.lang
+            else -> Unit
+        }
+        saveInbox()
+        Log.d(TAG, "voice: ${command.javaClass.simpleName} ($lang)")
+        say(Assistant.reply(command, lang, facts), lang, speak = true)
+        voiceLang = lang
+        prefs.edit().putString(KEY_VOICE_LANG, lang.name).apply()
+        reevaluate()
+    }
+
+    /** Shows [words] under the eyes for a while, and speaks them if a voice for [lang] is installed. */
+    private fun say(words: String, lang: Lang, speak: Boolean) {
+        replyText = words
+        replyUntilMs = SystemClock.elapsedRealtime() + REPLY_MS
+        if (speak) speaker?.say(words, lang)
     }
 
     private fun onDark(value: Boolean) {
@@ -286,7 +438,10 @@ class NodeActivity : Activity() {
         if (!dark) {
             when (entered) {
                 ClaudeSessions.State.NEEDS_YOU -> chirp.attention()
-                ClaudeSessions.State.DONE -> chirp.done()
+                ClaudeSessions.State.DONE -> {
+                    chirp.done()
+                    face.play(Act.JOY)
+                }
                 else -> Unit
             }
         }
@@ -294,7 +449,7 @@ class NodeActivity : Activity() {
     }
 
     private fun onNote(text: String, inMinutes: Int) {
-        if (inbox.add(text, inMinutes, System.currentTimeMillis()) != null) saveInbox()
+        if (inbox.add(text, inMinutes * 60_000L, System.currentTimeMillis(), Inbox.Kind.NOTE) != null) saveInbox()
         reevaluate()
     }
 
@@ -342,7 +497,7 @@ class NodeActivity : Activity() {
 
     private fun startSenses() {
         if (senses != null) return
-        senses = Senses(this, ::onKnock, ::onPet, ::onDark).also { it.start() }
+        senses = Senses(this, ::onKnock, ::onPoke, ::onDark, ::onShake).also { it.start() }
     }
 
     /** Independent of the camera: a busy port must not blind the face. */
@@ -356,6 +511,7 @@ class NodeActivity : Activity() {
             page,
             onClaude = { fields -> mainExecutor.execute { if (server === http) onClaude(fields) } },
             onNote = { text, minutes -> mainExecutor.execute { if (server === http) onNote(text, minutes) } },
+            onFace = { play -> mainExecutor.execute { if (server === http) onFacePlay(play) } },
         )
         server = http
         try {
@@ -478,12 +634,16 @@ class NodeActivity : Activity() {
                 barsRequestedBySwipe = isEdgeTouch(ev.x, ev.y)
                 if (!barsRequestedBySwipe) hideSystemBars()
             }
-            // A tap in the middle: show the address for a while, and pet the face.
+            // In the middle: a tap talks to NODE; a long press shows its address.
             MotionEvent.ACTION_UP -> if (!barsRequestedBySwipe) {
-                // Re-read on every tap: after a reboot NODE can start before Wi-Fi does.
-                tappedUrl = urlText()
-                undimUntilMs = SystemClock.elapsedRealtime() + UNDIM_MS
-                onPet()
+                if (ev.eventTime - ev.downTime >= LONG_PRESS_MS) {
+                    // Re-read every time: after a reboot NODE can start before Wi-Fi does.
+                    tappedUrl = urlText()
+                    undimUntilMs = SystemClock.elapsedRealtime() + UNDIM_MS
+                    reevaluate()
+                } else {
+                    onPoke()
+                }
             }
         }
         return super.dispatchTouchEvent(ev)
@@ -492,10 +652,24 @@ class NodeActivity : Activity() {
     private companion object {
         const val TAG = "NODE"
 
+        val PERMISSIONS = listOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
         const val REQUEST_PERMISSIONS = 1
 
         const val KEY_URL_KEY = "url_key"
         const val KEY_INBOX = "inbox"
+        const val KEY_VOICE_LANG = "voice_lang"
+
+        /** How long a spoken answer stays under the eyes. */
+        const val REPLY_MS = 8_000L
+
+        /** How long an expression asked for from the page is held. */
+        const val PREVIEW_MS = 3_000L
+
+        /** Let the chirp finish before reading a due note aloud. */
+        const val SPEAK_AFTER_CHIRP_MS = 450L
+
+        /** Held this long, a touch shows the address instead of listening. */
+        const val LONG_PRESS_MS = 600L
 
         /**
          * 32 symbols, without the easily confused 0/o and 1/l since the key is
@@ -512,7 +686,7 @@ class NodeActivity : Activity() {
         /** Asleep: the panel minimum. The closed eyes are still just visible. */
         const val MIN_BRIGHTNESS = 0.01f
 
-        /** How long a tap shows the address and lifts the dim. */
+        /** How long a long press shows the address and lifts the dim. */
         const val UNDIM_MS = 30_000L
 
         const val HEARTBEAT_MS = 500L

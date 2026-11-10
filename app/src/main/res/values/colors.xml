@@ -4,17 +4,17 @@
          It is here purely for the industrial look. -->
     <color name="node_bg">#FF000000</color>
 
-    <!-- Dot-matrix face: a lit dot, and an unlit one that is just visible, so
-         the screen reads as a panel of dots rather than empty black. -->
-    <color name="node_eye">#FFE8E8E8</color>
+    <!-- Dot-matrix face: a lit dot, cyan, and an unlit one that is just
+         visible, so the screen reads as a panel of dots rather than empty black. -->
+    <color name="node_eye">#FF3CF0EE</color>
     <color name="node_dot_off">#FF171717</color>
 
     <!-- Monochrome for everything that is merely information. -->
     <color name="node_secondary">#FFC4C4C4</color>
     <color name="node_dim">#FF7A7A7A</color>
 
-    <!-- The one non-monochrome colour, and it means one thing: something needs
-         you. The eye dots turn it; the caption and the "!!" are drawn in it.
+    <!-- Apart from the eyes, the one colour, and it means one thing: something
+         needs you. The eyes turn it; the caption and the "!!" are drawn in it.
          Amber, for the vintage instrument reference. -->
     <color name="node_accent">#FFFFB000</color>
 </resources>

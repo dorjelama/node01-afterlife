@@ -101,6 +101,37 @@ auto-connect for the 5 GHz network, or Android drifts back to it.
 
 ---
 
+## Offline speech: the packs you download are not the ones used
+
+**Symptom.** With *English (US)* and *English (UK)* downloaded under Google app → Settings →
+Voice → Offline speech recognition, every `SpeechRecognizer` request with
+`EXTRA_PREFER_OFFLINE` still failed within a tenth of a second with error **13**
+(`ERROR_LANGUAGE_UNAVAILABLE`, named only from Android 12 but sent on 11 too) — and **12**
+(`ERROR_LANGUAGE_NOT_SUPPORTED`) for `en-IN`. Each attempt made the recognizer beep.
+
+**Cause.** The Google app's log, with tags in `com.google.android.googlequicksearchbox`, shows
+the request going to its newer on-device engine, SODA, which keeps its own copy of each model:
+
+```
+I/fohv: Offline recognizer - start listening
+I/fohv: Initialize Soda [locale: …]
+I/SodaLPDirGenerator: Found matching installed packs: …
+W/SodaLPDirGenerator: Returning no LP, as MDD has not downloaded this pack yet.
+E/fohv: Failed to get language pack of required locale
+```
+
+MDD is the Google app's background downloader. It fetches the SODA pack on its own schedule —
+typically on Wi-Fi, charging and idle — and NODE, holding the screen on, keeps the phone from
+ever being idle. Its jobs are anonymous (`BackgroundTasksJobService`, WorkManager), so there
+is no single job to run by hand.
+
+**What to do.** Leave NODE, screen off, on charger and Wi-Fi for a while (overnight), so MDD
+can run; turning on Gboard's offline or faster voice typing may fetch the same model sooner.
+Read the log above again to see whether the pack has arrived. Do not drop
+`EXTRA_PREFER_OFFLINE` to make it work: the recognizer would then send speech to Google.
+
+---
+
 ## Front camera facts (Redmi Note 8)
 
 From `adb shell dumpsys media.camera`, camera `1`, facing front:
@@ -117,6 +148,18 @@ The companion runs it at 320×240 and a fixed 15 fps: enough for SIMPLE face det
 the camera computes on the full sensor regardless of the stream size. With the activity locked
 to landscape the display rotation is 90°, so sensor orientation plus display rotation is 360°:
 no turn, only the front-camera mirror.
+
+---
+
+## The eyes' glow is affordable
+
+The glow is a `BlurMaskFilter` on the same path that is filled, which hardware-accelerated
+canvases support from API 28. The path changes every frame of an animation, so the blur is
+redone every frame too. Measured with `adb shell dumpsys gfxinfo dev.node01.companion` over
+670 frames of hearts, spirals, bouncing and glancing at 2340x1080: median 8 ms, 99th percentile
+15 ms, 0.75% janky frames; GPU time 9 ms median and 17 ms at the 99th percentile. Both eyes
+(and both hearts) go in **one** path, so there is one blur per frame, not two. A settled face
+draws no frames at all, so none of this costs anything at rest.
 
 ---
 

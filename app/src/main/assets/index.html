@@ -48,6 +48,35 @@
 <p class="said" id="note-said" role="status"></p>
 <p>The note shows in amber under the eyes. Tap the screen or wave over its top edge to dismiss it.</p>
 
+<h2>FACE</h2>
+<p>Animations. NODE also plays these by itself: hearts when you say thank you, a happy
+bounce when you tap it or Claude finishes, spirals when you shake it, Z's while it sleeps.</p>
+<div class="row">
+  <button type="button" data-play="love">Love</button>
+  <button type="button" data-play="joy">Joy</button>
+  <button type="button" data-play="wink">Wink</button>
+  <button type="button" data-play="dizzy">Dizzy</button>
+  <button type="button" data-play="scan">Look around</button>
+  <button type="button" data-play="no">Shake head</button>
+  <button type="button" data-play="zzz">Z's</button>
+</div>
+<p>Expressions, held for three seconds:</p>
+<div class="row">
+  <button type="button" data-play="happy">Happy</button>
+  <button type="button" data-play="wide">Surprised</button>
+  <button type="button" data-play="curious">Curious</button>
+  <button type="button" data-play="squint">Squint</button>
+  <button type="button" data-play="sad">Sad</button>
+  <button type="button" data-play="angry">Cross</button>
+  <button type="button" data-play="sleepy">Sleepy</button>
+  <button type="button" data-play="focused">Focused</button>
+  <button type="button" data-play="closed">Asleep</button>
+</div>
+<div class="row">
+  <button type="button" id="tour">Play them all</button>
+  <span class="said" id="face-said" role="status"></span>
+</div>
+
 <h2>CLAUDE CODE</h2>
 <p>Add these hooks to <code>~/.claude/settings.json</code> on the PC, merged into any
 <code>hooks</code> you already have. Each runs in the background and gives up after
@@ -91,6 +120,36 @@ document.getElementById('note').onsubmit = async (e) => {
   } catch (err) {
     noteSaid.textContent = 'Not sent: is NODE Companion open on the phone?';
   }
+};
+
+// -- face -----------------------------------------------------------------
+const faceSaid = document.getElementById('face-said');
+const play = (name) => fetch('face', { method: 'POST', body: new URLSearchParams({ play: name }) })
+  .then((res) => { if (!res.ok) throw new Error(res.status); })
+  .catch(() => { faceSaid.textContent = 'Not sent: is NODE Companion open on the phone?'; });
+for (const button of document.querySelectorAll('[data-play]')) {
+  button.onclick = () => { faceSaid.textContent = ''; play(button.dataset.play); };
+}
+
+// Each act, then each expression, given time to finish before the next.
+const tour = [['love', 2900], ['joy', 1800], ['wink', 1200], ['dizzy', 3100], ['scan', 2700], ['no', 1100],
+  ['zzz', 3600], ['happy', 3300], ['wide', 3300], ['curious', 3300], ['squint', 3300], ['sad', 3300],
+  ['angry', 3300], ['sleepy', 3300], ['focused', 3300], ['closed', 3300]];
+let touring = null;
+document.getElementById('tour').onclick = async () => {
+  if (touring) { touring.stop = true; return; }
+  const run = touring = { stop: false };
+  const button = document.getElementById('tour');
+  button.textContent = 'Stop';
+  for (const [name, ms] of tour) {
+    if (run.stop) break;
+    faceSaid.textContent = name;
+    await play(name);
+    await new Promise((r) => setTimeout(r, ms));
+  }
+  touring = null;
+  button.textContent = 'Play them all';
+  if (!run.stop) faceSaid.textContent = '';
 };
 
 // -- Claude Code hooks ----------------------------------------------------

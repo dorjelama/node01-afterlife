@@ -18,13 +18,14 @@ import kotlin.concurrent.thread
  * - `GET  /<key>/`        the page: send a desk note, set up Claude Code
  * - `POST /<key>/claude`  a Claude Code hook event, as the hook's own JSON
  * - `POST /<key>/note`    a desk note, as a form: `text`, `in` (minutes)
+ * - `POST /<key>/face`    plays an animation or holds an expression, as a form: `play`
  *
  * Every path sits under a random key shown on the phone's screen; anything
  * else is a 404. It is plain HTTP, so anyone able to sniff the Wi-Fi can read
  * the key and what is sent. Home LAN only; never port-forward it. There is no
  * camera route: what the camera sees never leaves the phone.
  *
- * [onClaude] and [onNote] are called on the connection's thread.
+ * [onClaude], [onNote] and [onFace] are called on the connection's thread.
  *
  * One instance per session: [start], then [stop], then discard.
  */
@@ -33,6 +34,7 @@ class HttpServer(
     private val page: ByteArray,
     private val onClaude: (Map<String, String>) -> Unit,
     private val onNote: (text: String, inMinutes: Int) -> Unit,
+    private val onFace: (play: String) -> Unit,
 ) {
     @Volatile
     private var socket: ServerSocket? = null
@@ -78,6 +80,11 @@ class HttpServer(
                         val form = parseForm(String(body, Charsets.UTF_8))
                         respond(out, 204)
                         onNote(form["text"].orEmpty(), form["in"]?.toIntOrNull() ?: 0)
+                    }
+                    Route.Face -> readBody(head, input, out)?.let { body ->
+                        val form = parseForm(String(body, Charsets.UTF_8))
+                        respond(out, 204)
+                        onFace(form["play"].orEmpty())
                     }
                     Route.NotFound -> notFound(out)
                 }
@@ -144,6 +151,7 @@ class HttpServer(
         data object Page : Route
         data object Claude : Route
         data object Note : Route
+        data object Face : Route
         data object NotFound : Route
     }
 
@@ -189,6 +197,7 @@ class HttpServer(
                 method == "GET" && rest == "" -> Route.Page
                 method == "POST" && rest == "claude" -> Route.Claude
                 method == "POST" && rest == "note" -> Route.Note
+                method == "POST" && rest == "face" -> Route.Face
                 else -> Route.NotFound
             }
         }

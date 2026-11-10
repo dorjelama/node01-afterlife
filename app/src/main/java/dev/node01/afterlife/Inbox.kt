@@ -1,22 +1,34 @@
 package dev.node01.afterlife
 
 /**
- * Notes sent to the desk from a browser, each due now or a few minutes from
- * now. Times are wall-clock milliseconds so a note survives a restart. Main
- * thread only; the caller persists [encode] and restores with [decode].
+ * Things waiting to be shown: desk notes from a browser, and reminders,
+ * timers and focus sessions set by voice. Each is due at a moment; times are
+ * wall-clock milliseconds so they survive a restart. Main thread only; the
+ * caller persists [encode] and restores with [decode].
  */
 class Inbox(notes: List<Note> = emptyList()) {
 
-    data class Note(val dueMs: Long, val text: String)
+    enum class Kind {
+        /** From the web page: silent in a dark room, like every other alert. */
+        NOTE,
+
+        /** "Remind me in 10 minutes to stretch." */
+        REMINDER,
+
+        /** A timer or focus session. "Cancel the timer" removes these. */
+        TIMER,
+    }
+
+    data class Note(val dueMs: Long, val text: String, val kind: Kind = Kind.NOTE)
 
     private val notes = notes.sortedBy { it.dueMs }.toMutableList()
 
     val size get() = notes.size
 
-    /** Returns the note as stored. Oldest notes give way past [MAX_NOTES]. */
-    fun add(text: String, inMinutes: Int, nowMs: Long): Note? {
+    /** Returns the note as stored, or null if the text is empty. Oldest give way past [MAX_NOTES]. */
+    fun add(text: String, delayMs: Long, nowMs: Long, kind: Kind = Kind.NOTE): Note? {
         val clean = clean(text) ?: return null
-        val note = Note(nowMs + inMinutes.coerceIn(0, MAX_MINUTES) * 60_000L, clean)
+        val note = Note(nowMs + delayMs.coerceIn(0, MAX_DELAY_MS), clean, kind)
         notes += note
         notes.sortBy { it.dueMs }
         while (notes.size > MAX_NOTES) notes.removeAt(0)
@@ -29,18 +41,28 @@ class Inbox(notes: List<Note> = emptyList()) {
     /** Dismisses the note [due] would return. */
     fun dismiss(nowMs: Long): Boolean = due(nowMs)?.let { notes.remove(it) } ?: false
 
-    /** One note per line: due time, a tab, the text. [clean] keeps both out of the text. */
-    fun encode(): String = notes.joinToString("\n") { "${it.dueMs}\t${it.text}" }
+    /** A timer or focus session still counting down. */
+    fun timerRunning(nowMs: Long): Boolean = notes.any { it.kind == Kind.TIMER && it.dueMs > nowMs }
+
+    /** Removes timers still counting down. True if there was one. */
+    fun cancelTimers(nowMs: Long): Boolean = notes.removeAll { it.kind == Kind.TIMER && it.dueMs > nowMs }
+
+    /** One note per line: due time, kind, text, tab-separated. [clean] keeps tabs and newlines out of the text. */
+    fun encode(): String = notes.joinToString("\n") { "${it.dueMs}\t${it.kind}\t${it.text}" }
 
     companion object {
         const val MAX_CHARS = 140
-        const val MAX_NOTES = 5
-        const val MAX_MINUTES = 24 * 60
+        const val MAX_NOTES = 8
+        const val MAX_DELAY_MS = 24 * 60 * 60_000L
 
         fun decode(stored: String?): Inbox = Inbox(
             stored.orEmpty().lines().mapNotNull { line ->
-                val due = line.substringBefore('\t').toLongOrNull() ?: return@mapNotNull null
-                clean(line.substringAfter('\t'))?.let { Note(due, it) }
+                val parts = line.split('\t', limit = 3)
+                val due = parts[0].toLongOrNull() ?: return@mapNotNull null
+                // Lines from before notes had a kind are "due<TAB>text".
+                val kind = parts.getOrNull(1)?.let { k -> Kind.values().firstOrNull { it.name == k } }
+                val text = if (kind != null) parts.getOrNull(2) else line.substringAfter('\t')
+                clean(text.orEmpty())?.let { Note(due, it, kind ?: Kind.NOTE) }
             },
         )
 

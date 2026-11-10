@@ -16,6 +16,12 @@ sealed interface Caption {
     data class Note(val text: String) : Caption
     data class NeedsYou(val project: String, val others: Int) : Caption
     data class Done(val project: String, val others: Int) : Caption
+
+    /** What the microphone has heard so far; empty until the first word. */
+    data class Heard(val text: String) : Caption
+
+    /** NODE's answer to what you asked. */
+    data class Reply(val text: String) : Caption
 }
 
 /** Backlight levels. FULL means the phone's own brightness setting. */
@@ -56,19 +62,32 @@ object Mood {
         val petAgoMs: Long,
         val claude: ClaudeSessions.Summary?,
         val note: String?,
+        /** The microphone is open for a voice command. */
+        val listening: Boolean = false,
+        /** What has been heard so far while [listening]. */
+        val heard: String? = null,
+        /** NODE's latest spoken answer, while it is still worth showing. */
+        val reply: String? = null,
+        /** Told "go to sleep": eyes closed until a tap or a wave. */
+        val voiceAsleep: Boolean = false,
     )
 
     fun decide(i: Inputs): Look {
         val c = i.claude
+        val needsYou = c?.state == ClaudeSessions.State.NEEDS_YOU
+        // Amber means something needs you, whatever the caption is showing.
+        val amber = i.note != null || needsYou
         val caption: Caption? = when {
+            // You are talking to it: show what it hears.
+            i.listening -> Caption.Heard(i.heard.orEmpty())
             i.note != null -> Caption.Note(i.note)
-            c?.state == ClaudeSessions.State.NEEDS_YOU -> Caption.NeedsYou(c.project, c.others)
+            needsYou -> Caption.NeedsYou(c!!.project, c.others)
+            i.reply != null -> Caption.Reply(i.reply)
             c?.state == ClaudeSessions.State.DONE -> Caption.Done(c.project, c.others)
             else -> null
         }
-        val amber = caption is Caption.Note || caption is Caption.NeedsYou
         // Shown whenever Claude waits on you, even while a desk note has the caption.
-        val exclaim = c?.state == ClaudeSessions.State.NEEDS_YOU
+        val exclaim = needsYou
         val startled = i.knockAgoMs < KNOCK_MS
 
         val face = Gaze.At(i.faceX, i.faceY)
@@ -77,8 +96,10 @@ object Mood {
 
         val (expression, gaze) = when {
             startled -> Expression.WIDE to atYou
+            i.listening -> Expression.CURIOUS to atYou
             amber -> Expression.WIDE to atYou
             i.petAgoMs < PET_MS -> Expression.HAPPY to atYou
+            i.voiceAsleep -> Expression.CLOSED to RESTING
             c?.state == ClaudeSessions.State.DONE && !c.seen ->
                 Expression.HAPPY to (if (i.present) face else Gaze.Wander)
             i.present && i.presentForMs < GREET_MS && i.lastAbsenceMs >= SEARCH_MS -> Expression.WIDE to face
@@ -94,6 +115,8 @@ object Mood {
         val light = when {
             // Visible from across the room -- but not a beacon in a dark one.
             amber -> if (i.dark) Light.DOZE else Light.FULL
+            i.listening || i.reply != null -> Light.FULL
+            i.voiceAsleep -> Light.MIN
             i.present -> Light.FULL
             expression == Expression.CLOSED -> Light.MIN
             i.awayForMs < SEARCH_MS -> Light.FULL
