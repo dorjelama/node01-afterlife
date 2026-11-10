@@ -27,6 +27,9 @@ sealed interface Command {
     data object Dismiss : Command
     data object Thanks : Command
     data object Help : Command
+
+    /** "Can you hear me?" -- a quick check that voice works. */
+    data object Hello : Command
     data object Address : Command
     data class Language(val lang: Lang) : Command
     data object Unknown : Command
@@ -57,10 +60,34 @@ object Assistant {
     /** Devanagari in the text means it was Nepali. */
     fun langOf(text: String): Lang = if (text.any { it in 'ऀ'..'ॿ' }) Lang.NE else Lang.EN
 
+    /**
+     * For hands-free listening: what was said after "Hey Buddy" (or "Hey NODE"),
+     * or null if the wake words are not there. "Hey Buddy, what time is it"
+     * gives "what time is it"; a bare "Hey Buddy" gives "". Allows for how the recognizer hears the
+     * name -- "nod", "note", "nodes" -- but a lone "note" is not enough, since
+     * that is also a command.
+     */
+    fun wake(heard: String): String? {
+        val t = normalise(heard)
+        val m = WAKE_EN.find(t) ?: WAKE_NE.find(t) ?: return null
+        return t.substring(m.range.last + 1).trim()
+    }
+
+    // "a node" is how "hey node" is sometimes heard; "a note" is not, as in "take a note".
+    private val WAKE_EN =
+        Regex(
+            """(^|\s)((hey|hi|hello|ok|okay|hay) (buddy|buddie|budy|body|node|nodes|nod|note|know'd|no|know|knowed|noad)|""" +
+                """a (node|nod)|^buddy|^node)(\s|$)""",
+        )
+    private val WAKE_NE = Regex("""(^|\s)(हे |ए )?(बडी|बड्डी|नोड|नोड्)(\s|$)""")
+
     fun parse(heard: String): Command {
         val t = normalise(heard)
         if (t.isBlank()) return Command.Unknown
         fun has(vararg words: String) = words.any { t.contains(it) }
+
+        /** Whole words only: short romanized Nepali like "sut" must not match inside English. */
+        fun word(vararg words: String) = words.any { Regex("\\b" + Regex.escape(it) + "\\b").containsMatchIn(t) }
 
         return when {
             // Language first, but "nepali date" is a date, not a request to switch.
@@ -72,9 +99,10 @@ object Assistant {
             (has("cancel", "stop", "clear") && has("timer", "focus", "pomodoro", "reminder")) ||
                 (has("रद्द", "बन्द", "रोक") && has("टाइमर", "फोकस")) -> Command.CancelTimer
 
-            has("remind", "सम्झाउ", "सम्झना", "याद दिला") -> remind(t)
+            // Online recognition often writes Nepali in English letters: "kati bajyo".
+            has("remind", "सम्झाउ", "सम्झना", "याद दिला", "samjha", "samjhau", "yaad dila", "yad dila") -> remind(t)
 
-            has("timer", "टाइमर") -> Command.Timer(duration(t))
+            has("timer", "टाइमर", "taimar") -> Command.Timer(duration(t))
             has("focus", "pomodoro", "फोकस", "पोमोडोरो") -> Command.Focus(duration(t) ?: FOCUS_MS)
 
             Regex("""^(take a note|note|write down|remember)\b""").containsMatchIn(t) || has("नोट") ->
@@ -82,16 +110,22 @@ object Assistant {
 
             has("claude", "cloud", "clod", "क्लड", "क्लाउड", "क्लोड") -> Command.ClaudeStatus
 
-            has("time", "o'clock", "समय", "बज्यो", "बजे", "टाइम") -> Command.Time
-            has("date", "what day", "today", "गते", "मिति", "तारिख", "कुन बार", "आज") -> Command.Date
+            has("time", "o'clock", "समय", "बज्यो", "बजे", "टाइम", "bajyo", "baje", "kati baj") ||
+                word("samay", "samaya") -> Command.Time
+            has("date", "what day", "today", "गते", "मिति", "तारिख", "कुन बार", "आज") ||
+                word("gate", "miti", "aaja", "aja", "kun bar", "kun baar") -> Command.Date
 
-            has("sleep", "good night", "goodnight", "सुत", "शुभरात्री", "शुभ रात्री") -> Command.Sleep
+            has("sleep", "good night", "goodnight", "सुत", "शुभरात्री", "शुभ रात्री", "subharatri", "shubharatri") ||
+                word("sut", "suta", "sutnu", "sutna") -> Command.Sleep
             has("wake", "उठ", "ब्युँझ") -> Command.Wake
             has("dismiss", "clear", "got it", "हटाउ", "ठिक छ", "ठीक छ") ||
                 t == "ok" || t == "okay" || t == "हुन्छ" -> Command.Dismiss
-            has("thank", "good job", "well done", "good boy", "nice", "धन्यवाद", "धन्यबाद", "स्याबास") ->
+            has("thank", "good job", "well done", "good boy", "nice", "धन्यवाद", "धन्यबाद", "स्याबास",
+                "dhanyabad", "dhanyavad", "dhanyabaad", "dhanyavaad", "syabas", "shyabas") ->
                 Command.Thanks
-            has("help", "what can you do", "मद्दत", "के गर्न सक्छ") -> Command.Help
+            has("help", "what can you do", "मद्दत", "के गर्न सक्छ") || word("madat", "maddat") -> Command.Help
+            has("can you hear", "सुन्छौ", "सुनिरहेको", "नमस्ते", "हेलो") ||
+                word("test", "testing", "hello", "hi", "hey", "namaste") -> Command.Hello
             has("address", "url", "ठेगाना") || Regex("""\bip\b""").containsMatchIn(t) -> Command.Address
             else -> Command.Unknown
         }
@@ -214,9 +248,10 @@ object Assistant {
         is Command.Note -> if (c.text.isBlank()) "What should I note?" else "Noted: ${c.text}."
         Command.ClaudeStatus -> when (f.claude?.state) {
             null -> "No Claude sessions right now."
-            ClaudeSessions.State.NEEDS_YOU -> "Claude needs you in ${f.claude.project}."
-            ClaudeSessions.State.WORKING -> "Claude is working on ${f.claude.project}."
-            ClaudeSessions.State.DONE -> "Claude has finished in ${f.claude.project}."
+            // Never which project: the reply is shown on screen, and project names stay off it.
+            ClaudeSessions.State.NEEDS_YOU -> "Claude needs you."
+            ClaudeSessions.State.WORKING -> "Claude is working."
+            ClaudeSessions.State.DONE -> "Claude has finished."
         } + moreEn(f.claude)
         Command.Sleep -> "Good night."
         Command.Wake -> "I'm awake."
@@ -226,6 +261,7 @@ object Assistant {
             "take a note, or ask what Claude is doing."
         Command.Address -> f.address?.let { "My address is $it" } ?: "I'm not on Wi-Fi."
         is Command.Language -> if (c.lang == Lang.NE) "अब म नेपालीमा बोल्छु।" else "OK, I'll speak English."
+        Command.Hello -> "I can hear you!"
         Command.Unknown -> "Sorry, I didn't catch that. Say help to hear what I can do."
     }
 
@@ -255,9 +291,9 @@ object Assistant {
         is Command.Note -> if (c.text.isBlank()) "के नोट गरूँ?" else "नोट गरेँ: ${c.text}।"
         Command.ClaudeStatus -> when (f.claude?.state) {
             null -> "अहिले Claude चलिरहेको छैन।"
-            ClaudeSessions.State.NEEDS_YOU -> "Claude लाई तपाईं चाहिएको छ: ${f.claude.project}।"
-            ClaudeSessions.State.WORKING -> "Claude ${f.claude.project} मा काम गर्दैछ।"
-            ClaudeSessions.State.DONE -> "Claude ले ${f.claude.project} को काम सक्यो।"
+            ClaudeSessions.State.NEEDS_YOU -> "Claude लाई तपाईं चाहिएको छ।"
+            ClaudeSessions.State.WORKING -> "Claude काम गर्दैछ।"
+            ClaudeSessions.State.DONE -> "Claude ले काम सक्यो।"
         }
         Command.Sleep -> "शुभरात्री।"
         Command.Wake -> "म ब्युँझिएँ।"
@@ -266,6 +302,7 @@ object Assistant {
         Command.Help -> "मलाई समय, मिति, टाइमर, फोकस, सम्झना, नोट, वा Claude के गर्दैछ भनेर सोध्न सक्नुहुन्छ।"
         Command.Address -> f.address?.let { "मेरो ठेगाना: $it" } ?: "म Wi-Fi मा छैन।"
         is Command.Language -> if (c.lang == Lang.NE) "अब म नेपालीमा बोल्छु।" else "OK, I'll speak English."
+        Command.Hello -> "सुनें!"
         Command.Unknown -> "माफ गर्नुहोस्, बुझिनँ। मद्दत भन्नुहोस्।"
     }
 
@@ -316,11 +353,16 @@ object Assistant {
         "चौध" to 14, "पन्ध्र" to 15, "सोह्र" to 16, "सत्र" to 17, "अठार" to 18, "उन्नाइस" to 19,
         "बीस" to 20, "बिस" to 20, "पच्चीस" to 25, "तीस" to 30, "पैंतीस" to 35, "चालीस" to 40,
         "पैंतालीस" to 45, "पचास" to 50, "साठी" to 60,
+        // Romanized Nepali, as online recognition tends to write it.
+        "ek" to 1, "dui" to 2, "tin" to 3, "teen" to 3, "char" to 4, "chaar" to 4, "panch" to 5, "paanch" to 5,
+        "chha" to 6, "saat" to 7, "sat" to 7, "aath" to 8, "nau" to 9, "das" to 10, "pandhra" to 15,
+        "bis" to 20, "bees" to 20, "pachchis" to 25, "pachis" to 25, "tis" to 30, "tees" to 30,
+        "chalis" to 40, "pachas" to 50, "saathi" to 60,
     ).mapValues { it.value.toLong() }
 
-    private val NE_SECONDS = listOf("सेकेन्ड", "सेकेण्ड", "सेकन्ड")
-    private val NE_MINUTES = listOf("मिनेट", "मिनट", "मिनिट")
-    private val NE_HOURS = listOf("घण्टा", "घन्टा", "घंटा")
+    private val NE_SECONDS = listOf("सेकेन्ड", "सेकेण्ड", "सेकन्ड", "sekend")
+    private val NE_MINUTES = listOf("मिनेट", "मिनट", "मिनिट", "minet")
+    private val NE_HOURS = listOf("घण्टा", "घन्टा", "घंटा", "ghanta", "ghantaa")
     private val NE_REMIND_WORDS = listOf("सम्झा", "सम्झना", "याद", "दिला", "मलाई", "पछि")
     private val NE_NOTE_WORDS = listOf("नोट", "लेख", "गरिदे", "राखिदे")
 }

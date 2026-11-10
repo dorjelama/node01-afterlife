@@ -4,6 +4,7 @@ import dev.node01.afterlife.Assistant.parse
 import dev.node01.afterlife.ClaudeSessions.State
 import dev.node01.afterlife.ClaudeSessions.Summary
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
@@ -79,6 +80,63 @@ class AssistantTest {
     }
 
     @Test
+    fun understandsNepaliWrittenInEnglishLetters() {
+        val cases = mapOf(
+            "kati bajyo" to Command.Time,
+            "aaja kati gate" to Command.Date,
+            "paanch minute ko timer" to Command.Timer(5 * min),
+            "dhanyabad" to Command.Thanks,
+            "suta" to Command.Sleep,
+            "madat" to Command.Help,
+        )
+        for ((said, expected) in cases) assertEquals(said, expected, parse(said))
+        // Short words match whole words only.
+        assertEquals("sut inside sutton", Command.Unknown, parse("sutton road"))
+        assertEquals("gate inside navigate", Command.Unknown, parse("navigate home"))
+        assertEquals(Command.Unknown, parse("blah"))
+    }
+
+    @Test
+    fun answersAHearingCheck() {
+        for (said in listOf("test", "testing", "can you hear me", "hello", "नमस्ते", "सुन्छौ")) {
+            assertEquals(said, Command.Hello, parse(said))
+        }
+        // Hands-free: "Hey NODE, test" reaches the parser as "test".
+        assertEquals(Command.Hello, parse(Assistant.wake("hey node test")!!))
+        assertEquals("I can hear you!", Assistant.reply(Command.Hello, Lang.EN, facts(LocalDateTime.of(2026, 11, 10, 9, 0))))
+        // Not in the middle of other words.
+        assertEquals(Command.Unknown, parse("contested results"))
+    }
+
+    @Test
+    fun hearsItsName() {
+        assertEquals("what time is it", Assistant.wake("Hey NODE, what time is it?"))
+        assertEquals("what time is it", Assistant.wake("Hey Buddy, what time is it?"))
+        assertEquals("test", Assistant.wake("hey body test"))
+        assertEquals("", Assistant.wake("ok buddy"))
+        assertEquals("what's the date", Assistant.wake("buddy what's the date"))
+        assertEquals("कति बज्यो", Assistant.wake("हे बडी कति बज्यो"))
+        assertEquals("what time is it", Assistant.wake("hey nod what time is it"))
+        assertEquals("what time is it", Assistant.wake("hey no what time is it"))
+        assertEquals("test", Assistant.wake("hello know test"))
+        assertEquals("set a timer for 5 minutes", Assistant.wake("ok node set a timer for 5 minutes"))
+        assertEquals("", Assistant.wake("hey node"))
+        assertEquals("what's the date", Assistant.wake("node what's the date"))
+        assertEquals("so um what time is it", Assistant.wake("hey node so um what time is it"))
+        assertEquals("कति बज्यो", Assistant.wake("हे नोड कति बज्यो"))
+        assertEquals("", Assistant.wake("नोड"))
+    }
+
+    @Test
+    fun ignoresEverythingElse() {
+        for (s in listOf("what time is it", "take a note buy milk", "note: call mom", "the nodes are down",
+            "everybody hey", "somebody told me", "my buddy is here",
+            "anode", "nodejs is slow", "", "कति बज्यो")) {
+            assertEquals(s, null, Assistant.wake(s))
+        }
+    }
+
+    @Test
     fun nepaliIsIsNotSix() {
         // "छ" means "is" as well as six: without a unit it is never a length of time.
         assertEquals(Command.Note("पानी पिउनु छ भनेर"), parse("पानी पिउनु छ भनेर सम्झाउ"))
@@ -118,14 +176,21 @@ class AssistantTest {
     fun answersAboutClaude() {
         val base = facts(LocalDateTime.of(2026, 11, 10, 9, 0))
         assertEquals("No Claude sessions right now.", Assistant.reply(Command.ClaudeStatus, Lang.EN, base))
+        // Never which project: the answer is shown on screen.
         assertEquals(
-            "Claude needs you in node01. And 1 more.",
+            "Claude needs you. And 1 more.",
             Assistant.reply(Command.ClaudeStatus, Lang.EN, base.copy(claude = Summary(State.NEEDS_YOU, "node01", 1, false))),
         )
         assertEquals(
-            "Claude node01 मा काम गर्दैछ।",
+            "Claude काम गर्दैछ।",
             Assistant.reply(Command.ClaudeStatus, Lang.NE, base.copy(claude = Summary(State.WORKING, "node01", 0, false))),
         )
+        for (state in State.entries) {
+            for (lang in Lang.entries) {
+                val said = Assistant.reply(Command.ClaudeStatus, lang, base.copy(claude = Summary(state, "node01", 0, false)))
+                assertFalse("$state $lang: $said", "node01" in said)
+            }
+        }
     }
 
     @Test

@@ -5,7 +5,7 @@
 
                   (eyes)        (eyes)
 
-                NEEDS YOU · node01-afterlife
+                       NEEDS YOU
               http://192.168.1.50:8081/k7m2x9qa4c/
 
     textSize values are dp (see dimens.xml) so the system font-scale slider
@@ -47,7 +47,7 @@
             android:letterSpacing="0.06"
             android:includeFontPadding="false"
             android:visibility="invisible"
-            tools:text="NEEDS YOU · node01-afterlife"
+            tools:text="NEEDS YOU"
             tools:visibility="visible" />
 
         <!-- The address, or why something is not working. Shown after a tap. -->

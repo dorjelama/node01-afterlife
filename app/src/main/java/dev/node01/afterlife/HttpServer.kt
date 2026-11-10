@@ -19,13 +19,15 @@ import kotlin.concurrent.thread
  * - `POST /<key>/claude`  a Claude Code hook event, as the hook's own JSON
  * - `POST /<key>/note`    a desk note, as a form: `text`, `in` (minutes)
  * - `POST /<key>/face`    plays an animation or holds an expression, as a form: `play`
+ * - `POST /<key>/usage`   Claude's 5-hour session usage from the status line, as a form:
+ *                         `pct` (0..100), `resets` (Unix seconds)
  *
  * Every path sits under a random key shown on the phone's screen; anything
  * else is a 404. It is plain HTTP, so anyone able to sniff the Wi-Fi can read
  * the key and what is sent. Home LAN only; never port-forward it. There is no
  * camera route: what the camera sees never leaves the phone.
  *
- * [onClaude], [onNote] and [onFace] are called on the connection's thread.
+ * [onClaude], [onNote], [onFace] and [onUsage] are called on the connection's thread.
  *
  * One instance per session: [start], then [stop], then discard.
  */
@@ -35,6 +37,7 @@ class HttpServer(
     private val onClaude: (Map<String, String>) -> Unit,
     private val onNote: (text: String, inMinutes: Int) -> Unit,
     private val onFace: (play: String) -> Unit,
+    private val onUsage: (SessionUsage) -> Unit,
 ) {
     @Volatile
     private var socket: ServerSocket? = null
@@ -85,6 +88,11 @@ class HttpServer(
                         val form = parseForm(String(body, Charsets.UTF_8))
                         respond(out, 204)
                         onFace(form["play"].orEmpty())
+                    }
+                    Route.Usage -> readBody(head, input, out)?.let { body ->
+                        val usage = SessionUsage.parse(parseForm(String(body, Charsets.UTF_8)))
+                        respond(out, 204)
+                        if (usage != null) onUsage(usage)
                     }
                     Route.NotFound -> notFound(out)
                 }
@@ -152,6 +160,7 @@ class HttpServer(
         data object Claude : Route
         data object Note : Route
         data object Face : Route
+        data object Usage : Route
         data object NotFound : Route
     }
 
@@ -198,6 +207,7 @@ class HttpServer(
                 method == "POST" && rest == "claude" -> Route.Claude
                 method == "POST" && rest == "note" -> Route.Note
                 method == "POST" && rest == "face" -> Route.Face
+                method == "POST" && rest == "usage" -> Route.Usage
                 else -> Route.NotFound
             }
         }

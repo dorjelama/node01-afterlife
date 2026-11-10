@@ -50,7 +50,7 @@
 
 <h2>FACE</h2>
 <p>Animations. NODE also plays these by itself: hearts when you say thank you, a happy
-bounce when you tap it or Claude finishes, spirals when you shake it, Z's while it sleeps.</p>
+bounce when you tap it or Claude finishes, woozy when you shake it, Z's while it sleeps.</p>
 <div class="row">
   <button type="button" data-play="love">Love</button>
   <button type="button" data-play="joy">Joy</button>
@@ -97,6 +97,28 @@ this phone.</p>
 <p>NODE reads only the event name, session id, project folder and notification type of
 each event. Your prompts and tool output are sent over plain HTTP on your Wi-Fi, so keep
 this to a network you trust.</p>
+
+<h2>SESSION %</h2>
+<p>How much of your 5-hour Claude session limit is used, as <code>/usage</code> shows it,
+in the top-left corner of the screen. Claude Code hands it only to a status line script, on
+Pro and Max plans, so add these lines to yours, after it reads its input into
+<code>$input</code>. They send the percentage and when it resets, nothing else.</p>
+<textarea id="usage-lines" readonly spellcheck="false" aria-label="Status line lines" style="height: 170px"></textarea>
+<div class="row">
+  <button type="button" id="copy-usage">Copy</button>
+  <span class="said" id="copy-usage-said" role="status"></span>
+</div>
+<!-- Raw text, so the shell's quotes need no escaping; @URL@ is filled in below. -->
+<script type="text/plain" id="usage-template">
+# NODE Companion: the 5-hour session usage, and only that, to the phone on the desk.
+# Sent in the background so the status line never waits; five_hour is a flat object of numbers.
+node_5h=$(printf '%s' "$input" | grep -o '"five_hour"[[:space:]]*:[[:space:]]*{[^}]*}')
+node_pct=$(printf '%s' "$node_5h" | grep -o '"used_percentage"[[:space:]]*:[[:space:]]*[0-9.]*' | grep -o '[0-9.]*$')
+node_resets=$(printf '%s' "$node_5h" | grep -o '"resets_at"[[:space:]]*:[[:space:]]*[0-9]*' | grep -o '[0-9]*$')
+if [ -n "$node_pct" ]; then
+  (curl.exe -s -m 2 --data "pct=${node_pct}&resets=${node_resets}" "@URL@" >/dev/null 2>&1 &)
+fi
+</script>
 </main>
 
 <script>
@@ -161,22 +183,27 @@ const settings = { hooks: Object.fromEntries(events.map((e) => [e, [{ hooks: [ho
 const hooks = document.getElementById('hooks');
 hooks.value = JSON.stringify(settings, null, 2);
 
-const copySaid = document.getElementById('copy-said');
-document.getElementById('copy').onclick = async () => {
+const copyFrom = async (box, said) => {
   try {
     // The clipboard API needs HTTPS; on plain HTTP fall back to the old way.
     if (navigator.clipboard && window.isSecureContext) {
-      await navigator.clipboard.writeText(hooks.value);
+      await navigator.clipboard.writeText(box.value);
     } else {
-      hooks.select();
+      box.select();
       if (!document.execCommand('copy')) throw new Error('copy');
     }
-    copySaid.textContent = 'Copied.';
+    said.textContent = 'Copied.';
   } catch (err) {
-    hooks.select();
-    copySaid.textContent = 'Selected: press Ctrl+C.';
+    box.select();
+    said.textContent = 'Selected: press Ctrl+C.';
   }
 };
+document.getElementById('copy').onclick = () => copyFrom(hooks, document.getElementById('copy-said'));
+
+// -- session % ------------------------------------------------------------
+const usageLines = document.getElementById('usage-lines');
+usageLines.value = document.getElementById('usage-template').textContent.trim().replace('@URL@', base + 'usage');
+document.getElementById('copy-usage').onclick = () => copyFrom(usageLines, document.getElementById('copy-usage-said'));
 
 for (const button of document.querySelectorAll('[data-event]')) {
   button.onclick = () => fetch('claude', {

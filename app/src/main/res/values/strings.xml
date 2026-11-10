@@ -11,9 +11,13 @@
     <string name="url_fmt">http://%1$s:%2$d/%3$s/</string>
     <string name="url_no_wifi">NO WI-FI</string>
 
-    <!-- %1$s is the project folder Claude Code is running in. -->
-    <string name="caption_needs_you_fmt">NEEDS YOU · %1$s</string>
-    <string name="caption_done_fmt">DONE · %1$s</string>
+    <!-- Shown, dim, whenever the microphone is open waiting for its name. -->
+    <string name="status_wake">● LISTENING FOR \"HEY BUDDY\"</string>
+    <string name="status_online">" · ONLINE"</string>
+
+    <!-- Never the project folder: project names stay off the screen. -->
+    <string name="caption_needs_you">NEEDS YOU</string>
+    <string name="caption_done">DONE</string>
     <!-- Appended when more sessions are in the same state. %1$d is how many. -->
     <string name="caption_more_fmt">" +%1$d"</string>
 </resources>

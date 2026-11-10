@@ -22,7 +22,7 @@ data class EyeParams(
      * reads as sad or tired; negative drops it toward the nose, which reads as cross.
      */
     val slant: Float = 0f,
-    /** Lower lid pushed up into a curve, highest in the middle, as a cheek does in a smile or a squint. */
+    /** Lower lid pushed up, 0..1 of the eye's height, as a cheek does in a smile or a squint. */
     val squint: Float = 0f,
     /** A head tilt: positive makes the right eye bigger and higher, negative the left. */
     val tilt: Float = 0f,
@@ -100,7 +100,7 @@ enum class Expression(val params: EyeParams) {
     ANGRY(EyeParams(height = 0.88f, lid = 0.14f, slant = -1f)),
 
     /** Suspicious, or smug: lids down, cheeks up. */
-    SQUINT(EyeParams(height = 0.9f, lid = 0.2f, squint = 0.24f)),
+    SQUINT(EyeParams(height = 0.92f, lid = 0.22f, squint = 0.25f)),
 }
 
 /**

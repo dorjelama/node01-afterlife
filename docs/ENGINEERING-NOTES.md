@@ -132,6 +132,24 @@ Read the log above again to see whether the pack has arrived. Do not drop
 
 ---
 
+## The recognizer's beep is a notification sound
+
+**Symptom.** Hands-free listening restarts the recognizer every ~5 s (each online session ends
+at the first silence), and Google's recognizer beeps on every start. Muting `STREAM_MUSIC`,
+`STREAM_SYSTEM` and `STREAM_NOTIFICATION` around `startListening` silenced nothing.
+
+**Cause.** `dumpsys audio` shows the beep as an `AudioTrack` from the Google app with
+`usage=USAGE_NOTIFICATION_EVENT`, so it plays on the notification stream. On this phone
+`adjustStreamVolume(STREAM_NOTIFICATION, ADJUST_MUTE)` is refused (it never appears in the audio
+event log) while the music and system mutes go through.
+
+**Fix.** `setStreamVolume(STREAM_NOTIFICATION, 0, 0)` *is* allowed. NODE turns the notification
+volume to 0 while hands-free listening runs and puts it back when it stops. NODE's own sounds
+are unaffected: chirps are `USAGE_ASSISTANCE_SONIFICATION` and speech `USAGE_ASSISTANT`.
+`android.speech.extra.DICTATION_MODE` was tried to make sessions last longer and changed nothing.
+
+---
+
 ## Front camera facts (Redmi Note 8)
 
 From `adb shell dumpsys media.camera`, camera `1`, facing front:
@@ -151,15 +169,29 @@ no turn, only the front-camera mirror.
 
 ---
 
-## The eyes' glow is affordable
+## Glow the dots from the dot map, not with a blur
 
-The glow is a `BlurMaskFilter` on the same path that is filled, which hardware-accelerated
-canvases support from API 28. The path changes every frame of an animation, so the blur is
-redone every frame too. Measured with `adb shell dumpsys gfxinfo dev.node01.companion` over
-670 frames of hearts, spirals, bouncing and glancing at 2340x1080: median 8 ms, 99th percentile
-15 ms, 0.75% janky frames; GPU time 9 ms median and 17 ms at the 99th percentile. Both eyes
-(and both hearts) go in **one** path, so there is one blur per frame, not two. A settled face
-draws no frames at all, so none of this costs anything at rest.
+The glow behind the lit dots started as a `BlurMaskFilter` on the eyes' smooth outline (which
+hardware canvases support from API 28). The outline changes every frame of an animation, so the
+blur is redone every frame. Measured with `adb shell dumpsys gfxinfo dev.node01.companion` over
+the same tour of animations at 2340x1080:
+
+| Glow | GPU median | GPU 90th | Janky |
+|---|---|---|---|
+| `BlurMaskFilter` on the outline | 12 ms | 17 ms | 5.7% |
+| None | 7 ms | 16 ms | 2.8% |
+| The on/off dot map, one pixel per dot, box-blurred on the CPU and drawn scaled up with filtering | 8 ms | 18 ms | 3.3% |
+
+The dot-map glow costs about a millisecond and follows the dots exactly. Leaving out the
+full-screen bitmap of unlit dots saved another ~3 ms at the median but did not change the jank,
+which stays around 3% whatever is drawn: it comes from the first frames of an animation, while
+the GPU clocks up from idle. A settled face draws no frames at all.
+
+**Deciding dots.** Rasterising the outline into a one-pixel-per-dot bitmap and reading it back
+looked neat but was not symmetric: Skia's fill rule takes a pixel whose centre lies exactly on
+a left edge and drops one exactly on a right edge, so an eye could lose a corner dot on one
+side only. Dots are instead tested in code at whole-dot offsets from the eye's centre, edges
+included on both sides, so the two halves come out identical.
 
 ---
 

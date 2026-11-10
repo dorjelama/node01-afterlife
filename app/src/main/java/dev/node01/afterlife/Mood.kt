@@ -14,8 +14,9 @@ sealed interface Gaze {
 /** Text under the eyes. Formatted by the activity, which owns the strings. */
 sealed interface Caption {
     data class Note(val text: String) : Caption
-    data class NeedsYou(val project: String, val others: Int) : Caption
-    data class Done(val project: String, val others: Int) : Caption
+    // Never which project: project names are kept off the screen.
+    data class NeedsYou(val others: Int) : Caption
+    data class Done(val others: Int) : Caption
 
     /** What the microphone has heard so far; empty until the first word. */
     data class Heard(val text: String) : Caption
@@ -81,9 +82,9 @@ object Mood {
             // You are talking to it: show what it hears.
             i.listening -> Caption.Heard(i.heard.orEmpty())
             i.note != null -> Caption.Note(i.note)
-            needsYou -> Caption.NeedsYou(c!!.project, c.others)
+            needsYou -> Caption.NeedsYou(c!!.others)
             i.reply != null -> Caption.Reply(i.reply)
-            c?.state == ClaudeSessions.State.DONE -> Caption.Done(c.project, c.others)
+            c?.state == ClaudeSessions.State.DONE -> Caption.Done(c.others)
             else -> null
         }
         // Shown whenever Claude waits on you, even while a desk note has the caption.

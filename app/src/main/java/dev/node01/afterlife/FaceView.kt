@@ -2,11 +2,10 @@ package dev.node01.afterlife
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BlurMaskFilter
 import android.graphics.Canvas
-import android.graphics.Matrix
 import android.graphics.Paint
-import android.graphics.Path
+import android.graphics.Rect
+import android.graphics.RectF
 import android.os.SystemClock
 import android.util.AttributeSet
 import android.view.View
@@ -19,7 +18,6 @@ import kotlin.math.exp
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
@@ -29,12 +27,14 @@ import kotlin.random.Random
  * A dot-matrix face: the whole screen is a grid of faint unlit dots, and the
  * eyes are the dots that light, over a soft glow.
  *
- * Every shape -- an open eye, a lidded one, the "^" of a happy one, a heart,
- * the "!!" -- is built each frame as a smooth path from the current
- * [EyeParams], then laid on the grid: a dot lights when its centre falls
- * inside. Each eye is centred on a dot and the two sit whole dots apart, so
- * they come out exact mirror images and move in crisp dot-sized steps, like
- * an LED panel.
+ * Every shape -- an open eye, a lidded one, the "^" of a happy one, a heart --
+ * is worked out each frame from the current [EyeParams] as smooth geometry,
+ * then each dot is simply on or off: on when its centre falls inside, edges
+ * included. Each eye is centred on a dot, the two sit whole dots apart, and
+ * dots are tested at whole-dot offsets from their eye's centre, so the two
+ * halves of an eye, and the two eyes, are exact mirror images. They move in
+ * crisp dot-sized steps, like an LED panel. Behind them, a glow: the lit dots
+ * again, one pixel each, softened and stretched over the panel.
  *
  * The face eases from where it is toward the [Look] it was last shown, and
  * redraws only while something is still moving: a settled face costs no
@@ -58,16 +58,10 @@ class FaceView @JvmOverloads constructor(
     private val offPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = color(R.color.node_dot_off) }
     private val dotPaint = roundDots()
     private val zPaint = roundDots()
-    private val glow = Paint(Paint.ANTI_ALIAS_FLAG)
 
-    /** Not anti-aliased: a dot is lit or it is not. */
-    private val maskPaint = Paint().apply { isAntiAlias = false }
-
-    /** Everything lit this frame, as smooth shapes in screen pixels. */
-    private val shapes = Path()
-
-    private val tops = FloatArray(SAMPLES + 1)
-    private val bottoms = FloatArray(SAMPLES + 1)
+    /** The session usage readout: information, so grey, like the captions. */
+    private val usagePaint = roundDots().apply { color = color(R.color.node_secondary) }
+    private val glowPaint = Paint(Paint.FILTER_BITMAP_FLAG)
 
     // The panel, rebuilt only when the size changes.
     private var grid: Bitmap? = null
@@ -78,13 +72,26 @@ class FaceView @JvmOverloads constructor(
     private var cols = 0
     private var rows = 0
 
-    /** [shapes] laid on the grid, one pixel per dot, read back to find which dots light. */
-    private var mask: Bitmap? = null
-    private var maskCanvas: Canvas? = null
-    private var maskPixels: ByteBuffer? = null
-    private var maskRowBytes = 0
+    /** Which dots light this frame, one byte per dot, row by row; then their centres, to draw. */
+    private var on = ByteArray(0)
     private var lit = FloatArray(0)
+
+    /**
+     * The glow: [on] softened by a few box blurs, one pixel per dot, drawn
+     * scaled up with filtering. Far cheaper than blurring screen-sized shapes.
+     */
+    private var glowMap: Bitmap? = null
+    private var glowRowBytes = 0
+    private var glowBytes = ByteArray(0)
+    private var glowBuffer: ByteBuffer = ByteBuffer.allocate(0)
+    private var blurA = IntArray(0)
+    private var blurB = IntArray(0)
+    private val glowSrc = Rect()
+    private val glowDst = RectF()
     private val zDots = FloatArray(2 * Z_MAX_DOTS)
+
+    private var usagePercent: Int? = null
+    private val usageDots = FloatArray(2 * GLYPH_W * GLYPH_H * 4)
 
     /** Starts asleep, so the first look shown is a waking up. */
     private var current = Expression.CLOSED.params
@@ -113,7 +120,21 @@ class FaceView @JvmOverloads constructor(
     private val eyeSize = FloatArray(2)
     private val eyeLid = FloatArray(2)
 
-    private var dbgMs = 0L
+    // The eye being drawn, worked out once by shapeEye() for both its glow and its dots.
+    private var eHalfW = 0f
+    private var eH = 0f
+    private var eRectH = 0f
+    private var eR = 0f
+    private var eBend = 0f
+    private var eLid = 0f
+    private var eSlant = 0f
+    private var eLidK = 0f
+    private var eSide = 0f
+
+    // What edges() found: an eye column's top and bottom, relative to the eye's centre.
+    private var eTop = 0f
+    private var eBottom = 0f
+
     private var lastFrameMs = 0L
     private var lastCx = 0f
     private var stretch = 0f
@@ -163,6 +184,13 @@ class FaceView @JvmOverloads constructor(
         removeCallbacks(endPreview)
         postDelayed(endPreview, ms)
         retarget()
+    }
+
+    /** Shows [percent] (0..100) in the top-left corner in dot digits; null shows nothing. */
+    fun showUsage(percent: Int?) {
+        if (percent == usagePercent) return
+        usagePercent = percent
+        kick()
     }
 
     /** A hello: two quick blinks. */
@@ -283,10 +311,9 @@ class FaceView @JvmOverloads constructor(
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         grid?.recycle()
-        mask?.recycle()
+        glowMap?.recycle()
         grid = null
-        mask = null
-        maskCanvas = null
+        glowMap = null
         if (w <= 0 || h <= 0) return
         pitch = h / ROWS
         dotR = pitch * DOT
@@ -302,34 +329,25 @@ class FaceView @JvmOverloads constructor(
             for (r in 0 until rows) for (c in 0 until cols) drawCircle(x0 + c * pitch, y0 + r * pitch, dotR, offPaint)
         }
         grid = panel
-
-        // One mask pixel per dot, its centre on the dot's centre.
-        val m = Bitmap.createBitmap(cols, rows, Bitmap.Config.ALPHA_8)
-        maskCanvas = Canvas(m).apply {
-            concat(
-                Matrix().apply {
-                    setTranslate(-x0, -y0)
-                    postScale(1f / pitch, 1f / pitch)
-                    postTranslate(0.5f, 0.5f)
-                },
-            )
-        }
-        mask = m
-        maskRowBytes = m.rowBytes
-        maskPixels = ByteBuffer.allocate(m.byteCount)
+        on = ByteArray(cols * rows)
         lit = FloatArray(2 * cols * rows)
+        val g = Bitmap.createBitmap(cols, rows, Bitmap.Config.ALPHA_8)
+        glowMap = g
+        glowRowBytes = g.rowBytes
+        glowBytes = ByteArray(g.rowBytes * rows)
+        glowBuffer = ByteBuffer.wrap(glowBytes)
+        blurA = IntArray(cols * rows)
+        blurB = IntArray(cols * rows)
 
         dotPaint.strokeWidth = 2f * dotR
         zPaint.strokeWidth = 2f * dotR
-        glow.maskFilter = BlurMaskFilter(h * GLOW, BlurMaskFilter.Blur.NORMAL)
+        usagePaint.strokeWidth = 2f * dotR
     }
 
     override fun onDraw(canvas: Canvas) {
         val panel = grid
-        val m = mask
-        val mc = maskCanvas
-        val pixels = maskPixels
-        if (panel == null || m == null || mc == null || pixels == null) {
+        val glowMap = glowMap
+        if (panel == null || glowMap == null) {
             canvas.drawColor(bgColor)
             return
         }
@@ -403,10 +421,20 @@ class FaceView @JvmOverloads constructor(
                 heart = backOut(e) * heartbeat(t)
             }
             Act.DIZZY -> {
-                // Woozy: the head lolls round and round, tipping one eye up as
-                // the other drops and swapping their sizes, under heavy, uneven
-                // lids. Then a quick shake of the head to snap out of it.
+                // Woozy: from plain open eyes, whatever the face was doing --
+                // a shake wakes it -- the head lolls round and round, tipping
+                // one eye up as the other drops and swapping their sizes, under
+                // uneven lids. Then a quick shake of the head to snap out of it.
                 val e = envelope(t, 0.1f, 0.3f)
+                val k = 1f - e
+                open += (1f - open) * e
+                arc *= k
+                lid *= k
+                slant *= k
+                squint *= k
+                tilt *= k
+                wid += (1f - wid) * e
+                hei += (1f - hei) * e
                 val spin = (2.0 * PI * DIZZY_TURNS * t).toFloat()
                 for (i in 0..1) {
                     val side = SIDES[i]
@@ -415,7 +443,6 @@ class FaceView @JvmOverloads constructor(
                     eyeSize[i] = 1f + side * sin(spin) * DIZZY_SIZE * e
                     eyeLid[i] = (if (side < 0f) DIZZY_LID_LEFT else DIZZY_LID_RIGHT) * e
                 }
-                slant += (DIZZY_SLANT - slant) * e
                 val s = (t - DIZZY_SHAKE_AT) / (1f - DIZZY_SHAKE_AT)
                 if (s in 0f..1f) shake = sin(2.0 * PI * 2.0 * s).toFloat() * NO_SHAKE * (1f - s)
             }
@@ -425,11 +452,12 @@ class FaceView @JvmOverloads constructor(
         val w = width.toFloat()
         val h = height.toFloat()
         val rawCx = w / 2f + (gx * GAZE_X + shake) * h
-        // Snapped to a dot: a shape centred between dots comes out lopsided.
-        val cx = snap(rawCx, x0)
-        val cy = snap(h * FACE_Y + gy * GAZE_Y * h - lift * h, y0)
+        // The face's centre dot: a shape centred between dots comes out lopsided.
+        val cCol = ((rawCx - x0) / pitch).roundToInt()
+        val cRow = ((h * FACE_Y + gy * GAZE_Y * h - lift * h - y0) / pitch).roundToInt()
+        val cy = y0 + cRow * pitch
         // Centre to each eye in whole dots, so the two are mirror images.
-        val half = whole(h * EYE_GAP / 2f)
+        val halfCols = (h * EYE_GAP / 2f / pitch).roundToInt()
 
         // Moving fast sideways stretches the eyes along the way they go.
         val speed = if (fresh) 0f else abs(rawCx - lastCx) / h / dtMs
@@ -439,12 +467,14 @@ class FaceView @JvmOverloads constructor(
 
         val baseW = h * EYE_W
         val baseH = h * EYE_H
-        shapes.rewind()
+        on.fill(0)
+        var rightCol = cCol
         for (i in 0..1) {
             val side = SIDES[i]
-            val ex = cx + side * half + whole(eyeDx[i] * h)
+            val col = cCol + (if (i == 0) -halfCols else halfCols) + dots(eyeDx[i] * h)
             // A tilted head lifts and enlarges one eye.
-            val ey = cy - whole(side * tilt * TILT_RISE * h) + whole(eyeDy[i] * h)
+            val row = cRow - dots(side * tilt * TILT_RISE * h) + dots(eyeDy[i] * h)
+            if (i == 1) rightCol = col
             val scale = (1f + side * tilt * TILT) * eyeSize[i]
             if (eyeScale > 0.02f) {
                 val winking = side == winkSide
@@ -452,9 +482,7 @@ class FaceView @JvmOverloads constructor(
                 val s = scale * eyeScale
                 // A winking eye closes into a "^".
                 val bendTo = if (winking) arc + (1f - arc) * wink else arc
-                addEye(
-                    ex = ex,
-                    ey = ey,
+                shapeEye(
                     ew = baseW * wid * s * (1f + stretch) * (1f + BLINK_WIDEN * shut),
                     fullH = baseH * hei * s * (1f - stretch * 0.6f),
                     open = open * (1f - shut),
@@ -467,49 +495,39 @@ class FaceView @JvmOverloads constructor(
                     // A bent line is drawn thicker, so a "^" stays solid as it curves.
                     line = pitch * (LINE_DOTS + abs(bendTo) * BENT_LINE_DOTS) * eyeScale,
                 )
+                lightEye(col, row)
             }
-            if (heart > 0.01f) addHeart(ex, ey, baseW * HEART * heart * scale)
+            if (heart > 0.01f) lightHeart(col, row, baseW * HEART * heart * scale)
         }
         // The right eye's outermost column, and the top row of a fully open eye.
-        val rightEdge = cx + half + floor(baseW * p.width / 2f / pitch) * pitch
-        if (p.exclaim > 0.5f) addBangs(rightEdge, cy - floor(baseH * p.height / 2f / pitch) * pitch)
+        val rightEdge = rightCol + floor(baseW * p.width / 2f / pitch).toInt()
+        if (p.exclaim > 0.5f) addBangs(rightEdge, cRow - floor(baseH * p.height / 2f / pitch).toInt())
 
-        // Which dots light: the shapes laid on the grid.
-        m.eraseColor(0)
-        mc.drawPath(shapes, maskPaint)
-        pixels.rewind()
-        m.copyPixelsToBuffer(pixels)
-        val bytes = pixels.array()
         var n = 0
-        for (r in 0 until rows) {
-            val rowStart = r * maskRowBytes
-            for (c in 0 until cols) {
-                if (bytes[rowStart + c].toInt() and 0xFF >= LIT) {
-                    lit[n++] = x0 + c * pitch
-                    lit[n++] = y0 + r * pitch
-                }
+        var minC = cols
+        var maxC = -1
+        var minR = rows
+        var maxR = -1
+        for (k in on.indices) {
+            if (on[k].toInt() != 0) {
+                val c = k % cols
+                val r = k / cols
+                lit[n++] = x0 + c * pitch
+                lit[n++] = y0 + r * pitch
+                minC = min(minC, c)
+                maxC = max(maxC, c)
+                minR = min(minR, r)
+                maxR = max(maxR, r)
             }
-        }
-        if (now - dbgMs > 1_000L) {
-            dbgMs = now
-            val b = android.graphics.RectF()
-            shapes.computeBounds(b, true)
-            val sb = StringBuilder("DBG rows=$rows cols=$cols rb=$maskRowBytes bc=${m.byteCount} pitch=$pitch x0=$x0 y0=$y0 cy=$cy open=$open hei=$hei bounds=$b\n")
-            for (r in 0 until rows) {
-                for (c in 0 until cols) sb.append(if (bytes[r * maskRowBytes + c].toInt() != 0) '#' else '.')
-                sb.append('\n')
-            }
-            android.util.Log.d("NODEDBG", sb.toString())
         }
 
         val colour = blend(eyeColor, amberColor, p.amber)
         canvas.drawBitmap(panel, 0f, 0f, null)
-        glow.color = colour
-        glow.alpha = GLOW_ALPHA
-        canvas.drawPath(shapes, glow)
+        if (n > 0) drawGlow(canvas, glowMap, colour, minC, maxC, minR, maxR)
         dotPaint.color = colour
         if (n > 0) canvas.drawPoints(lit, 0, n, dotPaint)
-        if (playing == Act.ZZZ) drawZs(canvas, t, rightEdge + pitch, cy - 2f * pitch, colour)
+        if (playing == Act.ZZZ) drawZs(canvas, t, x0 + (rightEdge + 1) * pitch, cy - 2f * pitch, colour)
+        usagePercent?.let { drawUsage(canvas, it) }
 
         if (blinking || hopping || playing != null || current != target || stretch > 0f) {
             val onlyZs = playing == Act.ZZZ && !blinking && !hopping && current == target && stretch == 0f
@@ -520,12 +538,10 @@ class FaceView @JvmOverloads constructor(
     }
 
     /**
-     * Adds one eye to [shapes]: a rounded rectangle, sampled column by column
-     * so lids can cut it and a closing eye can bend into "^" or "◡".
+     * Works out one eye's shape, for [edges]: a rounded rectangle, cut by lids
+     * and, as it closes, bent into "^" or "◡".
      */
-    private fun addEye(
-        ex: Float,
-        ey: Float,
+    private fun shapeEye(
         ew: Float,
         fullH: Float,
         open: Float,
@@ -536,64 +552,89 @@ class FaceView @JvmOverloads constructor(
         side: Float,
         line: Float,
     ) {
-        val eh = max(fullH * open, line)
+        eH = max(fullH * open, line)
         // Lids belong to an open eye; they fade out as it shuts.
-        val lidK = min(open * 2f, 1f)
-        // A squint's lower lid: half of it shortens the eye from below, which
-        // keeps the corners round, and half bows the bottom edge up in the middle.
-        val cheek = eh * squint * lidK / 2f
-        val halfW = ew / 2f
-        val rectH = eh - cheek
+        eLidK = min(open * 2f, 1f)
+        // A squint's lower lid shortens the eye from below, keeping its round
+        // corners. On dots a curved lid would leave stray stubs at the corners.
+        eHalfW = ew / 2f
+        eRectH = eH * (1f - squint * eLidK)
         // Rounder as it shuts, so a closed eye is a line with round ends.
         val roundness = CORNER + (0.5f - CORNER) * (1f - min(open * 3f, 1f))
-        val r = min(min(ew, rectH) * roundness, rectH / 2f)
-        val bend = arc * fullH * BEND * (1f - open)
-        for (i in 0..SAMPLES) {
-            val u = U[i]
-            val dx = max(abs(u) * halfW - (halfW - r), 0f)
-            val corner = r - sqrt(max(r * r - dx * dx, 0f))
-            val eyeTop = ey - eh / 2f - bend * (1f - u * u)
-            // 0 at the corner nearest the nose, 1 at the outer one.
-            val outer = 0.5f + 0.5f * u * side
-            val drop = lid + SLANT * (max(slant, 0f) * outer + max(-slant, 0f) * (1f - outer))
-            val top = max(eyeTop + corner, eyeTop + eh * drop * lidK)
-            val bottom = eyeTop + rectH - corner - cheek * (1f - u * u)
-            // Where a lid has cut right through, the column pinches to nothing.
-            val mid = (top + bottom) / 2f
-            tops[i] = min(top, mid)
-            bottoms[i] = max(bottom, mid)
-        }
-        shapes.moveTo(ex + U[0] * halfW, tops[0])
-        for (i in 1..SAMPLES) shapes.lineTo(ex + U[i] * halfW, tops[i])
-        for (i in SAMPLES downTo 0) shapes.lineTo(ex + U[i] * halfW, bottoms[i])
-        shapes.close()
+        eR = min(min(ew, eRectH) * roundness, eRectH / 2f)
+        eBend = arc * fullH * BEND * (1f - open)
+        eLid = lid
+        eSlant = slant
+        eSide = side
     }
 
-    private fun addHeart(x: Float, y: Float, half: Float) {
-        shapes.moveTo(x + HEART_PTS[0] * half, y + HEART_PTS[1] * half)
-        var i = 2
-        while (i < HEART_PTS.size) {
-            shapes.lineTo(x + HEART_PTS[i] * half, y + HEART_PTS[i + 1] * half)
-            i += 2
+    /**
+     * The eye's top and bottom edges at [u], -1..1 across it, relative to its
+     * centre, into [eTop] and [eBottom]; the top is below the bottom where a
+     * lid has cut right through. Only the slant tells u from -u, so an eye is
+     * symmetric unless it is meant not to be.
+     */
+    private fun edges(u: Float) {
+        val dx = max(abs(u) * eHalfW - (eHalfW - eR), 0f)
+        val corner = eR - sqrt(max(eR * eR - dx * dx, 0f))
+        val top0 = -eH / 2f - eBend * (1f - u * u)
+        // 0 at the corner nearest the nose, 1 at the outer one.
+        val outer = 0.5f + 0.5f * u * eSide
+        val drop = eLid + SLANT * (max(eSlant, 0f) * outer + max(-eSlant, 0f) * (1f - outer))
+        eTop = max(top0 + corner, top0 + eH * drop * eLidK)
+        eBottom = top0 + eRectH - corner
+    }
+
+    /** Lights the eye centred on the dot at [col], [row]: every dot whose centre is inside it. */
+    private fun lightEye(col: Int, row: Int) {
+        if (eHalfW <= 0f) return
+        val reach = (eHalfW / pitch).toInt()
+        for (i in -reach..reach) {
+            edges(i * pitch / eHalfW)
+            if (eTop > eBottom) continue
+            light(col + i, row + ceil(eTop / pitch).toInt(), row + floor(eBottom / pitch).toInt())
         }
-        shapes.close()
+    }
+
+    /**
+     * Lights a heart [half] pixels across each way, centred on the dot at
+     * [col], [row]: inside the curve (x² + y² - 1)³ = x²y³.
+     */
+    private fun lightHeart(col: Int, row: Int, half: Float) {
+        val unit = half / HEART_HALF_W / pitch
+        if (unit <= 0f) return
+        val reachX = ceil(HEART_HALF_W * unit).toInt()
+        val reachY = ceil(HEART_REACH_Y * unit).toInt()
+        for (i in -reachX..reachX) {
+            val x = i / unit
+            val x2 = x * x
+            for (j in -reachY..reachY) {
+                // Up is +y here; the curve's own middle is a little above 0.
+                val y = HEART_MID - j / unit
+                val a = x2 + y * y - 1f
+                if (a * a * a - x2 * y * y * y <= 0f) light(col + i, row + j, row + j)
+            }
+        }
+    }
+
+    /** Lights column [col] from [fromRow] to [toRow], both included, where they are on the panel. */
+    private fun light(col: Int, fromRow: Int, toRow: Int) {
+        if (col < 0 || col >= cols) return
+        for (r in max(fromRow, 0)..min(toRow, rows - 1)) on[r * cols + col] = 1
     }
 
     /**
      * "!!" beside the right eye, whose outermost dot column is [eyeRight],
-     * top-aligned with [eyeTop], the top row of a fully open eye, so a blink
-     * does not move it. Each "!" is a bar over a dot, its edges between dots
-     * so every dot is clearly in or out.
+     * top-aligned with [topRow], the top row of a fully open eye, so a blink
+     * does not move it. Each "!" is a bar over a dot.
      */
-    private fun addBangs(eyeRight: Float, eyeTop: Float) {
-        val left0 = eyeRight + (BANG_CLEAR_DOTS + 0.5f) * pitch
-        val top = eyeTop - 0.5f * pitch
+    private fun addBangs(eyeRight: Int, topRow: Int) {
         for (mark in 0..1) {
-            val left = left0 + mark * (BANG_W_DOTS + BANG_SPACE_DOTS) * pitch
-            val right = left + BANG_W_DOTS * pitch
-            shapes.addRect(left, top, right, top + BANG_H_DOTS * pitch, Path.Direction.CW)
-            val dotTop = top + (BANG_H_DOTS + 1) * pitch
-            shapes.addRect(left, dotTop, right, dotTop + BANG_W_DOTS * pitch, Path.Direction.CW)
+            val col0 = eyeRight + 1 + BANG_CLEAR_DOTS + mark * (BANG_W_DOTS + BANG_SPACE_DOTS)
+            for (k in 0 until BANG_W_DOTS) {
+                light(col0 + k, topRow, topRow + BANG_H_DOTS - 1)
+                light(col0 + k, topRow + BANG_H_DOTS + 1, topRow + BANG_H_DOTS + BANG_W_DOTS)
+            }
         }
     }
 
@@ -607,8 +648,9 @@ class FaceView @JvmOverloads constructor(
             val zt = (t - k * Z_STAGGER) / Z_LIFE
             if (zt !in 0f..1f) continue
             val size = Z_FIRST_DOTS + k
-            val left = snap(x + zt * Z_DRIFT_DOTS * pitch, x0)
-            val bottom = snap(y - zt * Z_RISE_DOTS * pitch, y0)
+            // Each further up a diagonal than the last, so they never overlap, and drifting a little.
+            val left = snap(x + (k * Z_STEP_X_DOTS + zt * Z_DRIFT_DOTS) * pitch, x0)
+            val bottom = snap(y - (k * Z_STEP_Y_DOTS + zt * Z_RISE_DOTS) * pitch, y0)
             val top = bottom - (size - 1) * pitch
             var n = 0
             for (c in 0 until size) {
@@ -626,11 +668,86 @@ class FaceView @JvmOverloads constructor(
         }
     }
 
+    /**
+     * The glow behind the lit dots: [on] blurred into [glowMap], then drawn
+     * stretched over the panel, a pixel to a dot, filtered into a soft haze.
+     * Only the lit area, plus the blur's reach, is worked out and drawn.
+     */
+    private fun drawGlow(canvas: Canvas, map: Bitmap, colour: Int, minC: Int, maxC: Int, minR: Int, maxR: Int) {
+        val c0 = max(minC - GLOW_REACH, 0)
+        val c1 = min(maxC + GLOW_REACH, cols - 1)
+        val r0 = max(minR - GLOW_REACH, 0)
+        val r1 = min(maxR + GLOW_REACH, rows - 1)
+        for (r in r0..r1) for (c in c0..c1) blurA[r * cols + c] = if (on[r * cols + c].toInt() != 0) 255 else 0
+        repeat(GLOW_PASSES) {
+            // A three-wide box blur across, then down: twice over, near enough a Gaussian.
+            for (r in r0..r1) {
+                for (c in c0..c1) {
+                    val k = r * cols + c
+                    val left = if (c > c0) blurA[k - 1] else 0
+                    val right = if (c < c1) blurA[k + 1] else 0
+                    blurB[k] = (left + blurA[k] + right) / 3
+                }
+            }
+            for (r in r0..r1) {
+                for (c in c0..c1) {
+                    val k = r * cols + c
+                    val up = if (r > r0) blurB[k - cols] else 0
+                    val down = if (r < r1) blurB[k + cols] else 0
+                    blurA[k] = (up + blurB[k] + down) / 3
+                }
+            }
+        }
+        for (r in r0..r1) for (c in c0..c1) glowBytes[r * glowRowBytes + c] = blurA[r * cols + c].toByte()
+        glowBuffer.rewind()
+        map.copyPixelsFromBuffer(glowBuffer)
+        // Pixel (c, r) is the dot at (c, r): its centre lands on the dot's centre.
+        glowSrc.set(c0, r0, c1 + 1, r1 + 1)
+        glowDst.set(
+            x0 + (c0 - 0.5f) * pitch,
+            y0 + (r0 - 0.5f) * pitch,
+            x0 + (c1 + 0.5f) * pitch,
+            y0 + (r1 + 0.5f) * pitch,
+        )
+        glowPaint.color = colour
+        glowPaint.alpha = GLOW_ALPHA
+        canvas.drawBitmap(map, glowSrc, glowDst, glowPaint)
+        // Leave the map clean for the next frame, which may light elsewhere.
+        for (r in r0..r1) for (c in c0..c1) glowBytes[r * glowRowBytes + c] = 0
+    }
+
+    /** "42%" in 5×7 dot digits in the top-left corner, a dot apart: nothing else, no label. */
+    private fun drawUsage(canvas: Canvas, percent: Int) {
+        val p = percent.coerceIn(0, 100)
+        val digits = if (p == 100) 3 else if (p >= 10) 2 else 1
+        var n = 0
+        var col = USAGE_COL
+        for (d in digits - 1 downTo 0) {
+            n = addGlyph(GLYPHS[p / POW10[d] % 10], col, n)
+            col += GLYPH_W + 1
+        }
+        n = addGlyph(GLYPHS[PERCENT], col, n)
+        canvas.drawPoints(usageDots, 0, n, usagePaint)
+    }
+
+    private fun addGlyph(glyph: BooleanArray, col: Int, start: Int): Int {
+        var n = start
+        for (r in 0 until GLYPH_H) {
+            for (c in 0 until GLYPH_W) {
+                if (glyph[r * GLYPH_W + c]) {
+                    usageDots[n++] = x0 + (col + c) * pitch
+                    usageDots[n++] = y0 + (USAGE_ROW + r) * pitch
+                }
+            }
+        }
+        return n
+    }
+
     /** The nearest dot centre to [v] on a grid starting at [origin]. */
     private fun snap(v: Float, origin: Float) = origin + ((v - origin) / pitch).roundToInt() * pitch
 
-    /** [v] rounded to whole dots. */
-    private fun whole(v: Float) = (v / pitch).roundToInt() * pitch
+    /** [v] pixels, in whole dots. */
+    private fun dots(v: Float) = (v / pitch).roundToInt()
 
     override fun onDetachedFromWindow() {
         stop()
@@ -645,9 +762,6 @@ class FaceView @JvmOverloads constructor(
         const val ROWS = 38f
         const val DOT = 0.36f
 
-        /** Mask coverage, of 255, at which a dot lights. */
-        const val LIT = 128
-
         // Geometry, as fractions of the view's height.
         const val EYE_W = 0.34f
         const val EYE_H = 0.40f
@@ -659,7 +773,7 @@ class FaceView @JvmOverloads constructor(
         const val HOP = 0.06f
 
         /** Corner radius as a fraction of the eye's smaller side; 0.5 would be a pill. */
-        const val CORNER = 0.28f
+        const val CORNER = 0.34f
 
         /** A closed eye's line in dots, and how much thicker it gets fully bent into "^" or "◡". */
         const val LINE_DOTS = 1.5f
@@ -678,15 +792,15 @@ class FaceView @JvmOverloads constructor(
         /** A blinking eye widens a touch as it squashes. */
         const val BLINK_WIDEN = 0.08f
         const val MOTION_STRETCH = 22f
-        const val MAX_STRETCH = 0.14f
+        const val MAX_STRETCH = 0.1f
 
-        /** A soft haze behind the lit dots, as LEDs bleed into a diffuser. */
-        const val GLOW = 0.05f
-        const val GLOW_ALPHA = 70
+        /** A soft haze behind the lit dots, as LEDs bleed into a diffuser: its strength, and its blur. */
+        const val GLOW_ALPHA = 110
+        const val GLOW_PASSES = 2
 
-        /** Columns per eye outline; sampled densest at the sides, where the corners turn fastest. */
-        const val SAMPLES = 48
-        val U = FloatArray(SAMPLES + 1) { -cos(PI * it / SAMPLES).toFloat() }
+        /** How many dots the glow reaches past the last lit one: one per blur pass, and one for the filtering. */
+        const val GLOW_REACH = GLOW_PASSES + 1
+
 
         /** "!" in dots: a bar two wide and seven tall, a one-dot gap, then a two-by-two dot. */
         const val BANG_W_DOTS = 2
@@ -702,23 +816,55 @@ class FaceView @JvmOverloads constructor(
         const val NO_SHAKE = 0.06f
         const val SCAN_X = 0.85f
         const val SCAN_Y = -0.15f
-        const val HEART = 0.52f
+        const val HEART = 0.5f
+
+        /** The heart curve's half-width, its reach up or down from its middle, and that middle. */
+        const val HEART_HALF_W = 1.14f
+        const val HEART_REACH_Y = 1.15f
+        const val HEART_MID = 0.12f
         const val DIZZY_TURNS = 2.0
         const val DIZZY_X = 0.07f
         const val DIZZY_Y = 0.06f
-        const val DIZZY_SIZE = 0.1f
-        const val DIZZY_LID_LEFT = 0.3f
-        const val DIZZY_LID_RIGHT = 0.12f
-        const val DIZZY_SLANT = 0.4f
+        const val DIZZY_SIZE = 0.12f
+        const val DIZZY_LID_LEFT = 0.18f
+        const val DIZZY_LID_RIGHT = 0.04f
         const val DIZZY_SHAKE_AT = 0.72f
         const val Z_COUNT = 3
         const val Z_FIRST_DOTS = 3
         const val Z_MAX_DOTS = 3 * (Z_FIRST_DOTS + Z_COUNT - 1)
         const val Z_STAGGER = 0.22f
         const val Z_LIFE = 0.56f
-        const val Z_DRIFT_DOTS = 5f
-        const val Z_RISE_DOTS = 9f
+        /** Each Z starts this far right of and above the last: wider than the biggest, so they never touch. */
+        const val Z_STEP_X_DOTS = 6
+        const val Z_STEP_Y_DOTS = 4
+        const val Z_DRIFT_DOTS = 1f
+        const val Z_RISE_DOTS = 2f
         const val Z_ALPHA = 220.0
+
+        // The session usage readout: where its top-left dot sits, out of the eyes' way.
+        const val USAGE_COL = 2
+        const val USAGE_ROW = 1
+
+        /** Dot digits, five wide and seven tall, as on an LED panel. */
+        const val GLYPH_W = 5
+        const val GLYPH_H = 7
+        const val PERCENT = 10
+        val POW10 = intArrayOf(1, 10, 100)
+
+        /** 0-9, then "%": each a row of five, top to bottom. */
+        val GLYPHS: Array<BooleanArray> = arrayOf(
+            ".###." + "#...#" + "#...#" + "#...#" + "#...#" + "#...#" + ".###.",
+            "..#.." + ".##.." + "..#.." + "..#.." + "..#.." + "..#.." + ".###.",
+            ".###." + "#...#" + "....#" + "...#." + "..#.." + ".#..." + "#####",
+            "#####" + "...#." + "..#.." + "...#." + "....#" + "#...#" + ".###.",
+            "...#." + "..##." + ".#.#." + "#..#." + "#####" + "...#." + "...#.",
+            "#####" + "#...." + "####." + "....#" + "....#" + "#...#" + ".###.",
+            "..##." + ".#..." + "#...." + "####." + "#...#" + "#...#" + ".###.",
+            "#####" + "....#" + "...#." + "..#.." + ".#..." + ".#..." + ".#...",
+            ".###." + "#...#" + "#...#" + ".###." + "#...#" + "#...#" + ".###.",
+            ".###." + "#...#" + "#...#" + ".####" + "....#" + "...#." + ".##..",
+            "##..." + "##..#" + "...#." + "..#.." + ".#..." + "#..##" + "...##",
+        ).map { s -> BooleanArray(s.length) { s[it] == '#' } }.toTypedArray()
 
         // Motion.
         const val EASE_MS = 90.0
@@ -743,17 +889,6 @@ class FaceView @JvmOverloads constructor(
         fun nextBlinkMs() = Random.nextLong(2_500L, 6_000L)
         fun nextIdleMs() = Random.nextLong(1_500L, 4_000L)
 
-        /** The classic heart curve, scaled to span -1..1 across and centred. */
-        val HEART_PTS: FloatArray = run {
-            val n = 72
-            val xs = FloatArray(n) { 16f * sin(2.0 * PI * it / n).pow(3).toFloat() }
-            val ys = FloatArray(n) {
-                val a = 2.0 * PI * it / n
-                -(13 * cos(a) - 5 * cos(2 * a) - 2 * cos(3 * a) - cos(4 * a)).toFloat()
-            }
-            val mid = (ys.max() + ys.min()) / 2f
-            FloatArray(2 * n) { if (it % 2 == 0) xs[it / 2] / 16f else (ys[it / 2] - mid) / 16f }
-        }
 
         /** Dots drawn as round points: one call for the lot. */
         fun roundDots() = Paint(Paint.ANTI_ALIAS_FLAG).apply {

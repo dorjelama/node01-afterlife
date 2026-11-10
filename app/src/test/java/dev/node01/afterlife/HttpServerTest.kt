@@ -18,6 +18,7 @@ class HttpServerTest {
         assertEquals(Route.Claude, HttpServer.route("POST", "/$key/claude", key))
         assertEquals(Route.Note, HttpServer.route("POST", "/$key/note", key))
         assertEquals(Route.Face, HttpServer.route("POST", "/$key/face", key))
+        assertEquals(Route.Usage, HttpServer.route("POST", "/$key/usage", key))
     }
 
     @Test

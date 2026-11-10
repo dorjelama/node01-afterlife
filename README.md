@@ -3,9 +3,10 @@
 **An old phone, rebuilt as a face on your desk.**
 
 A Redmi Note 8 running stock MIUI — bootloader locked, no root, no custom recovery — turned
-into a small desk companion. Two glowing cyan eyes notice when you sit down, follow you,
-doze when you leave and sleep when the lights go off. They wink, tilt, bounce, turn into
-hearts when you say thank you and into spirals when you shake the phone. When Claude Code on your PC needs your
+into a small desk companion. Two dot-matrix eyes, cyan dots lit on a panel of faint ones like
+an LED display, notice when you sit down, follow you, doze when you leave and sleep when the
+lights go off. They wink, tilt, bounce, turn into hearts when you say thank you and go woozy
+when you shake the phone. When Claude Code on your PC needs your
 approval, they turn amber and chirp, so you can step away from the keyboard and still know.
 Tap it or wave at it and it listens: ask the time, set a timer, have it remind you — in
 English or Nepali, with no cloud AI.
@@ -30,13 +31,15 @@ version lives on at `9a42e35`.
 |---|---|
 | **Sees you** | The front camera's own face detection, done by the camera hardware. The eyes follow you, say hello with a double blink when you come back after a while, and look around the room when you have just left |
 | **Sleeps** | Away 2 minutes: sleepy and dim. Away 10 minutes, or the room dark: eyes closed, backlight at the panel minimum |
-| **Feels the desk** | Knock on the desk and it startles. Shake the phone and its eyes spin into dizzy spirals |
+| **Feels the desk** | Knock on the desk and it startles. Shake the phone and it goes woozy: its eyes loll round, one up as the other drops, until it shakes it off |
 | **Plays** | Tap it and it bounces with happy **^ ^** eyes; say "thank you" and its eyes turn to beating hearts. While you sit there it now and then winks, tilts its head or squints; with nobody there it looks around the room; asleep, Z's float up. Listening, it tilts its head. Every animation and expression can also be played from the page |
 | **Listens** | Tap the screen or wave over its top edge, wait for the blip, and speak — English or Nepali. See [Voice](#voice) |
-| **Claude Code** | Through Claude Code hooks on your PC. While Claude works the eyes narrow and look toward the PC. When Claude needs approval or has a question: amber, wide, an amber **!!** beside them, `NEEDS YOU · <project>`, one chirp. When it finishes: a happy bounce, then **^ ^** eyes, `DONE · <project>`, a softer chirp — held until you have actually looked |
+| **Talks** | A few short words of its own: "Welcome back!" ("Good morning!" once a morning), "Hey! Claude needs you.", "All done!", "Whoa!" at a knock, "Good night." when the lights go off. At most one unprompted line every 20 seconds, never in a dark room; `TALK` in `NodeActivity.kt` turns it off |
+| **Claude Code** | Through Claude Code hooks on your PC. While Claude works the eyes narrow and look toward the PC. When Claude needs approval or has a question: amber, wide, an amber **!!** beside them, `NEEDS YOU`, one chirp. When it finishes: a happy bounce, then **^ ^** eyes, `DONE`, a softer chirp — held until you have actually looked |
 | **Desk notes** | Send a short note from any browser, now or in a few minutes — or say "remind me in 10 minutes to stretch". It shows in amber and is read out; tap or wave to dismiss it |
+| **Session %** | How much of your 5-hour Claude session limit is used, as `/usage` shows it: just the number, such as `42%`, in grey dot digits in the top-left corner. It comes from Claude Code's status line, which gets it only on Pro and Max plans and only runs in the terminal version (not the VS Code panel); the page has the lines to add to your status line script. They send the percentage and when the window resets, nothing else. After the reset it shows `0%` |
 
-Amber means one thing: something needs you. Everything else is cyan on black.
+Amber means one thing: something needs you. Everything else is cyan dots on black.
 
 ## Use it
 
@@ -44,8 +47,8 @@ Amber means one thing: something needs you. Everything else is cyan on black.
 2. **Hold a finger on the screen** for a moment to see its address for 30 seconds, such as
    `http://192.168.1.50:8081/k7m2x9qa4c/`.
 3. Open that address on any phone or PC on the same Wi-Fi. The page sends desk notes, plays
-   the face's animations, has a **Try it** row to test the Claude states, and shows the Claude Code hooks with the address
-   already filled in.
+   the face's animations, has a **Try it** row to test the Claude states, and shows the Claude Code hooks and the
+   status line lines for the session %, with the address already filled in.
 
 The screen stays on because Android only lets the app in front use the camera. Leaving NODE,
 or pressing the power button, stops everything; coming back resumes it.
@@ -82,7 +85,17 @@ have. The phone's own page shows this block with your address filled in, and cop
 
 ## Voice
 
-Tap the screen or wave over its top edge, wait for the blip, and say one sentence. What it
+**Hands-free:** while you are at the desk — its camera saw you in the last two minutes — and the
+room is lit, NODE listens for its name. Say **"Hey Buddy, what time is it?"** in one go, or
+"Hey Buddy" and wait for the blip ("Hey NODE" works too, but Google hears "Buddy" far more
+reliably). Anything said without its name is dropped and never shown;
+a dim `● LISTENING FOR "HEY BUDDY"` line shows whenever it is listening this way. It stops when
+you leave, in the dark, after "go to sleep", and while it speaks. Google's recognizer beeps
+each time it starts listening, which is every few seconds here, so NODE turns the phone's
+notification volume down while hands-free listening is on and back up after. `WAKE` in
+`NodeActivity.kt` turns it all off.
+
+Or tap the screen or wave over its top edge, wait for the blip, and say one sentence. What it
 hears appears under the eyes as you speak; the answer is shown and spoken. Tap again to stop
 listening.
 
@@ -103,15 +116,14 @@ listening.
 It answers in the language you spoke. There is no AI behind it: a fixed set of things,
 matched by keyword, so anything else gets "Sorry, I didn't catch that".
 
-**Keep it on the phone.** NODE uses the phone's own speech recognizer, asked to work offline.
-On Android 11 an app can only *prefer* offline, so download the packs: Google app →
-profile picture → Settings → Voice → Offline speech recognition → English (US), and Nepali if
-offered. The recognizer's on-device engine then fetches its own copy of the model in the
-background, on Wi-Fi and charging while the phone is idle — so after downloading, leave NODE
-with the screen off for a while. Until then NODE says `VOICE NEEDS THE OFFLINE ENGLISH SPEECH
-PACK` (see [engineering notes](docs/ENGINEERING-NOTES.md)). Spoken answers use only voices installed on the phone; a language without one is
-shown but not spoken. To hear Nepali, install it under Text-to-speech output → Google →
-Install voice data.
+**Offline first, online if need be.** NODE asks the phone's speech recognizer to work offline,
+which needs the Google app's offline model for the language (Google app → profile picture →
+Settings → Voice → Offline speech recognition; the recognizer then fetches its own copy in the
+background, on Wi-Fi and charging while the phone is idle). Until that model is there, NODE
+uses Google's online recognition instead: the sentence goes to Google to be turned into text,
+and the caption says `· online` while it listens. It tries offline again every ten minutes.
+Spoken answers use a voice installed on the phone where there is one; Nepali, with none here,
+uses Google's online voice. See [engineering notes](docs/ENGINEERING-NOTES.md).
 
 ## Privacy
 
@@ -119,9 +131,11 @@ Install voice data.
   only the rectangle of the largest face is used, as a gaze direction. Nothing is stored,
   served or logged, and the server has no camera route.
 - **The microphone is open only when you ask.** After a tap or a wave, for one sentence. There
-  is no wake word and nothing listens in the background. NODE itself never sends audio
-  anywhere; see [Voice](#voice) for keeping recognition offline.
-- **No cloud AI.** Nothing is sent anywhere but your own LAN.
+  is no wake word and nothing listens in the background. Recognition is offline when the
+  phone has the model and online through Google when it does not, and the screen says
+  which; see [Voice](#voice).
+- **No cloud AI.** The voice assistant is a fixed set of commands, not an AI. Apart from online
+  speech when the offline model is missing, nothing is sent anywhere but your own LAN.
 - A hook event contains your prompt and the tools' input and output. NODE keeps only the event
   name, session id, project folder and notification type, reads past the rest without keeping
   it, and never logs it — but the whole event still crosses your Wi-Fi as **plain HTTP**.
@@ -147,10 +161,11 @@ after a quiet spell took up to three seconds to connect — longer than a hook w
 a low-latency Wi-Fi lock, which Android honours only while the app is in front with the screen
 on.
 
-**A still face costs nothing.** The eyes redraw only while they move; a frame is one path
-for both eyes, filled and then blurred for the glow. Animations are a function of their own
-progress, and blinks, glances and fidgets are single delayed callbacks, not a frame loop. On
-the Redmi Note 8 the busiest animations run at 60 fps with under 1% janky frames.
+**A still face costs nothing.** The eyes redraw only while they move. A frame decides which
+of the panel's ~3,000 dots light, draws those in one call over the unlit grid (drawn once per
+screen size), and softens the same on/off map, a pixel per dot, into the glow. Animations are a
+function of their own progress, and blinks, glances and fidgets are single delayed callbacks,
+not a frame loop.
 
 **Zero runtime dependencies.** Camera2's hardware face detection, `SensorManager`,
 `SpeechRecognizer`, `TextToSpeech`, `AudioTrack` and `java.net` are all in the platform. The
@@ -208,12 +223,14 @@ Everything configurable is a constant — there is no settings screen, by design
 | What | Where |
 |---|---|
 | Which side the PC is on, timings for sleepy / asleep / greeting / startle | `Mood.kt` |
-| Eye size, spacing and glow, how far they move, blink, glance and fidget timing, how each animation moves | `FaceView.kt` |
+| Dot grid and dot size, eye size, spacing and glow, how far they move, blink, glance and fidget timing, how each animation moves | `FaceView.kt` |
 | Expression shapes, and the list of animations | `Eyes.kt` |
 | Gaze direction flips for another phone or mount | `Presence.kt` (`GAZE_FLIP_X/Y`) |
 | Knock and shake sensitivity, wave timing, how dark is dark | `Senses.kt` |
 | Chirp pitches and loudness | `Chirp.kt` |
 | Voice commands, their wording and replies | `Assistant.kt` |
+| What it says unprompted, and how often | `Chatter.kt` |
+| Voice pitch and speed | `Speaker.kt` |
 | How long "working" and "done" last | `ClaudeSessions.kt` |
 | Port, body limits | `HttpServer.kt` |
 | Brightness levels, tap-to-undim time | `NodeActivity.kt` |
@@ -235,7 +252,7 @@ Everything configurable is a constant — there is no settings screen, by design
 app/src/main/java/dev/node01/afterlife/
 ├── NodeActivity.kt    window, permissions, start/stop, gathers inputs, applies the look
 ├── Mood.kt            the personality: inputs → expression, gaze, caption, brightness
-├── FaceView.kt        draws and animates the eyes
+├── FaceView.kt        the dot-matrix panel: draws and animates the eyes
 ├── Eyes.kt            expression shapes, easing, the animations
 ├── Presence.kt        front camera face detection → gaze
 ├── Senses.kt          knock, shake, wave, dark room
@@ -244,6 +261,7 @@ app/src/main/java/dev/node01/afterlife/
 ├── Assistant.kt       voice commands: what was said → what to do → what to say, EN + NE
 ├── Listener.kt        one sentence through the phone's speech recognizer, offline preferred
 ├── Speaker.kt         spoken answers, with installed voices only
+├── Chatter.kt         its small talk, and the rules that keep it from chattering
 ├── BsDate.kt          Bikram Sambat calendar
 ├── Inbox.kt           desk notes, reminders and timers
 ├── Chirp.kt           the sounds
