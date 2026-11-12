@@ -32,8 +32,8 @@ version lives on at `9a42e35`.
 | **Sees you** | The front camera's own face detection, done by the camera hardware. The eyes follow you, say hello with a double blink when you come back after a while, and look around the room when you have just left |
 | **Sleeps** | Away 2 minutes: sleepy and dim. Away 10 minutes, or the room dark: eyes closed, backlight at the panel minimum |
 | **Feels the desk** | Knock on the desk and it startles. Shake the phone and it goes woozy: its eyes loll round, one up as the other drops, until it shakes it off |
-| **Plays** | Tap it and it bounces with happy **^ ^** eyes; say "thank you" and its eyes turn to beating hearts. While you sit there it now and then winks, tilts its head or squints; with nobody there it looks around the room; asleep, Z's float up. Listening, it tilts its head. Every animation and expression can also be played from the page |
-| **Listens** | Tap the screen or wave over its top edge, wait for the blip, and speak — English or Nepali. See [Voice](#voice) |
+| **Plays** | Say hi and it winks; say "thank you" and its eyes turn to beating hearts. While you sit there it now and then winks, tilts its head or squints; with nobody there it looks around the room; asleep, Z's float up. Listening, it tilts its head. Every animation and expression can also be played from the page |
+| **Listens** | Tap the screen or wave over its top edge, wait for the blip, and speak — English or Nepali. Nothing listens until you do. See [Voice](#voice) |
 | **Talks** | A few short words of its own: "Welcome back!" ("Good morning!" once a morning), "Hey! Claude needs you.", "All done!", "Whoa!" at a knock, "Good night." when the lights go off. At most one unprompted line every 20 seconds, never in a dark room; `TALK` in `NodeActivity.kt` turns it off |
 | **Claude Code** | Through Claude Code hooks on your PC. While Claude works the eyes narrow and look toward the PC. When Claude needs approval or has a question: amber, wide, an amber **!!** beside them, `NEEDS YOU`, one chirp. When it finishes: a happy bounce, then **^ ^** eyes, `DONE`, a softer chirp — held until you have actually looked |
 | **Desk notes** | Send a short note from any browser, now or in a few minutes — or say "remind me in 10 minutes to stretch". It shows in amber and is read out; tap or wave to dismiss it |
@@ -85,19 +85,10 @@ have. The phone's own page shows this block with your address filled in, and cop
 
 ## Voice
 
-**Hands-free:** while you are at the desk — its camera saw you in the last two minutes — and the
-room is lit, NODE listens for its name. Say **"Hey Buddy, what time is it?"** in one go, or
-"Hey Buddy" and wait for the blip ("Hey NODE" works too, but Google hears "Buddy" far more
-reliably). Anything said without its name is dropped and never shown;
-a dim `● LISTENING FOR "HEY BUDDY"` line shows whenever it is listening this way. It stops when
-you leave, in the dark, after "go to sleep", and while it speaks. Google's recognizer beeps
-each time it starts listening, which is every few seconds here, so NODE turns the phone's
-notification volume down while hands-free listening is on and back up after. `WAKE` in
-`NodeActivity.kt` turns it all off.
-
-Or tap the screen or wave over its top edge, wait for the blip, and say one sentence. What it
+**Tap the screen or wave over its top edge**, wait for the blip, and say one sentence. What it
 hears appears under the eyes as you speak; the answer is shown and spoken. Tap again to stop
-listening.
+listening. There is no wake word and nothing listens in the background. (A hands-free mode,
+with or without "Hey Buddy", is still in the code, switched off: `WAKE` in `NodeActivity.kt`.)
 
 | Say | Or in Nepali | NODE |
 |---|---|---|
@@ -112,6 +103,13 @@ listening.
 | "Go to sleep" / "Wake up" | "सुत" / "उठ" | Eyes closed and dim until a tap; alerts still wake it |
 | "Speak Nepali" / "English" | "नेपालीमा बोल" / "अंग्रेजीमा बोल" | Which language it listens for first |
 | "Help" | "मद्दत" | Lists these |
+| "Hi" / "Hello" | "नमस्ते" | Says hi back, with a wink |
+| "Good morning" / "Good afternoon" / "Good evening" | "शुभ प्रभात" / "शुभ दिन" / "शुभ साँझ" | Says it back: "Good morning!" |
+| "Nice to meet you" / "Good to see you" | "भेटेर खुसी लाग्यो" | "Nice to see you too!" |
+| "I'm back" | "म आएँ" | "Welcome back!" |
+| "How are you?" / "What's up?" | "कस्तो छ?" | "I'm good, thanks! How are you?" — and "I'm fine" gets "Glad to hear it!" |
+| "What's your name?" | "तिम्रो नाम के हो?" | "I'm NODE, your desk buddy." |
+| "Bye" / "See you" | "बाइ" | "Bye! See you soon." |
 
 It answers in the language you spoke. There is no AI behind it: a fixed set of things,
 matched by keyword, so anything else gets "Sorry, I didn't catch that".
@@ -242,9 +240,8 @@ Everything configurable is a constant — there is no settings screen, by design
 - Everything stops whenever NODE is not in front — the power button included.
 - Only one Claude Code PC is expected; sessions from several PCs work, but share one face.
 - No reminders at a set clock time yet: a note is due now or in up to 24 hours from sending.
-- No "Hey NODE": a wake word would need a third-party library and a microphone that is
-  always on. Tap or wave instead.
-- Voice understands a fixed set of phrasings, not free conversation.
+- No wake word: you tap or wave to talk to it, by design.
+- Voice understands a fixed set of phrasings and greetings, not free conversation.
 
 ## Project structure
 

@@ -30,9 +30,34 @@ sealed interface Command {
 
     /** "Can you hear me?" -- a quick check that voice works. */
     data object Hello : Command
+
+    /** Small talk: "hi", "good morning", "how are you", "bye". */
+    data class Greet(val kind: Greeting) : Command
     data object Address : Command
     data class Language(val lang: Lang) : Command
     data object Unknown : Command
+}
+
+enum class Greeting {
+    /** "Hi", "hello", "namaste", or its name on its own. */
+    HELLO,
+
+    /** "Good morning" and the rest are answered in kind, whatever the clock says. */
+    MORNING,
+    AFTERNOON,
+    EVENING,
+    HOW_ARE_YOU,
+
+    /** "I'm fine": the answer to NODE's own "how are you?". */
+    FINE,
+
+    /** "Nice to meet you", "good to see you". */
+    NICE,
+
+    /** "I'm back". */
+    BACK,
+    NAME,
+    BYE,
 }
 
 /**
@@ -73,6 +98,20 @@ object Assistant {
         return t.substring(m.range.last + 1).trim()
     }
 
+    /**
+     * Hands-free: what to act on in a sentence heard while NODE listens in the
+     * background, or null to let it pass unanswered and unshown.
+     *
+     * With its name, the rest of the sentence; its name alone is a hello. No
+     * name is needed when you are [facing] it, but then only a sentence that is
+     * a command or a greeting counts: talk that is not for NODE is never answered.
+     */
+    fun handsFree(heard: String, facing: Boolean): String? {
+        val rest = wake(heard)
+        if (rest != null) return rest.ifBlank { if (langOf(heard) == Lang.NE) "नमस्ते" else "hello" }
+        return if (facing && parse(heard) != Command.Unknown) heard else null
+    }
+
     // "a node" is how "hey node" is sometimes heard; "a note" is not, as in "take a note".
     private val WAKE_EN =
         Regex(
@@ -84,6 +123,7 @@ object Assistant {
     fun parse(heard: String): Command {
         val t = normalise(heard)
         if (t.isBlank()) return Command.Unknown
+        val greeting = greeting(t)
         fun has(vararg words: String) = words.any { t.contains(it) }
 
         /** Whole words only: short romanized Nepali like "sut" must not match inside English. */
@@ -118,16 +158,59 @@ object Assistant {
             has("sleep", "good night", "goodnight", "सुत", "शुभरात्री", "शुभ रात्री", "subharatri", "shubharatri") ||
                 word("sut", "suta", "sutnu", "sutna") -> Command.Sleep
             has("wake", "उठ", "ब्युँझ") -> Command.Wake
+            // Before dismissing and thanks: "म ठिक छु" (I'm fine) contains "ठिक छ" (OK),
+            // and "nice to meet you" is not a "nice" for a job well done.
+            greeting == Greeting.FINE || greeting == Greeting.NICE -> Command.Greet(greeting)
             has("dismiss", "clear", "got it", "हटाउ", "ठिक छ", "ठीक छ") ||
                 t == "ok" || t == "okay" || t == "हुन्छ" -> Command.Dismiss
             has("thank", "good job", "well done", "good boy", "nice", "धन्यवाद", "धन्यबाद", "स्याबास",
                 "dhanyabad", "dhanyavad", "dhanyabaad", "dhanyavaad", "syabas", "shyabas") ->
                 Command.Thanks
             has("help", "what can you do", "मद्दत", "के गर्न सक्छ") || word("madat", "maddat") -> Command.Help
-            has("can you hear", "सुन्छौ", "सुनिरहेको", "नमस्ते", "हेलो") ||
-                word("test", "testing", "hello", "hi", "hey", "namaste") -> Command.Hello
+            has("can you hear", "सुन्छौ", "सुनिरहेको") || word("test", "testing") -> Command.Hello
             has("address", "url", "ठेगाना") || Regex("""\bip\b""").containsMatchIn(t) -> Command.Address
+            // Last: "hi, what time is it" is the time.
+            greeting != null -> Command.Greet(greeting)
             else -> Command.Unknown
+        }
+    }
+
+    /** Small talk in [t], already normalised, or null. */
+    private fun greeting(t: String): Greeting? {
+        fun has(vararg words: String) = words.any { t.contains(it) }
+
+        // Whole words, for short English ones. Java's \b does not see Devanagari, so those use has().
+        fun word(vararg words: String) = words.any { Regex("\\b" + Regex.escape(it) + "\\b").containsMatchIn(t) }
+        return when {
+            has(
+                "i'm fine", "im fine", "i am fine", "i'm good", "im good", "i am good", "i'm great", "i am great",
+                "i'm okay", "i'm ok", "doing well", "doing good", "doing great", "not bad", "pretty good", "all good",
+                "ठिक छु", "ठीक छु", "सन्चै छु", "सञ्चै छु", "राम्रो छु", "thik chu", "thik xu", "sanchai chu", "ramro chu",
+            ) -> Greeting.FINE
+            // Before goodbyes: "nice to see you" is not "see you".
+            has(
+                "nice to meet you", "nice meeting you", "nice to see you", "good to see you", "great to see you",
+                "pleased to meet you", "glad to meet you",
+                "भेटेर खुसी", "भेटेर खुशी", "bhetera khusi",
+            ) -> Greeting.NICE
+            has("i'm back", "im back", "i am back", "i'm home", "i am home", "म आएँ", "म फर्किएँ", "म आइपुगेँ") -> Greeting.BACK
+            has(
+                "how are you", "how r u", "how are things", "how's it going", "how is it going", "hows it going",
+                "how do you do", "how you doing", "what's up", "whats up",
+                "कस्तो छ", "के छ", "सन्चै", "सञ्चै", "kasto cha", "kasto chha", "sanchai",
+            ) || word("ke cha", "k cha", "k xa") -> Greeting.HOW_ARE_YOU
+            has("good morning", "morning buddy", "शुभ प्रभात", "शुभ बिहान", "subha prabhat", "shubha prabhat", "shubh prabhat") ||
+                t == "morning" -> Greeting.MORNING
+            has("good afternoon", "शुभ दिन", "शुभ दिउँसो", "subha din", "shubha din") -> Greeting.AFTERNOON
+            has("good evening", "शुभ साँझ", "शुभ सन्ध्या", "subha sanjh", "shubha sanjh") -> Greeting.EVENING
+            has(
+                "your name", "who are you", "what are you",
+                "तिम्रो नाम", "तपाईंको नाम", "तपाईको नाम", "को हौ", "timro naam", "timro nam",
+            ) -> Greeting.NAME
+            has("see you", "see ya", "बाइ", "फेरि भेटौंला", "फेरि भेटौला", "बिदा") || word("bye", "goodbye", "cya") -> Greeting.BYE
+            has("नमस्ते", "नमस्कार", "हेलो", "हाई") ||
+                word("hello", "hi", "hey", "hiya", "howdy", "hola", "namaste", "namaskar") -> Greeting.HELLO
+            else -> null
         }
     }
 
@@ -258,10 +341,22 @@ object Assistant {
         Command.Dismiss -> if (f.noteDue) "Dismissed." else "There's nothing to dismiss."
         Command.Thanks -> "You're welcome!"
         Command.Help -> "Ask me the time or the date, set a timer or a focus session, ask me to remind you, " +
-            "take a note, or ask what Claude is doing."
+            "take a note, or ask what Claude is doing. Or just say hi."
         Command.Address -> f.address?.let { "My address is $it" } ?: "I'm not on Wi-Fi."
         is Command.Language -> if (c.lang == Lang.NE) "अब म नेपालीमा बोल्छु।" else "OK, I'll speak English."
         Command.Hello -> "I can hear you!"
+        is Command.Greet -> when (c.kind) {
+            Greeting.HELLO -> "Hi there!"
+            Greeting.MORNING -> "Good morning!"
+            Greeting.AFTERNOON -> "Good afternoon!"
+            Greeting.EVENING -> "Good evening!"
+            Greeting.HOW_ARE_YOU -> "I'm good, thanks! How are you?"
+            Greeting.FINE -> "Glad to hear it!"
+            Greeting.NICE -> "Nice to see you too!"
+            Greeting.BACK -> "Welcome back!"
+            Greeting.NAME -> "I'm NODE, your desk buddy."
+            Greeting.BYE -> "Bye! See you soon."
+        }
         Command.Unknown -> "Sorry, I didn't catch that. Say help to hear what I can do."
     }
 
@@ -299,10 +394,22 @@ object Assistant {
         Command.Wake -> "म ब्युँझिएँ।"
         Command.Dismiss -> if (f.noteDue) "हटाएँ।" else "हटाउनुपर्ने केही छैन।"
         Command.Thanks -> "स्वागत छ!"
-        Command.Help -> "मलाई समय, मिति, टाइमर, फोकस, सम्झना, नोट, वा Claude के गर्दैछ भनेर सोध्न सक्नुहुन्छ।"
+        Command.Help -> "मलाई समय, मिति, टाइमर, फोकस, सम्झना, नोट, वा Claude के गर्दैछ भनेर सोध्न सक्नुहुन्छ। नमस्ते पनि भन्न सक्नुहुन्छ।"
         Command.Address -> f.address?.let { "मेरो ठेगाना: $it" } ?: "म Wi-Fi मा छैन।"
         is Command.Language -> if (c.lang == Lang.NE) "अब म नेपालीमा बोल्छु।" else "OK, I'll speak English."
         Command.Hello -> "सुनें!"
+        is Command.Greet -> when (c.kind) {
+            Greeting.HELLO -> "नमस्ते!"
+            Greeting.MORNING -> "शुभ प्रभात!"
+            Greeting.AFTERNOON -> "शुभ दिन!"
+            Greeting.EVENING -> "शुभ साँझ!"
+            Greeting.HOW_ARE_YOU -> "म सन्चै छु, धन्यवाद! तपाईंलाई कस्तो छ?"
+            Greeting.FINE -> "सुनेर खुसी लाग्यो!"
+            Greeting.NICE -> "तपाईंलाई भेटेर मलाई पनि खुसी लाग्यो!"
+            Greeting.BACK -> "फेरि स्वागत छ!"
+            Greeting.NAME -> "म NODE, तपाईंको डेस्क साथी।"
+            Greeting.BYE -> "बाइ! फेरि भेटौंला।"
+        }
         Command.Unknown -> "माफ गर्नुहोस्, बुझिनँ। मद्दत भन्नुहोस्।"
     }
 

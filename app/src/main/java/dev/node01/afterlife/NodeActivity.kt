@@ -71,9 +71,10 @@ class NodeActivity : Activity() {
     private var listeningOnline = false
 
     /**
-     * Hands-free: a background session is listening for "Hey NODE", with no
-     * caption and no beep. [woke] once the name has been heard in it, and the
-     * rest of the sentence is being shown as a command.
+     * Hands-free: a background session is listening, with no caption and no
+     * beep. [woke] once its name has been heard in it, and the rest of the
+     * sentence is being shown as a command. Without the name, a sentence is
+     * acted on only if it is a command or a greeting and you are facing NODE.
      */
     private var wakeSession = false
     private var woke = false
@@ -271,15 +272,8 @@ class NodeActivity : Activity() {
     }
 
     /**
-     * Listens for "Hey NODE" while you are at the desk: you were seen in the
-     * last [WAKE_PRESENT_MS], the room is lit, NODE is not asleep, listening for
-     * a command or speaking. Starts a background session when one should run
-     * and none is; stops one that should not. Each session ends by itself after
-     * a sentence or a silence, and the next reevaluate starts another.
-     */
-    /**
      * Listen again as soon as the recognizer is free, rather than on the next
-     * heartbeat: every moment between sessions is a moment "Hey NODE" is missed.
+     * heartbeat: every moment between sessions is a moment a command is missed.
      */
     private fun restartWakeSoon() {
         statusView.postDelayed({ reevaluate() }, maxOf(0L, wakeNotBeforeMs - SystemClock.elapsedRealtime()) + 20L)
@@ -294,6 +288,15 @@ class NodeActivity : Activity() {
         }
     }
 
+    /**
+     * Listens hands-free while you are at the desk: you were seen in the
+     * last [WAKE_PRESENT_MS], the room is lit, NODE is not asleep, listening for
+     * a command or speaking. Starts a background session when one should run
+     * and none is; stops one that should not. Each session ends by itself after
+     * a sentence or a silence, and the next reevaluate starts another.
+     *
+     * Does nothing while [WAKE] is off, which is how NODE ships: you tap or wave.
+     */
     private fun keepWakeListening(now: Long) {
         val sp = speaker
         if (sp != null && sp.busy) wakeNotBeforeMs = maxOf(wakeNotBeforeMs, now + AFTER_SPEAKING_MS)
@@ -348,7 +351,7 @@ class NodeActivity : Activity() {
 
     /**
      * A problem always; otherwise the address, for a while after a long press;
-     * otherwise, while it is listening for its name, a dim line saying so.
+     * otherwise, while a hands-free session is listening, a dim line saying so.
      */
     private fun showStatus(undimmed: Boolean) {
         val text = problem ?: if (undimmed) tappedUrl else if (wakeSession && !woke) {
@@ -436,8 +439,8 @@ class NodeActivity : Activity() {
 
     /**
      * A wave or a tap. In order: dismiss a due note, wake from "go to sleep",
-     * stop listening, or start listening. Without a microphone it just
-     * pleases the face, as before voice.
+     * stop listening, or start listening for one sentence -- the only way to
+     * talk to NODE. Without a microphone it just pleases the face.
      */
     private fun onPoke() {
         when {
@@ -449,6 +452,9 @@ class NodeActivity : Activity() {
             listening -> {
                 listener?.cancel()
                 listening = false
+                // A cancelled session reports nothing more, so end it here, or hands-free never restarts.
+                wakeSession = false
+                woke = false
             }
             canListen() -> startListening()
             else -> {
@@ -513,23 +519,21 @@ class NodeActivity : Activity() {
             }
             // Starting the next session inside this callback finds the recognizer busy.
             pauseWake(WAKE_GAP_MS)
-            val rest = Assistant.wake(text)
+            // No name needed while you face it: a command or a greeting is answered as it is.
+            val facing = SystemClock.elapsedRealtime() - faceAtMs <= FACING_MS
+            val said = Assistant.handsFree(text, facing)
             when {
-                // Not for NODE. Listen again as soon as the recognizer is free.
-                rest == null && !wasWoken -> {
-                    // TEMPORARY, to tune the wake words: the first two words only, never the sentence.
-                    if (text.isNotBlank()) Log.d(TAG, "wake: no name in \"${text.split(' ').take(2).joinToString(" ")} …\"")
-                    restartWakeSoon()
-                }
-                // "Hey NODE" and nothing more: now listen for the command, as a tap would.
-                rest == null || rest.isBlank() -> {
+                said != null -> answer(said)
+                // Its name was heard as you spoke, then lost from the final text: listen for the command.
+                wasWoken -> {
                     pauseWake(AFTER_SPEAKING_MS)
                     statusView.postDelayed({
                         startListening()
                         reevaluate()
                     }, WAKE_GAP_MS)
                 }
-                else -> answer(rest)
+                // Not for NODE. Listen again as soon as the recognizer is free.
+                else -> restartWakeSoon()
             }
         }
 
@@ -587,6 +591,12 @@ class NodeActivity : Activity() {
                 petAtMs = now
                 face.play(Act.LOVE)
             }
+            is Command.Greet -> face.play(
+                when (command.kind) {
+                    Greeting.HOW_ARE_YOU, Greeting.FINE, Greeting.NICE, Greeting.BACK -> Act.JOY
+                    else -> Act.WINK
+                },
+            )
             Command.Address -> {
                 tappedUrl = urlText()
                 undimUntilMs = now + UNDIM_MS
@@ -874,14 +884,20 @@ class NodeActivity : Activity() {
         /** Let the chirp finish before reading a due note aloud. */
         const val SPEAK_AFTER_CHIRP_MS = 450L
 
-        /** Listen for "Hey NODE" while you are at the desk. False: only a tap or a wave starts listening. */
-        const val WAKE = true
+        /**
+         * Listen hands-free while you are at the desk, with or without "Hey Buddy".
+         * Off: NODE listens only after a tap or a wave, for one sentence.
+         */
+        const val WAKE = false
 
         /**
          * Seen this recently counts as at the desk, for listening. The camera only
          * sees a face turned toward the phone, and you mostly look at the monitor.
          */
         const val WAKE_PRESENT_MS = 2 * 60_000L
+
+        /** Seen this recently as a sentence ends, you were facing NODE: no name needed. */
+        const val FACING_MS = 5_000L
 
         /** After a background session fails for a reason other than silence. */
         const val WAKE_BACKOFF_MS = 30_000L

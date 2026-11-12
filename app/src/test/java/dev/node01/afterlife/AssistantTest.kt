@@ -5,6 +5,7 @@ import dev.node01.afterlife.ClaudeSessions.State
 import dev.node01.afterlife.ClaudeSessions.Summary
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
@@ -98,7 +99,7 @@ class AssistantTest {
 
     @Test
     fun answersAHearingCheck() {
-        for (said in listOf("test", "testing", "can you hear me", "hello", "नमस्ते", "सुन्छौ")) {
+        for (said in listOf("test", "testing", "can you hear me", "सुन्छौ")) {
             assertEquals(said, Command.Hello, parse(said))
         }
         // Hands-free: "Hey NODE, test" reaches the parser as "test".
@@ -106,6 +107,75 @@ class AssistantTest {
         assertEquals("I can hear you!", Assistant.reply(Command.Hello, Lang.EN, facts(LocalDateTime.of(2026, 11, 10, 9, 0))))
         // Not in the middle of other words.
         assertEquals(Command.Unknown, parse("contested results"))
+    }
+
+    @Test
+    fun greetsBack() {
+        val cases = mapOf(
+            "hello" to Greeting.HELLO,
+            "hi" to Greeting.HELLO,
+            "hey there" to Greeting.HELLO,
+            "नमस्ते" to Greeting.HELLO,
+            "namaste" to Greeting.HELLO,
+            "good morning" to Greeting.MORNING,
+            "morning" to Greeting.MORNING,
+            "शुभ प्रभात" to Greeting.MORNING,
+            "good afternoon" to Greeting.AFTERNOON,
+            "good evening buddy" to Greeting.EVENING,
+            "शुभ साँझ" to Greeting.EVENING,
+            "nice to meet you" to Greeting.NICE,
+            "good to see you" to Greeting.NICE,
+            "nice to see you" to Greeting.NICE,
+            "I'm back" to Greeting.BACK,
+            "how are you" to Greeting.HOW_ARE_YOU,
+            "what's up" to Greeting.HOW_ARE_YOU,
+            "तपाईंलाई कस्तो छ" to Greeting.HOW_ARE_YOU,
+            "I'm fine" to Greeting.FINE,
+            "doing well thanks" to Greeting.FINE,
+            "म ठिक छु" to Greeting.FINE,
+            "what's your name" to Greeting.NAME,
+            "who are you" to Greeting.NAME,
+            "bye" to Greeting.BYE,
+            "see you later" to Greeting.BYE,
+        )
+        for ((said, kind) in cases) assertEquals(said, Command.Greet(kind), parse(said))
+        // A command wins over the greeting around it.
+        assertEquals(Command.Time, parse("hi, what time is it"))
+        assertEquals(Command.Date, parse("good morning, what's the date today"))
+        // "Good night" still puts it to sleep, and "ठिक छ" (OK) still dismisses.
+        assertEquals(Command.Sleep, parse("good night"))
+        assertEquals(Command.Dismiss, parse("ठिक छ"))
+        // Not inside other words.
+        assertEquals(Command.Unknown, parse("this is a high shelf"))
+        assertEquals(Command.Unknown, parse("they lobbied"))
+    }
+
+    @Test
+    fun greetsBackInKind() {
+        // In kind, whatever the clock says: "good morning" at ten at night is still answered.
+        val late = facts(LocalDateTime.of(2026, 11, 12, 22, 4))
+        assertEquals("Good morning!", Assistant.reply(parse("good morning"), Lang.EN, late))
+        assertEquals("Good afternoon!", Assistant.reply(parse("good afternoon"), Lang.EN, late))
+        assertEquals("Good evening!", Assistant.reply(parse("good evening"), Lang.EN, late))
+        assertEquals("शुभ प्रभात!", Assistant.reply(parse("शुभ प्रभात"), Lang.NE, late))
+        assertEquals("Nice to see you too!", Assistant.reply(parse("nice to meet you"), Lang.EN, late))
+        assertEquals("Welcome back!", Assistant.reply(parse("I'm back"), Lang.EN, late))
+        assertEquals("I'm good, thanks! How are you?", Assistant.reply(Command.Greet(Greeting.HOW_ARE_YOU), Lang.EN, facts(LocalDateTime.of(2026, 11, 12, 9, 0))))
+    }
+
+    @Test
+    fun handsFreeNeedsNoNameWhileYouFaceIt() {
+        // Facing NODE: a command or a greeting is enough.
+        assertEquals("what time is it", Assistant.handsFree("what time is it", facing = true))
+        assertEquals("hello", Assistant.handsFree("hello", facing = true))
+        // Talk that is not for it is never answered.
+        assertNull(Assistant.handsFree("I'll call you back after lunch", facing = true))
+        // Not facing it: only with its name.
+        assertNull(Assistant.handsFree("what time is it", facing = false))
+        assertEquals("what time is it", Assistant.handsFree("hey buddy what time is it", facing = false))
+        // Its name on its own is a hello, in the language it was said in.
+        assertEquals("hello", Assistant.handsFree("hey buddy", facing = false))
+        assertEquals(Command.Greet(Greeting.HELLO), parse(Assistant.handsFree("हे बडी", facing = false)!!))
     }
 
     @Test
