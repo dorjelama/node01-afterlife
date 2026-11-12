@@ -145,6 +145,11 @@ class NodeActivity : Activity() {
     /** True only while a touch that began at a screen edge is live. */
     private var barsRequestedBySwipe = false
 
+    /** How far the live touch has travelled, to tell a stroke from a tap. */
+    private var strokedPx = 0f
+    private var lastX = 0f
+    private var lastY = 0f
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.node_face)
@@ -480,6 +485,19 @@ class NodeActivity : Activity() {
         val key = name.trim().uppercase()
         Act.entries.firstOrNull { it.name == key }?.let { return face.play(it) }
         Expression.entries.firstOrNull { it.name == key }?.let { face.preview(it, PREVIEW_MS) }
+    }
+
+    /**
+     * Stroked, rather than tapped: hearts and a pleased line. Nothing else --
+     * a stroke never starts listening, so you can fuss over NODE without
+     * opening the microphone. Ignored while it is already listening.
+     */
+    private fun pet() {
+        if (listening) return
+        petAtMs = SystemClock.elapsedRealtime()
+        face.play(Act.LOVE)
+        chat(Moment.PET)
+        reevaluate()
     }
 
     /**
@@ -972,22 +990,34 @@ class NodeActivity : Activity() {
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 touchAtMs = SystemClock.elapsedRealtime()
+                strokedPx = 0f
+                lastX = ev.x
+                lastY = ev.y
                 // Only a touch starting at a system edge may be reaching for the
                 // navigation bar. Anything starting in the middle must never
                 // surface it.
                 barsRequestedBySwipe = isEdgeTouch(ev.x, ev.y)
                 if (!barsRequestedBySwipe) hideSystemBars()
             }
-            // In the middle: a tap talks to NODE; a long press shows its address.
+            MotionEvent.ACTION_MOVE -> {
+                strokedPx += kotlin.math.hypot(ev.x - lastX, ev.y - lastY)
+                lastX = ev.x
+                lastY = ev.y
+            }
+            // In the middle: a tap talks to NODE, a stroke pets it, a long press
+            // shows its address.
             MotionEvent.ACTION_UP -> if (!barsRequestedBySwipe) {
                 touchAtMs = SystemClock.elapsedRealtime()
-                if (ev.eventTime - ev.downTime >= LONG_PRESS_MS) {
+                val strokeDots = strokedPx / resources.displayMetrics.density
+                when {
+                    strokeDots >= STROKE_DP -> pet()
                     // Re-read every time: after a reboot NODE can start before Wi-Fi does.
-                    tappedUrl = urlText()
-                    undimUntilMs = SystemClock.elapsedRealtime() + UNDIM_MS
-                    reevaluate()
-                } else {
-                    onPoke()
+                    ev.eventTime - ev.downTime >= LONG_PRESS_MS -> {
+                        tappedUrl = urlText()
+                        undimUntilMs = SystemClock.elapsedRealtime() + UNDIM_MS
+                        reevaluate()
+                    }
+                    else -> onPoke()
                 }
             }
         }
@@ -1061,6 +1091,12 @@ class NodeActivity : Activity() {
 
         /** Held this long, a touch shows the address instead of listening. */
         const val LONG_PRESS_MS = 600L
+
+        /**
+         * A touch that travels this far, in dp, was a stroke and not a tap.
+         * Well past the slop a finger wanders while tapping.
+         */
+        const val STROKE_DP = 150f
 
         /** Small talk -- "hi", "whoa", "Claude needs you". False keeps NODE to chirps and answers. */
         const val TALK = true
