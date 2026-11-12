@@ -215,7 +215,8 @@ object Assistant {
         val sum by lazy { calc(t) }
         val converted by lazy { convert(t) }
         val spelled by lazy { said(t, SPELL_EN, SPELL_NE) }
-        val echoed by lazy { said(t, ECHO_EN, ECHO_NE) }
+        val echoed by lazy { said(t, ECHO_EN) }
+        val echoedNe by lazy { said(t, ECHO_NE) }
         val dated by lazy { dateIn(t) }
         fun has(vararg words: String) = words.any { t.contains(it) }
 
@@ -225,6 +226,8 @@ object Assistant {
         return when {
             // First of all, so that what follows is taken as words and not as
             // an instruction: "say go to sleep" is a thing to say, not bedtime.
+            // Only the English shape, where "say" comes first and can mean
+            // nothing else; Nepali puts its verb last and waits below.
             spelled != null -> Command.Spell(spelled!!)
             echoed != null -> Command.Echo(echoed!!)
 
@@ -297,6 +300,9 @@ object Assistant {
             has("help", "what can you do", "मद्दत", "के गर्न सक्छ") || word("madat", "maddat") -> Command.Help
             has("can you hear", "सुन्छौ", "सुनिरहेको") || word("test", "testing") -> Command.Hello
             has("address", "url", "ठेगाना") || Regex("""\bip\b""").containsMatchIn(t) -> Command.Address
+            // "X भन" is "say X" only once nothing else has claimed it: Nepali
+            // asks for things the same way round, and "समय भन" wants the time.
+            echoedNe != null -> Command.Echo(echoedNe!!)
             // Last: "hi, what time is it" is the time.
             greeting != null -> Command.Greet(greeting)
             else -> Command.Unknown

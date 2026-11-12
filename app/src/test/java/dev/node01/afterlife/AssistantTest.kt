@@ -337,6 +337,10 @@ class AssistantTest {
         assertEquals(Command.Echo("go to sleep"), parse("say go to sleep"))
         assertEquals("go to sleep", Assistant.reply(parse("say go to sleep"), Lang.EN, f))
         assertEquals(Command.Echo("नमस्ते"), parse("नमस्ते भन"))
+        // Nepali asks for things the same way round, so a real request wins.
+        assertEquals(Command.Time, parse("समय भन"))
+        assertEquals(Command.Time, parse("कति बज्यो भन"))
+        assertEquals(Command.ClaudeStatus, parse("Claude के गर्दैछ भन"))
 
         assertEquals(Command.Spell("kathmandu"), parse("spell kathmandu"))
         assertEquals("N O D E", Assistant.reply(Command.Spell("node"), Lang.EN, f))
