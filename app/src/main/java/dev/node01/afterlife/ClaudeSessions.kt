@@ -114,8 +114,11 @@ class ClaudeSessions {
         const val CWD = "cwd"
         const val NOTIFICATION_TYPE = "notification_type"
 
+        /** On a failure: "true" when you stopped the tool yourself, which is no failure at all. */
+        const val IS_INTERRUPT = "is_interrupt"
+
         /** The only fields NODE reads from a hook event. */
-        val FIELDS = setOf(EVENT, SESSION_ID, CWD, NOTIFICATION_TYPE)
+        val FIELDS = setOf(EVENT, SESSION_ID, CWD, NOTIFICATION_TYPE, IS_INTERRUPT)
 
         /** Notifications that mean Claude is blocked on you. */
         private val NEEDS_YOU_TYPES = setOf("permission_prompt", "elicitation_dialog", "agent_needs_input")

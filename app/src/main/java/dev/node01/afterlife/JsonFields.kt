@@ -1,7 +1,8 @@
 package dev.node01.afterlife
 
 /**
- * Pulls a few top-level string fields out of a JSON object, and nothing else.
+ * Pulls a few top-level fields out of a JSON object, and nothing else. Strings
+ * come back decoded; `true`, a number or `null` comes back as written.
  *
  * Hook events carry whole prompts and tool outputs, and NODE keeps only the
  * first part of a large body, so this has to cope with input cut off at any
@@ -29,8 +30,14 @@ object JsonFields {
                 if (peek() == '"') {
                     val value = readString() ?: return found
                     if (key in wanted) found[key] = value
-                } else if (!skipValue()) {
-                    return found
+                } else {
+                    // true, false, null or a number, kept as written: a wanted
+                    // flag reads back as "true" without a JSON parser. Objects
+                    // and arrays are skipped whole, as before.
+                    val plain = peek() != '{' && peek() != '['
+                    val from = at
+                    if (!skipValue()) return found
+                    if (plain && key in wanted) found[key] = textSince(from)
                 }
                 skipSpace()
                 if (!take(',')) return found
@@ -40,6 +47,12 @@ object JsonFields {
 
     private class Reader(private val s: String) {
         private var i = 0
+
+        /** How far the reader has come, for [textSince]. */
+        val at get() = i
+
+        /** What was read since [from], as it was written. */
+        fun textSince(from: Int): String = s.substring(from, i).trim()
 
         fun peek(): Char? = s.getOrNull(i)
 

@@ -104,10 +104,11 @@ this phone.</p>
   <button type="button" data-event="UserPromptSubmit">Working</button>
   <button type="button" data-event="PermissionRequest">Needs you</button>
   <button type="button" data-event="Stop">Done</button>
+  <button type="button" data-event="PostToolUseFailure">Tool failed</button>
   <button type="button" data-event="SessionEnd">Clear</button>
 </div>
-<p>NODE reads only the event name, session id, project folder and notification type of
-each event. Your prompts and tool output are sent over plain HTTP on your Wi-Fi, so keep
+<p>NODE reads only the event name, session id, project folder, notification type and whether
+a failure was you interrupting. Your prompts and tool output are sent over plain HTTP on your Wi-Fi, so keep
 this to a network you trust.</p>
 
 <h2>SESSION %</h2>
@@ -207,7 +208,8 @@ document.getElementById('tour').onclick = async () => {
 // Single quotes around @- keep both Git Bash and PowerShell from reading it.
 const command = "curl.exe -s -m 2 -H Content-Type:application/json --data-binary '@-' " + base + 'claude';
 const hook = { type: 'command', command, async: true };
-const events = ['UserPromptSubmit', 'PermissionRequest', 'Notification', 'PostToolUse', 'Stop', 'SessionEnd'];
+const events = ['UserPromptSubmit', 'PermissionRequest', 'Notification', 'PostToolUse',
+  'PostToolUseFailure', 'Stop', 'SessionEnd'];
 const settings = { hooks: Object.fromEntries(events.map((e) => [e, [{ hooks: [hook] }]])) };
 const hooks = document.getElementById('hooks');
 hooks.value = JSON.stringify(settings, null, 2);

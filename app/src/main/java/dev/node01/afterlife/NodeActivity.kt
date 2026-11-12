@@ -110,6 +110,7 @@ class NodeActivity : Activity() {
     private var faceLogMs = 0L
     private var dark = false
     private var knockAtMs = NEVER
+    private var wincedAtMs = NEVER
 
     /** The last finger down or up on the screen, to tell a tap's jolt from a knock on the desk. */
     private var touchAtMs = NEVER
@@ -635,12 +636,13 @@ class NodeActivity : Activity() {
         reevaluate()
     }
 
-    /** On the main thread. Only four fields of the hook's JSON ever arrive here. */
+    /** On the main thread. Only a handful of fields of the hook's JSON ever arrive here. */
     private fun onClaude(fields: Map<String, String>) {
         val now = SystemClock.elapsedRealtime()
         val entered = sessions.onEvent(fields, now)
         Log.d(TAG, "claude ${fields[ClaudeSessions.EVENT]} -> ${entered ?: "no change"}")
         if (!dark) {
+            if (fields[ClaudeSessions.EVENT] == "PostToolUseFailure") winced(fields, now)
             when (entered) {
                 ClaudeSessions.State.NEEDS_YOU -> {
                     chirp.attention()
@@ -655,6 +657,19 @@ class NodeActivity : Activity() {
             }
         }
         reevaluate()
+    }
+
+    /**
+     * A tool call failed: a brief sad face, and nothing more. Failures are
+     * ordinary work -- a grep that finds nothing, a test that is meant to fail
+     * -- so this never chirps or speaks, and says nothing at all more than once
+     * every [WINCE_GAP_MS]. Stopping a tool yourself is not a failure.
+     */
+    private fun winced(fields: Map<String, String>, now: Long) {
+        if (fields[ClaudeSessions.IS_INTERRUPT] == "true") return
+        if (now - wincedAtMs < WINCE_GAP_MS) return
+        wincedAtMs = now
+        face.preview(Expression.SAD, WINCE_MS)
     }
 
     private fun onNote(text: String, inMinutes: Int) {
@@ -914,6 +929,12 @@ class NodeActivity : Activity() {
 
         /** How long an expression asked for from the page is held. */
         const val PREVIEW_MS = 3_000L
+
+        /** How long the sad face lasts after a tool call failed. */
+        const val WINCE_MS = 1_200L
+
+        /** At most one sad face this often: a run of failures is one wince, not a sulk. */
+        const val WINCE_GAP_MS = 30_000L
 
         /** Let the chirp finish before reading a due note aloud. */
         const val SPEAK_AFTER_CHIRP_MS = 450L

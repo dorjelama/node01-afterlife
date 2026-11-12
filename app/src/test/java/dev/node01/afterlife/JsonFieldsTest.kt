@@ -46,6 +46,21 @@ class JsonFieldsTest {
     }
 
     @Test
+    fun readsWantedLiteralsAsWritten() {
+        val json = """{"hook_event_name":"PostToolUseFailure","is_interrupt":false,"duration_ms":4187}"""
+        assertEquals("false", JsonFields.extract(json, wanted)["is_interrupt"])
+        assertEquals(
+            "true",
+            JsonFields.extract("""{"is_interrupt" : true , "session_id":"s"}""", wanted)["is_interrupt"],
+        )
+        // Last field, and a body cut off mid-literal, which is no value at all.
+        assertEquals("true", JsonFields.extract("""{"is_interrupt":true}""", wanted)["is_interrupt"])
+        assertEquals(null, JsonFields.extract("""{"is_interrupt":tr""", wanted)["is_interrupt"])
+        // A container is still skipped whole, never stored as raw text.
+        assertEquals(null, JsonFields.extract("""{"is_interrupt":[1,2],"session_id":"s"}""", wanted)["is_interrupt"])
+    }
+
+    @Test
     fun decodesEscapes() {
         val json = """{"cwd":"a\"b\\c\/d\u00e9\n"}"""
         assertEquals("a\"b\\c/dé\n", JsonFields.extract(json, wanted)["cwd"])

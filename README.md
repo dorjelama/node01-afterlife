@@ -67,6 +67,7 @@ have. The phone's own page shows this block with your address filled in, and cop
     "PermissionRequest": [{ "hooks": [{ "type": "command", "async": true, "command": "curl.exe -s -m 2 -H Content-Type:application/json --data-binary '@-' http://192.168.1.50:8081/k7m2x9qa4c/claude" }] }],
     "Notification":      [{ "hooks": [{ "type": "command", "async": true, "command": "curl.exe -s -m 2 -H Content-Type:application/json --data-binary '@-' http://192.168.1.50:8081/k7m2x9qa4c/claude" }] }],
     "PostToolUse":       [{ "hooks": [{ "type": "command", "async": true, "command": "curl.exe -s -m 2 -H Content-Type:application/json --data-binary '@-' http://192.168.1.50:8081/k7m2x9qa4c/claude" }] }],
+    "PostToolUseFailure":[{ "hooks": [{ "type": "command", "async": true, "command": "curl.exe -s -m 2 -H Content-Type:application/json --data-binary '@-' http://192.168.1.50:8081/k7m2x9qa4c/claude" }] }],
     "Stop":              [{ "hooks": [{ "type": "command", "async": true, "command": "curl.exe -s -m 2 -H Content-Type:application/json --data-binary '@-' http://192.168.1.50:8081/k7m2x9qa4c/claude" }] }],
     "SessionEnd":        [{ "hooks": [{ "type": "command", "async": true, "command": "curl.exe -s -m 2 -H Content-Type:application/json --data-binary '@-' http://192.168.1.50:8081/k7m2x9qa4c/claude" }] }]
   }
@@ -79,6 +80,10 @@ have. The phone's own page shows this block with your address filled in, and cop
   `agent_needs_input` notifications mean **needs you**. The next `PostToolUse` — Claude
   carrying on after you approve — clears it. `Stop` means **done**. `SessionEnd` forgets the
   session.
+- `PostToolUseFailure` — a command that exited non-zero, an edit that would not apply —
+  gets a **sad face for a moment**, and nothing else: no chirp, no words, and at most one
+  every 30 seconds. Failures are ordinary work. Stopping a tool yourself (`is_interrupt`)
+  is not one.
 - Several sessions at once: the most urgent wins and the caption counts the rest (`+1`).
 - Hooks are best-effort, so nothing is claimed forever: "working" with no event for 20
   minutes is dropped rather than shown as still busy.
