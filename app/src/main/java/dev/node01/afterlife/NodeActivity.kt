@@ -662,6 +662,23 @@ class NodeActivity : Activity() {
         reevaluate()
     }
 
+    /**
+     * From the PC: one line to read out and show under the eyes. Unlike a desk
+     * note it waits for nothing and leaves nothing behind -- no amber, nothing
+     * to dismiss. Quiet in a dark room, and never over a sentence being heard.
+     */
+    private fun onSay(text: String) {
+        val words = Inbox.clean(text) ?: return
+        replyText = words
+        replyUntilMs = SystemClock.elapsedRealtime() + REPLY_MS
+        if (TALK && !dark && !listening) {
+            pauseWake(SPEAK_AFTER_CHIRP_MS + SPEECH_START_MS)
+            chirp.attention()
+            statusView.postDelayed({ speaker?.say(words, Assistant.langOf(words)) }, SPEAK_AFTER_CHIRP_MS)
+        }
+        reevaluate()
+    }
+
     private fun saveInbox() {
         prefs.edit().putString(KEY_INBOX, inbox.encode()).apply()
     }
@@ -729,6 +746,7 @@ class NodeActivity : Activity() {
             onClaude = { fields -> mainExecutor.execute { if (server === http) onClaude(fields) } },
             onNote = { text, minutes -> mainExecutor.execute { if (server === http) onNote(text, minutes) } },
             onFace = { play -> mainExecutor.execute { if (server === http) onFacePlay(play) } },
+            onSay = { text -> mainExecutor.execute { if (server === http) onSay(text) } },
             onUsage = { u -> mainExecutor.execute { if (server === http) onUsage(u) } },
         )
         server = http

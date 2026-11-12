@@ -37,6 +37,7 @@ version lives on at `9a42e35`.
 | **Talks** | A few short words of its own: "Welcome back!" ("Good morning!" once a morning), "Hey! Claude needs you.", "All done!", "Whoa!" at a knock, "Good night." when the lights go off. At most one unprompted line every 20 seconds, never in a dark room; `TALK` in `NodeActivity.kt` turns it off |
 | **Claude Code** | Through Claude Code hooks on your PC. While Claude works the eyes narrow and look toward the PC. When Claude needs approval or has a question: amber, wide, an amber **!!** beside them, `NEEDS YOU`, one chirp. When it finishes: a happy bounce, then **^ ^** eyes, `DONE`, a softer chirp — held until you have actually looked |
 | **Desk notes** | Send a short note from any browser, now or in a few minutes — or say "remind me in 10 minutes to stretch". It shows in amber and is read out; tap or wave to dismiss it |
+| **Says what you send** | `POST /say` with `text=…`, from the page or one line of curl in a script, and NODE reads it out once: "Build done." Grey under the eyes, nothing to dismiss, quiet in a dark room. Nepali text is spoken in Nepali |
 | **Session %** | How much of your 5-hour Claude session limit is used, as `/usage` shows it: just the number, such as `42%`, in grey dot digits in the top-left corner. It comes from Claude Code's status line, which gets it only on Pro and Max plans and only runs in the terminal version (not the VS Code panel); the page has the lines to add to your status line script. They send the percentage and when the window resets, nothing else. After the reset it shows `0%` |
 
 Amber means one thing: something needs you. Everything else is cyan dots on black.
@@ -46,9 +47,10 @@ Amber means one thing: something needs you. Everything else is cyan dots on blac
 1. Build and install (below), open **NODE Companion**, allow the camera and the microphone.
 2. **Hold a finger on the screen** for a moment to see its address for 30 seconds, such as
    `http://192.168.1.50:8081/k7m2x9qa4c/`.
-3. Open that address on any phone or PC on the same Wi-Fi. The page sends desk notes, plays
-   the face's animations, has a **Try it** row to test the Claude states, and shows the Claude Code hooks and the
-   status line lines for the session %, with the address already filled in.
+3. Open that address on any phone or PC on the same Wi-Fi. The page sends desk notes, has NODE
+   say a line out loud, plays the face's animations, has a **Try it** row to test the Claude
+   states, and shows the Claude Code hooks and the status line lines for the session %, with
+   the address already filled in.
 
 The screen stays on because Android only lets the app in front use the camera. Leaving NODE,
 or pressing the power button, stops everything; coming back resumes it.

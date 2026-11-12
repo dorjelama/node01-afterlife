@@ -19,6 +19,7 @@ import kotlin.concurrent.thread
  * - `POST /<key>/claude`  a Claude Code hook event, as the hook's own JSON
  * - `POST /<key>/note`    a desk note, as a form: `text`, `in` (minutes)
  * - `POST /<key>/face`    plays an animation or holds an expression, as a form: `play`
+ * - `POST /<key>/say`     a line to read out once, as a form: `text`
  * - `POST /<key>/usage`   Claude's 5-hour session usage from the status line, as a form:
  *                         `pct` (0..100), `resets` (Unix seconds)
  *
@@ -27,7 +28,7 @@ import kotlin.concurrent.thread
  * the key and what is sent. Home LAN only; never port-forward it. There is no
  * camera route: what the camera sees never leaves the phone.
  *
- * [onClaude], [onNote], [onFace] and [onUsage] are called on the connection's thread.
+ * [onClaude], [onNote], [onFace], [onSay] and [onUsage] are called on the connection's thread.
  *
  * One instance per session: [start], then [stop], then discard.
  */
@@ -37,6 +38,7 @@ class HttpServer(
     private val onClaude: (Map<String, String>) -> Unit,
     private val onNote: (text: String, inMinutes: Int) -> Unit,
     private val onFace: (play: String) -> Unit,
+    private val onSay: (text: String) -> Unit,
     private val onUsage: (SessionUsage) -> Unit,
 ) {
     @Volatile
@@ -92,6 +94,11 @@ class HttpServer(
                         val form = parseForm(String(body, Charsets.UTF_8))
                         respond(out, 204)
                         onFace(form["play"].orEmpty())
+                    }
+                    Route.Say -> readBody(head, input, out)?.let { body ->
+                        val form = parseForm(String(body, Charsets.UTF_8))
+                        respond(out, 204)
+                        onSay(form["text"].orEmpty())
                     }
                     Route.Usage -> readBody(head, input, out)?.let { body ->
                         val usage = SessionUsage.parse(parseForm(String(body, Charsets.UTF_8)))
@@ -164,6 +171,7 @@ class HttpServer(
         data object Claude : Route
         data object Note : Route
         data object Face : Route
+        data object Say : Route
         data object Usage : Route
         data object NotFound : Route
     }
@@ -211,6 +219,7 @@ class HttpServer(
                 method == "POST" && rest == "claude" -> Route.Claude
                 method == "POST" && rest == "note" -> Route.Note
                 method == "POST" && rest == "face" -> Route.Face
+                method == "POST" && rest == "say" -> Route.Say
                 method == "POST" && rest == "usage" -> Route.Usage
                 else -> Route.NotFound
             }

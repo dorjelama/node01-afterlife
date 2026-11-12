@@ -48,6 +48,18 @@
 <p class="said" id="note-said" role="status"></p>
 <p>The note shows in amber under the eyes. Tap the screen or wave over its top edge to dismiss it.</p>
 
+<h2>SAY IT</h2>
+<form id="say">
+  <input id="say-text" name="text" maxlength="140" required autocomplete="off"
+         placeholder="Build finished · the kettle is on" aria-label="Line to say">
+  <button type="submit">Say</button>
+</form>
+<p class="said" id="say-said" role="status"></p>
+<p>Read out once and shown in grey under the eyes. Unlike a note it waits for nothing and
+leaves nothing to dismiss, and it stays quiet in a dark room. Nepali is spoken in Nepali.
+From a script on the PC, when a long job ends:</p>
+<p><code id="say-curl"></code></p>
+
 <h2>FACE</h2>
 <p>Animations. NODE also plays these by itself: hearts when you say thank you, a happy
 bounce when Claude finishes, woozy when you shake it, Z's while it sleeps.</p>
@@ -141,6 +153,23 @@ document.getElementById('note').onsubmit = async (e) => {
     document.getElementById('text').value = '';
   } catch (err) {
     noteSaid.textContent = 'Not sent: is NODE Companion open on the phone?';
+  }
+};
+
+// -- say it ---------------------------------------------------------------
+const saySaid = document.getElementById('say-said');
+document.getElementById('say-curl').textContent = 'curl.exe -s -m 2 --data "text=Build done" ' + base + 'say';
+document.getElementById('say').onsubmit = async (e) => {
+  e.preventDefault();
+  const text = document.getElementById('say-text').value.trim();
+  if (!text) return;
+  try {
+    const res = await fetch('say', { method: 'POST', body: new URLSearchParams({ text }) });
+    if (!res.ok) throw new Error(res.status);
+    saySaid.textContent = 'Said.';
+    document.getElementById('say-text').value = '';
+  } catch (err) {
+    saySaid.textContent = 'Not sent: is NODE Companion open on the phone?';
   }
 };
 
