@@ -256,7 +256,9 @@ Everything configurable is a constant — there is no settings screen, by design
 | Expression shapes, and the list of animations | `Eyes.kt` |
 | Gaze direction flips for another phone or mount | `Presence.kt` (`GAZE_FLIP_X/Y`) |
 | Knock and shake sensitivity, wave timing, how dark is dark | `Senses.kt` |
-| Chirp pitches and loudness | `Chirp.kt` |
+| Chirp pitches and loudness, and the tune it sings | `Chirp.kt` |
+| Where the weather comes from | `Weather.kt` (`LAT`/`LON`) |
+| When the battery counts as hot or low | `Battery.kt` |
 | Voice commands, their wording and replies | `Assistant.kt` |
 | What it says unprompted, and how often | `Chatter.kt` |
 | Voice pitch and speed | `Speaker.kt` |
@@ -274,6 +276,9 @@ Everything configurable is a constant — there is no settings screen, by design
   Friday" and no "tomorrow at nine". A desk note from the page is still due now or within 24 hours.
 - No wake word: you tap or wave to talk to it, by design.
 - Voice understands a fixed set of phrasings and greetings, not free conversation.
+- Sums are two numbers and one operator; conversions are whole numbers. Neither takes a chain.
+- A repeating nudge only fires while the camera can see you, so it is no use for anything
+  that must happen whether you are at the desk or not.
 
 ## Project structure
 
@@ -286,17 +291,19 @@ app/src/main/java/dev/node01/afterlife/
 ├── Presence.kt        front camera face detection → gaze
 ├── Senses.kt          knock, shake, wave, dark room
 ├── ClaudeSessions.kt  Claude Code sessions from hook events
-├── JsonFields.kt      reads four fields from a hook event, tolerating truncation
+├── JsonFields.kt      reads a few fields from a hook event, tolerating truncation
+├── Battery.kt         the phone's own health: hot, or unplugged and draining
+├── Weather.kt         the morning briefing's one line, and the only thing that leaves the LAN
 ├── Assistant.kt       voice commands: what was said → what to do → what to say, EN + NE
 ├── Listener.kt        one sentence through the phone's speech recognizer, offline preferred
 ├── Speaker.kt         spoken answers, with installed voices only
 ├── Chatter.kt         its small talk, and the rules that keep it from chattering
 ├── BsDate.kt          Bikram Sambat calendar
-├── Inbox.kt           desk notes, reminders and timers
-├── Chirp.kt           the sounds
-└── HttpServer.kt      LAN server: page, hook events, notes
+├── Inbox.kt           desk notes, reminders, timers, alarms and repeating nudges
+├── Chirp.kt           the sounds, and the one tune
+└── HttpServer.kt      LAN server: page, hook events, notes, spoken lines
 app/src/main/assets/
-└── index.html         the page: desk notes, Claude Code setup, test buttons
+└── index.html         the page: desk notes, lines to say, Claude Code setup, test buttons
 ```
 
 ## Notes
