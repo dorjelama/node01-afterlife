@@ -4,6 +4,7 @@ import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlin.random.Random
 
 /** The two languages NODE understands and speaks. */
 enum class Lang(val tag: String) {
@@ -48,6 +49,15 @@ sealed interface Command {
 
     /** "How many miles is 10 km?" -- [value] is already in [to]. */
     data class Convert(val value: Double, val to: Measure) : Command
+
+    /** "Flip a coin." */
+    data object Coin : Command
+
+    /** "Roll a dice", "roll a twenty sided dice". */
+    data class Dice(val sides: Int) : Command
+
+    /** "Pick a number between 1 and 10." */
+    data class Pick(val from: Int, val to: Int) : Command
     data object Sleep : Command
     data object Wake : Command
     data object Dismiss : Command
@@ -118,6 +128,8 @@ object Assistant {
         val usagePercent: Int? = null,
         /** How long until that window resets, or null if it was never said. */
         val usageResetsInMs: Long? = null,
+        /** Where a coin toss or a dice roll comes from; seeded in tests. */
+        val random: Random = Random.Default,
     )
 
     const val FOCUS_MS = 25 * 60_000L
@@ -210,6 +222,11 @@ object Assistant {
             // Before the time: "17 times 23" has "time" in it.
             sum != null -> Command.Calc(sum!!)
             converted != null -> converted!!
+
+            has("coin", "heads or tails", "सिक्का") -> Command.Coin
+            has("dice", "die", "पासा") || word("roll") -> Command.Dice(numbersIn(t).firstOrNull()?.toInt() ?: 6)
+            has("pick a number", "random number", "choose a number", "संख्या छान", "नम्बर छान") ->
+                numbersIn(t).let { Command.Pick(it.getOrElse(0) { 1 }.toInt(), it.getOrElse(1) { 10 }.toInt()) }
 
             has("time", "o'clock", "समय", "बज्यो", "बजे", "टाइम", "bajyo", "baje", "kati baj") ||
                 word("samay", "samaya") -> Command.Time
@@ -489,6 +506,24 @@ object Assistant {
         return null
     }
 
+    /** Every number in the sentence, in the order said. */
+    private fun numbersIn(t: String): List<Long> {
+        val words = t.split(' ')
+        val found = mutableListOf<Long>()
+        var i = 0
+        while (i < words.size) {
+            // "roll a dice" and "pick a number" are not asking for a one.
+            val number = if (words[i] in ARTICLES) null else calcNumberAt(words, i)
+            if (number == null) {
+                i++
+            } else {
+                found += number.first
+                i = number.second
+            }
+        }
+        return found
+    }
+
     /** Like [numberAt], but any size and zero included: this is arithmetic, not minutes. */
     private fun calcNumberAt(words: List<String>, i: Int): Pair<Long, Int>? {
         val first = words.getOrNull(i)?.let { it.toLongOrNull() ?: NUMBERS[it] } ?: return null
@@ -650,6 +685,9 @@ object Assistant {
         }
         is Command.Calc -> if (c.result.isNaN()) "You can't divide by zero." else "That's ${number(c.result)}."
         is Command.Convert -> "That's ${number(c.value)} ${unitName(c.to, Lang.EN)}."
+        Command.Coin -> if (f.random.nextBoolean()) "Heads." else "Tails."
+        is Command.Dice -> "You rolled a ${roll(c, f.random)}."
+        is Command.Pick -> "${pick(c, f.random)}."
         Command.Sleep -> "Good night."
         Command.Wake -> "I'm awake."
         Command.Dismiss -> if (f.noteDue) "Dismissed." else "There's nothing to dismiss."
@@ -708,6 +746,9 @@ object Assistant {
         is Command.Calc ->
             if (c.result.isNaN()) "शून्यले भाग जाँदैन।" else "${neNumber(number(c.result))} हुन्छ।"
         is Command.Convert -> "${neNumber(number(c.value))} ${unitName(c.to, Lang.NE)} हुन्छ।"
+        Command.Coin -> if (f.random.nextBoolean()) "चित।" else "पट।"
+        is Command.Dice -> "${Bs.neDigits(roll(c, f.random))} आयो।"
+        is Command.Pick -> "${Bs.neDigits(pick(c, f.random))}।"
         Command.Sleep -> "शुभरात्री।"
         Command.Wake -> "म ब्युँझिएँ।"
         Command.Dismiss -> if (f.noteDue) "हटाएँ।" else "हटाउनुपर्ने केही छैन।"
@@ -733,6 +774,15 @@ object Assistant {
 
     private fun moreEn(s: ClaudeSessions.Summary?) =
         if (s != null && s.others > 0) " And ${s.others} more." else ""
+
+    /** Both guard against nonsense asked for out loud: a one-sided dice, a range the wrong way round. */
+    private fun roll(c: Command.Dice, random: Random): Int = random.nextInt(1, c.sides.coerceIn(2, 1_000) + 1)
+
+    private fun pick(c: Command.Pick, random: Random): Int {
+        val from = minOf(c.from, c.to)
+        val to = maxOf(c.from, c.to)
+        return if (from == to) from else random.nextInt(from, to + 1)
+    }
 
     /** A result as a person would say it: whole when it is whole, two places when it is not. */
     internal fun number(v: Double): String =
@@ -788,6 +838,9 @@ object Assistant {
     private val CLOCK_EN = Regex("""\b(?:at|for) (\d{1,2})(?: (\d{2}))?(?: (am|pm|a m|p m))?\b""")
 
     private val TENS = setOf(20L, 30L, 40L, 50L)
+
+    /** Worth one in "in a minute", worth nothing in "roll a dice". */
+    private val ARTICLES = setOf("a", "an")
 
     /** English number words that may stand alone as minutes. */
     private val EN_BARE = setOf(

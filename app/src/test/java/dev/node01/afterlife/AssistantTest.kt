@@ -10,6 +10,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
 import java.time.LocalDateTime
+import kotlin.random.Random
 
 class AssistantTest {
 
@@ -281,6 +282,32 @@ class AssistantTest {
         assertEquals(Command.Remind(10 * min, "stretch"), parse("remind me in 10 minutes to stretch"))
         // "at the gym" is not a time.
         assertEquals(Command.Note("meet her at the gym"), parse("remind me to meet her at the gym"))
+    }
+
+    @Test
+    fun flipsCoinsAndRollsDice() {
+        assertEquals(Command.Coin, parse("flip a coin"))
+        assertEquals(Command.Coin, parse("heads or tails"))
+        assertEquals(Command.Dice(6), parse("roll a dice"))
+        assertEquals(Command.Dice(20), parse("roll a 20 sided dice"))
+        assertEquals(Command.Pick(1, 10), parse("pick a number between 1 and 10"))
+        assertEquals(Command.Pick(1, 10), parse("pick a number"))
+        assertEquals(Command.Pick(50, 100), parse("pick a number between 50 and 100"))
+
+        // Seeded, so the answers are checkable rather than merely plausible.
+        val f = facts(LocalDateTime.of(2026, 11, 10, 9, 0))
+        for (seed in 1L..50L) {
+            val seeded = f.copy(random = Random(seed))
+            assertTrue(Assistant.reply(Command.Coin, Lang.EN, seeded) in setOf("Heads.", "Tails."))
+            val rolled = Assistant.reply(Command.Dice(6), Lang.EN, seeded).removePrefix("You rolled a ").removeSuffix(".")
+            assertTrue(rolled, rolled.toInt() in 1..6)
+            val picked = Assistant.reply(Command.Pick(1, 10), Lang.EN, seeded).removeSuffix(".")
+            assertTrue(picked, picked.toInt() in 1..10)
+        }
+        // Nonsense asked for out loud still answers something sane.
+        assertTrue(Assistant.reply(Command.Dice(1), Lang.EN, f.copy(random = Random(1))).isNotBlank())
+        assertEquals("7.", Assistant.reply(Command.Pick(7, 7), Lang.EN, f))
+        assertTrue(Assistant.reply(Command.Pick(10, 1), Lang.EN, f).removeSuffix(".").toInt() in 1..10)
     }
 
     @Test
