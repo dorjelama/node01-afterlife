@@ -262,6 +262,40 @@ object Assistant {
     /** Shown and spoken, over and over, when an alarm goes off. */
     fun wakeUp(lang: Lang) = if (lang == Lang.NE) "उठ्नुहोस्!" else "Wake up!"
 
+    /**
+     * The morning's one line, after "Good morning": the time, the Nepali date,
+     * anything waiting, and the weather if it arrived. Each part is dropped
+     * when there is nothing to say, so a quiet morning is a short sentence.
+     */
+    fun briefing(now: LocalDateTime, notesWaiting: Int, lang: Lang, weather: String?): String =
+        if (lang == Lang.NE) {
+            val bs = Bs.fromAd(now.toLocalDate())
+            listOfNotNull(
+                "अहिले ${clockNe(now.hour, now.minute)} बजे",
+                bs?.let { "आज ${Bs.MONTH_NAMES_NE[it.month - 1]} ${Bs.neDigits(it.day)} गते" },
+                weather,
+                when {
+                    notesWaiting <= 0 -> null
+                    else -> "${Bs.neDigits(notesWaiting)} वटा कुरा पर्खिरहेको छ"
+                },
+            ).joinToString("। ") + "।"
+        } else {
+            val bs = Bs.fromAd(now.toLocalDate())
+            listOfNotNull(
+                "It's ${clockEn(now.hour, now.minute)}",
+                bs?.let {
+                    val month = Bs.MONTH_NAMES[it.month - 1].lowercase(Locale.ROOT).replaceFirstChar { c -> c.uppercase() }
+                    "$month ${it.day}"
+                },
+                weather,
+                when {
+                    notesWaiting <= 0 -> null
+                    notesWaiting == 1 -> "one thing waiting"
+                    else -> "$notesWaiting things waiting"
+                },
+            ).joinToString(". ") + "."
+        }
+
     /** While the microphone is open. */
     fun listening(lang: Lang) = if (lang == Lang.NE) "सुन्दैछु…" else "Listening…"
 

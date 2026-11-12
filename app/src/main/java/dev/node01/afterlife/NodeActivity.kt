@@ -26,6 +26,7 @@ import java.time.Duration
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlin.concurrent.thread
 
 /**
  * The whole of NODE Companion: a face on the desk that notices you, tells you
@@ -440,9 +441,10 @@ class NodeActivity : Activity() {
             presentSinceMs = now
             if (lastAbsenceMs >= Mood.SEARCH_MS) {
                 face.doubleBlink()
-                // "Good morning" once a morning; otherwise a plain hello.
+                // "Good morning" once a morning, and then the day's one line;
+                // otherwise a plain hello.
                 val morning = LocalDateTime.now().hour in 4..11
-                if (!(morning && chat(Moment.MORNING))) chat(Moment.HELLO)
+                if (morning && chat(Moment.MORNING)) brief() else chat(Moment.HELLO)
             }
         }
         faceAtMs = now
@@ -498,6 +500,32 @@ class NodeActivity : Activity() {
         pauseWake(SPEAK_AFTER_CHIRP_MS + SPEECH_START_MS)
         statusView.postDelayed({ speaker?.say(words, lang, after = moment.urgent) }, SPEAK_AFTER_CHIRP_MS)
         return true
+    }
+
+    /**
+     * The morning's one line, behind "Good morning". The weather is fetched on
+     * a thread of its own with a short timeout, and the briefing is spoken
+     * whether or not it arrives -- a morning hello must never wait on a
+     * network. Dropped entirely if the room went dark or you started talking
+     * in the meantime.
+     */
+    private fun brief() {
+        val waiting = inbox.size
+        thread(name = "node-weather", isDaemon = true) {
+            val weather = Weather.fetch()
+            mainExecutor.execute {
+                val sp = speaker ?: return@execute
+                if (!TALK || dark || listening) return@execute
+                val lang = if (sp.canSpeak(voiceLang)) voiceLang else Lang.EN
+                val words = Assistant.briefing(LocalDateTime.now(), waiting, lang, weather?.let { Weather.describe(it, lang) })
+                replyText = words
+                replyUntilMs = SystemClock.elapsedRealtime() + REPLY_MS
+                pauseWake(SPEECH_START_MS)
+                // Behind the "Good morning" that is very likely still playing.
+                sp.say(words, lang, after = true)
+                reevaluate()
+            }
+        }
     }
 
     /** From the page: an [Act] to play, or an [Expression] to hold for a few seconds. Anything else is ignored. */

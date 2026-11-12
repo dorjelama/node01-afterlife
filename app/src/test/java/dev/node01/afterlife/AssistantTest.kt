@@ -284,6 +284,22 @@ class AssistantTest {
     }
 
     @Test
+    fun givesTheMorningsOneLine() {
+        val now = LocalDateTime.of(2026, 11, 10, 7, 5)
+        val bs = Bs.fromAd(LocalDate.of(2026, 11, 10))!!
+        assertEquals(
+            "It's 7:05 AM. Kartik ${bs.day}. 18 degrees, rain. one thing waiting.",
+            Assistant.briefing(now, 1, Lang.EN, "18 degrees, rain"),
+        )
+        // A quiet morning, with no weather and nothing waiting, is a short sentence.
+        assertEquals("It's 7:05 AM. Kartik ${bs.day}.", Assistant.briefing(now, 0, Lang.EN, null))
+        assertTrue(Assistant.briefing(now, 3, Lang.EN, null).endsWith("3 things waiting."))
+        val ne = Assistant.briefing(now, 2, Lang.NE, "१८ डिग्री, पानी परेको")
+        assertTrue(ne, ne.startsWith("अहिले बिहान ७:०५ बजे"))
+        assertTrue(ne, ne.endsWith("२ वटा कुरा पर्खिरहेको छ।"))
+    }
+
+    @Test
     fun understandsARepeatingNudge() {
         assertEquals(Command.RemindEvery(45 * min, "stretch"), parse("remind me to stretch every 45 minutes"))
         assertEquals(Command.RemindEvery(60 * min, "drink water"), parse("remind me to drink water every hour"))

@@ -32,6 +32,7 @@ version lives on at `9a42e35`.
 | **Sees you** | The front camera's own face detection, done by the camera hardware. The eyes follow you, say hello with a double blink when you come back after a while, and look around the room when you have just left |
 | **Sleeps** | Away 2 minutes: sleepy and dim. Away 10 minutes, or the room dark: eyes closed, backlight at the panel minimum |
 | **Feels the desk** | Knock on the desk and it startles. Shake the phone and it goes woozy: its eyes loll round, one up as the other drops, until it shakes it off |
+| **Briefs you in the morning** | The first time it sees you each morning, after "Good morning!": the time, the Bikram Sambat date, the weather, and how many things are waiting. One sentence, and each part is dropped when there is nothing to say |
 | **Is pettable** | Stroke a finger across the screen and its eyes turn to beating hearts: "Hehe." A stroke never opens the microphone, so you can fuss over it without talking to it |
 | **Plays** | Say hi and it winks; say "thank you" and its eyes turn to beating hearts. While you sit there it now and then winks, tilts its head or squints; with nobody there it looks around the room; asleep, Z's float up. Listening, it tilts its head. Every animation and expression can also be played from the page |
 | **Listens** | Tap the screen or wave over its top edge, wait for the blip, and speak — English or Nepali. Nothing listens until you do. See [Voice](#voice) |
@@ -150,8 +151,11 @@ uses Google's online voice. See [engineering notes](docs/ENGINEERING-NOTES.md).
   is no wake word and nothing listens in the background. Recognition is offline when the
   phone has the model and online through Google when it does not, and the screen says
   which; see [Voice](#voice).
-- **No cloud AI.** The voice assistant is a fixed set of commands, not an AI. Apart from online
-  speech when the offline model is missing, nothing is sent anywhere but your own LAN.
+- **No cloud AI.** The voice assistant is a fixed set of commands, not an AI. Two things leave
+  your LAN and nothing else does: online speech when the offline model is missing, and the
+  morning briefing's weather — a fixed pair of coordinates (`LAT`/`LON` in `Weather.kt`, yours
+  to change) sent to Open-Meteo, with no key, no account and nothing about you or the phone.
+  It times out after 3 seconds and the briefing goes on without it.
 - A hook event contains your prompt and the tools' input and output. NODE keeps only the event
   name, session id, project folder and notification type, reads past the rest without keeping
   it, and never logs it — but the whole event still crosses your Wi-Fi as **plain HTTP**.
