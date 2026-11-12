@@ -17,6 +17,9 @@ class Inbox(notes: List<Note> = emptyList()) {
 
         /** A timer or focus session. "Cancel the timer" removes these. */
         TIMER,
+
+        /** "Wake me at seven": rings on until it is tapped off, dark room or not. */
+        ALARM,
     }
 
     data class Note(val dueMs: Long, val text: String, val kind: Kind = Kind.NOTE)

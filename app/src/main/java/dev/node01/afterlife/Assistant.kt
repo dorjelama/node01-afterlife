@@ -31,6 +31,9 @@ sealed interface Command {
      * or "tomorrow at 9". Upgrade when someone asks for a second day.
      */
     data class RemindAt(val hour: Int, val minute: Int, val exact: Boolean, val text: String) : Command
+
+    /** "Wake me at seven": like [RemindAt], but it keeps ringing until you tap it off. */
+    data class Alarm(val hour: Int, val minute: Int, val exact: Boolean) : Command
     data class Note(val text: String) : Command
     data object ClaudeStatus : Command
 
@@ -142,6 +145,7 @@ object Assistant {
         val t = normalise(heard)
         if (t.isBlank()) return Command.Unknown
         val greeting = greeting(t)
+        val clock by lazy { clockIn(t) }
         fun has(vararg words: String) = words.any { t.contains(it) }
 
         /** Whole words only: short romanized Nepali like "sut" must not match inside English. */
@@ -156,6 +160,10 @@ object Assistant {
 
             (has("cancel", "stop", "clear") && has("timer", "focus", "pomodoro", "reminder")) ||
                 (has("रद्द", "बन्द", "रोक") && has("टाइमर", "फोकस")) -> Command.CancelTimer
+
+            // Before the time and "wake up" below: with an hour, this is an alarm.
+            (has("alarm", "अलार्म", "alaram") || has("wake me", "उठाउ", "uthau")) && clock != null ->
+                Command.Alarm(clock!!.hour, clock!!.minute, clock!!.exact)
 
             // Online recognition often writes Nepali in English letters: "kati bajyo".
             has("remind", "सम्झाउ", "सम्झना", "याद दिला", "samjha", "samjhau", "yaad dila", "yad dila") -> remind(t)
@@ -243,6 +251,9 @@ object Assistant {
 
     /** Shown and spoken when a focus session ends. */
     fun focusDone(lang: Lang) = if (lang == Lang.NE) "फोकस सकियो। अब आराम गर्नुहोस्।" else "Focus done. Take a break."
+
+    /** Shown and spoken, over and over, when an alarm goes off. */
+    fun wakeUp(lang: Lang) = if (lang == Lang.NE) "उठ्नुहोस्!" else "Wake up!"
 
     /** While the microphone is open. */
     fun listening(lang: Lang) = if (lang == Lang.NE) "सुन्दैछु…" else "Listening…"
@@ -426,6 +437,8 @@ object Assistant {
         is Command.Remind -> "OK. In ${durationEn(c.ms)}, I'll remind you: ${c.text}."
         is Command.RemindAt -> "OK. At ${clockEn(dueAt(f.now, c.hour, c.minute, c.exact).hour, c.minute)}, " +
             "I'll remind you: ${c.text}."
+        is Command.Alarm -> "Alarm set for ${clockEn(dueAt(f.now, c.hour, c.minute, c.exact).hour, c.minute)}. " +
+            "Tap me to turn it off."
         is Command.Note -> if (c.text.isBlank()) "What should I note?" else "Noted: ${c.text}."
         Command.ClaudeStatus -> when (f.claude?.state) {
             null -> "No Claude sessions right now."
@@ -479,6 +492,8 @@ object Assistant {
         is Command.Remind -> "हुन्छ, ${durationNe(c.ms)}पछि सम्झाउँछु: ${c.text}।"
         is Command.RemindAt ->
             "हुन्छ, ${clockNe(dueAt(f.now, c.hour, c.minute, c.exact).hour, c.minute)} बजे सम्झाउँछु: ${c.text}।"
+        is Command.Alarm ->
+            "${clockNe(dueAt(f.now, c.hour, c.minute, c.exact).hour, c.minute)} बजे उठाउँछु। बन्द गर्न छुनुहोस्।"
         is Command.Note -> if (c.text.isBlank()) "के नोट गरूँ?" else "नोट गरेँ: ${c.text}।"
         Command.ClaudeStatus -> when (f.claude?.state) {
             null -> "अहिले Claude चलिरहेको छैन।"
@@ -559,8 +574,8 @@ object Assistant {
         return "$part ${Bs.neDigits(h12)}:${Bs.neDigits2(minute)}"
     }
 
-    /** `at 5`, `at 5 30`, `at 5 30 pm` -- the colon is already gone. */
-    private val CLOCK_EN = Regex("""\bat (\d{1,2})(?: (\d{2}))?(?: (am|pm|a m|p m))?\b""")
+    /** `at 5`, `for 5 30`, `at 5 30 pm` -- the colon is already gone by now. */
+    private val CLOCK_EN = Regex("""\b(?:at|for) (\d{1,2})(?: (\d{2}))?(?: (am|pm|a m|p m))?\b""")
 
     private val TENS = setOf(20L, 30L, 40L, 50L)
 

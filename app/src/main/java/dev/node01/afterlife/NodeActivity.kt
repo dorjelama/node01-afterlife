@@ -228,6 +228,7 @@ class NodeActivity : Activity() {
         statusView.removeCallbacks(heartbeat)
         statusView.removeCallbacks(retryCamera)
         statusView.removeCallbacks(retryServer)
+        statusView.removeCallbacks(ringAgain)
         serverProblem = null
         window.decorView.removeCallbacks(reHideBars)
         super.onStop()
@@ -386,6 +387,17 @@ class NodeActivity : Activity() {
     private fun announce(note: Inbox.Note) {
         if (note.kind == Inbox.Kind.NOTE && dark) return
         alert(note.text, Assistant.langOf(note.text))
+        // An alarm is the one alert that will not be slept through.
+        if (note.kind == Inbox.Kind.ALARM) statusView.postDelayed(ringAgain, ALARM_REPEAT_MS)
+    }
+
+    /** Keeps an alarm ringing until it is dismissed, which ends this by itself. */
+    private val ringAgain = object : Runnable {
+        override fun run() {
+            if (inbox.due(System.currentTimeMillis())?.kind != Inbox.Kind.ALARM) return
+            chirp.attention()
+            statusView.postDelayed(this, ALARM_REPEAT_MS)
+        }
     }
 
     /** One chirp for attention, then [words] once it has finished. */
@@ -649,6 +661,10 @@ class NodeActivity : Activity() {
             is Command.RemindAt -> {
                 val due = Assistant.dueAt(facts.now, command.hour, command.minute, command.exact)
                 inbox.add(command.text, Duration.between(facts.now, due).toMillis(), wall, Inbox.Kind.REMINDER)
+            }
+            is Command.Alarm -> {
+                val due = Assistant.dueAt(facts.now, command.hour, command.minute, command.exact)
+                inbox.add(Assistant.wakeUp(lang), Duration.between(facts.now, due).toMillis(), wall, Inbox.Kind.ALARM)
             }
             is Command.Note -> inbox.add(command.text, 0L, wall, Inbox.Kind.NOTE)?.let {
                 // Shown at once; the spoken "noted" is announcement enough.
@@ -1054,6 +1070,9 @@ class NodeActivity : Activity() {
 
         /** Let the chirp finish before reading a due note aloud. */
         const val SPEAK_AFTER_CHIRP_MS = 450L
+
+        /** How often an alarm chirps again until it is tapped off. */
+        const val ALARM_REPEAT_MS = 10_000L
 
         /**
          * Listen hands-free while you are at the desk, with or without "Hey Buddy".

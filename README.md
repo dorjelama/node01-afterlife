@@ -113,6 +113,7 @@ with or without "Hey Buddy", is still in the code, switched off: `WAKE` in `Node
 | "Cancel the timer" | "टाइमर रद्द गर" | |
 | "Remind me in 10 minutes to stretch" | "दस मिनेटपछि पानी पिउन सम्झाउनु" | Shows and reads it out then |
 | "Remind me at 5:30 to call mom" | "५ बजे पानी पिउन सम्झाउनु" | At that time today, or tomorrow if it has passed. Without "am" or "pm" it takes whichever comes first |
+| "Wake me at 7 am" / "Set an alarm for 6:30" | "७ बजे उठाउ" | Chirps every 10 seconds until you tap it, dark room or not. Say "am" or "pm", or it takes the next time the clock reads that |
 | "Take a note: buy milk" | "नोट दूध किन्नु" | A desk note, shown now |
 | "What is Claude doing?" | "Claude के गर्दैछ?" | Working, needs you, or done — and where |
 | "How much of my session is left?" | "सेसन कति बाँकी छ?" | The 5-hour window: the percentage used, and when it resets |

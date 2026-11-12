@@ -284,6 +284,32 @@ class AssistantTest {
     }
 
     @Test
+    fun understandsAnAlarm() {
+        assertEquals(Command.Alarm(7, 0, false), parse("wake me at 7"))
+        assertEquals(Command.Alarm(6, 30, true), parse("set an alarm for 6:30 am"))
+        assertEquals(Command.Alarm(7, 0, false), parse("७ बजे उठाउ"))
+        // "Wake up" with no hour is still just waking it up, and the time is still the time.
+        assertEquals(Command.Wake, parse("wake up"))
+        assertEquals(Command.Time, parse("कति बज्यो"))
+        // An alarm with no hour at all is not an alarm.
+        assertEquals(Command.Wake, parse("wake me"))
+
+        val f = facts(LocalDateTime.of(2026, 11, 10, 9, 0))
+        // Same rule as a reminder: a bare 7, heard at nine in the morning, is this evening.
+        assertEquals(
+            "Alarm set for 7:00 PM. Tap me to turn it off.",
+            Assistant.reply(Command.Alarm(7, 0, false), Lang.EN, f),
+        )
+        // Say "am" for the morning, and it is tomorrow's.
+        assertEquals(
+            "Alarm set for 7:00 AM. Tap me to turn it off.",
+            Assistant.reply(Command.Alarm(7, 0, true), Lang.EN, f),
+        )
+        assertTrue(Assistant.reply(Command.Alarm(7, 0, true), Lang.NE, f).startsWith("बिहान ७:०० बजे"))
+        assertEquals("Wake up!", Assistant.wakeUp(Lang.EN))
+    }
+
+    @Test
     fun picksTheNextTimeTheClockReadsThat() {
         val morning = LocalDateTime.of(2026, 11, 10, 9, 0)
         // Said without am or pm, the sooner reading wins: 5 in the morning means this evening.
