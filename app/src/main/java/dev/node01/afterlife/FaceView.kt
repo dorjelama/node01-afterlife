@@ -91,7 +91,9 @@ class FaceView @JvmOverloads constructor(
     private val zDots = FloatArray(2 * Z_MAX_DOTS)
 
     private var usagePercent: Int? = null
-    private val usageDots = FloatArray(2 * GLYPH_W * GLYPH_H * 4)
+    private var timerText: String? = null
+    private var clockText: String? = null
+    private val glyphDots = FloatArray(2 * GLYPH_W * GLYPH_H * MAX_GLYPHS)
 
     /** Starts asleep, so the first look shown is a waking up. */
     private var current = Expression.CLOSED.params
@@ -190,6 +192,20 @@ class FaceView @JvmOverloads constructor(
     fun showUsage(percent: Int?) {
         if (percent == usagePercent) return
         usagePercent = percent
+        kick()
+    }
+
+    /** A timer counting down, as `M:SS`, in the top-right corner; null shows nothing. */
+    fun showTimer(text: String?) {
+        if (text == timerText) return
+        timerText = text
+        kick()
+    }
+
+    /** The time, large and alone in the middle of a dark room; null shows nothing. */
+    fun showClock(text: String?) {
+        if (text == clockText) return
+        clockText = text
         kick()
     }
 
@@ -527,7 +543,11 @@ class FaceView @JvmOverloads constructor(
         dotPaint.color = colour
         if (n > 0) canvas.drawPoints(lit, 0, n, dotPaint)
         if (playing == Act.ZZZ) drawZs(canvas, t, x0 + (rightEdge + 1) * pitch, cy - 2f * pitch, colour)
-        usagePercent?.let { drawUsage(canvas, it) }
+        usagePercent?.let { drawGlyphs(canvas, "${it.coerceIn(0, 100)}%", USAGE_COL, USAGE_ROW, usagePaint) }
+        // The countdown sits opposite the usage, out of the eyes' way.
+        timerText?.let { drawGlyphs(canvas, it, dots(width.toFloat()) - glyphsWidth(it) - USAGE_COL, USAGE_ROW, usagePaint) }
+        // A knock in the dark: the time alone, where the eyes would be.
+        clockText?.let { drawGlyphs(canvas, it, (dots(width.toFloat()) - glyphsWidth(it)) / 2, CLOCK_ROW, usagePaint) }
 
         if (blinking || hopping || playing != null || current != target || stretch > 0f) {
             val onlyZs = playing == Act.ZZZ && !blinking && !hopping && current == target && stretch == 0f
@@ -716,32 +736,48 @@ class FaceView @JvmOverloads constructor(
         for (r in r0..r1) for (c in c0..c1) glowBytes[r * glowRowBytes + c] = 0
     }
 
-    /** "42%" in 5×7 dot digits in the top-left corner, a dot apart: nothing else, no label. */
-    private fun drawUsage(canvas: Canvas, percent: Int) {
-        val p = percent.coerceIn(0, 100)
-        val digits = if (p == 100) 3 else if (p >= 10) 2 else 1
+    /**
+     * [text] in 5×7 dot digits with its top-left dot at [col], [row], a dot
+     * between glyphs. Digits, `%` and `:` only; anything else is a gap.
+     */
+    private fun drawGlyphs(canvas: Canvas, text: String, col: Int, row: Int, paint: Paint) {
         var n = 0
-        var col = USAGE_COL
-        for (d in digits - 1 downTo 0) {
-            n = addGlyph(GLYPHS[p / POW10[d] % 10], col, n)
-            col += GLYPH_W + 1
-        }
-        n = addGlyph(GLYPHS[PERCENT], col, n)
-        canvas.drawPoints(usageDots, 0, n, usagePaint)
-    }
-
-    private fun addGlyph(glyph: BooleanArray, col: Int, start: Int): Int {
-        var n = start
-        for (r in 0 until GLYPH_H) {
-            for (c in 0 until GLYPH_W) {
-                if (glyph[r * GLYPH_W + c]) {
-                    usageDots[n++] = x0 + (col + c) * pitch
-                    usageDots[n++] = y0 + (USAGE_ROW + r) * pitch
+        var at = col
+        for (ch in text.take(MAX_GLYPHS)) {
+            if (ch == ':') {
+                // Two dots of its own, so a clock reads 9:42 and not 9 : 42.
+                for (r in intArrayOf(2, 4)) {
+                    glyphDots[n++] = x0 + at * pitch
+                    glyphDots[n++] = y0 + (row + r) * pitch
+                }
+            } else {
+                glyphOf(ch)?.let { glyph ->
+                    for (r in 0 until GLYPH_H) {
+                        for (c in 0 until GLYPH_W) {
+                            if (glyph[r * GLYPH_W + c]) {
+                                glyphDots[n++] = x0 + (at + c) * pitch
+                                glyphDots[n++] = y0 + (row + r) * pitch
+                            }
+                        }
+                    }
                 }
             }
+            at += glyphWidth(ch) + 1
         }
-        return n
+        if (n > 0) canvas.drawPoints(glyphDots, 0, n, paint)
     }
+
+    private fun glyphOf(ch: Char): BooleanArray? = when {
+        ch in '0'..'9' -> GLYPHS[ch - '0']
+        ch == '%' -> GLYPHS[PERCENT]
+        else -> null
+    }
+
+    private fun glyphWidth(ch: Char) = if (ch == ':') COLON_W else GLYPH_W
+
+    /** How wide [text] is, in dots, as [drawGlyphs] lays it out. */
+    private fun glyphsWidth(text: String): Int =
+        text.take(MAX_GLYPHS).sumOf { glyphWidth(it) + 1 } - 1
 
     /** The nearest dot centre to [v] on a grid starting at [origin]. */
     private fun snap(v: Float, origin: Float) = origin + ((v - origin) / pitch).roundToInt() * pitch
@@ -845,11 +881,19 @@ class FaceView @JvmOverloads constructor(
         const val USAGE_COL = 2
         const val USAGE_ROW = 1
 
+        /** The night clock's top row: level with the eyes, which are closed under it. */
+        const val CLOCK_ROW = 16
+
         /** Dot digits, five wide and seven tall, as on an LED panel. */
         const val GLYPH_W = 5
         const val GLYPH_H = 7
         const val PERCENT = 10
-        val POW10 = intArrayOf(1, 10, 100)
+
+        /** A colon is two dots wide of nothing but itself. */
+        const val COLON_W = 1
+
+        /** The longest readout: "24:59". */
+        const val MAX_GLYPHS = 6
 
         /** 0-9, then "%": each a row of five, top to bottom. */
         val GLYPHS: Array<BooleanArray> = arrayOf(

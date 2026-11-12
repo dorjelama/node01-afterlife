@@ -44,6 +44,10 @@ class Inbox(notes: List<Note> = emptyList()) {
     /** A timer or focus session still counting down. */
     fun timerRunning(nowMs: Long): Boolean = notes.any { it.kind == Kind.TIMER && it.dueMs > nowMs }
 
+    /** How long the soonest timer still has to run, or null if none is. */
+    fun timerLeft(nowMs: Long): Long? =
+        notes.filter { it.kind == Kind.TIMER && it.dueMs > nowMs }.minOfOrNull { it.dueMs }?.minus(nowMs)
+
     /** Removes timers still counting down. True if there was one. */
     fun cancelTimers(nowMs: Long): Boolean = notes.removeAll { it.kind == Kind.TIMER && it.dueMs > nowMs }
 
@@ -65,6 +69,17 @@ class Inbox(notes: List<Note> = emptyList()) {
                 clean(text.orEmpty())?.let { Note(due, it, kind ?: Kind.NOTE) }
             },
         )
+
+        /**
+         * Time left, for the corner of the face: `4:05` under an hour, ticking
+         * in seconds, and whole minutes beyond that -- a long wait does not
+         * need a second hand. Rounded up, so it reads 0:01 until it fires.
+         */
+        fun countdown(msLeft: Long): String {
+            val seconds = ((msLeft + 999) / 1_000).coerceAtLeast(0)
+            if (seconds >= 3_600) return "${seconds / 60}"
+            return "${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')}"
+        }
 
         /** One line, no control characters, trimmed and capped. Null if nothing is left. */
         internal fun clean(text: String): String? =

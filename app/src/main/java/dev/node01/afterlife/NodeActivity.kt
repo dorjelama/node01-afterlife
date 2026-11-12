@@ -23,6 +23,8 @@ import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.security.SecureRandom
 import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 /**
  * The whole of NODE Companion: a face on the desk that notices you, tells you
@@ -122,6 +124,9 @@ class NodeActivity : Activity() {
     private var battery: Battery? = null
     private var knockAtMs = NEVER
     private var wincedAtMs = NEVER
+
+    /** A knock in the dark shows the time until this moment. */
+    private var clockUntilMs = 0L
 
     /** The last finger down or up on the screen, to tell a tap's jolt from a knock on the desk. */
     private var touchAtMs = NEVER
@@ -281,11 +286,16 @@ class NodeActivity : Activity() {
             showCaption(look)
         }
         face.showUsage(usage?.shownAt(System.currentTimeMillis()))
+        face.showTimer(inbox.timerLeft(System.currentTimeMillis())?.let { Inbox.countdown(it) })
+        val nightClock = dark && now < clockUntilMs
+        face.showClock(if (nightClock) LocalDateTime.now().format(CLOCK_FORMAT) else null)
         val undimmed = now < undimUntilMs
         setBrightness(
             when {
                 undimmed -> WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
                 look.light == Light.FULL -> WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                // Enough to read by in a dark room, and no more.
+                nightClock -> DOZE_BRIGHTNESS
                 look.light == Light.DOZE -> DOZE_BRIGHTNESS
                 else -> MIN_BRIGHTNESS
             },
@@ -431,6 +441,9 @@ class NodeActivity : Activity() {
         statusView.postDelayed({
             if (kotlin.math.abs(touchAtMs - at) > TAP_JOLT_MS && !listening) {
                 knockAtMs = at
+                // A knock in a dark room is asking the time. Answer it in dots,
+                // not out loud: chat() is silent in the dark anyway.
+                if (dark) clockUntilMs = SystemClock.elapsedRealtime() + NIGHT_CLOCK_MS
                 chat(Moment.KNOCK)
                 reevaluate()
             }
@@ -1039,6 +1052,12 @@ class NodeActivity : Activity() {
 
         /** A knock this close to a touch is the tap itself jolting the phone. */
         const val TAP_JOLT_MS = 350L
+
+        /** How long a knock in the dark shows the time. Long enough to read, short enough to sleep through. */
+        const val NIGHT_CLOCK_MS = 6_000L
+
+        /** The night clock: 12-hour, no am/pm, since you can see out of the window. */
+        val CLOCK_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("h:mm", Locale.US)
 
         /** Held this long, a touch shows the address instead of listening. */
         const val LONG_PRESS_MS = 600L

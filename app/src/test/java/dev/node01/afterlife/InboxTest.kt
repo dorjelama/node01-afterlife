@@ -9,6 +9,26 @@ import org.junit.Test
 
 class InboxTest {
 
+    @Test
+    fun countsDownForTheCornerOfTheFace() {
+        val inbox = Inbox()
+        assertNull("nothing running", inbox.timerLeft(0))
+        inbox.add("focus done", 25 * 60_000L, 0, Inbox.Kind.TIMER)
+        inbox.add("tea", 3 * 60_000L, 0, Inbox.Kind.TIMER)
+        assertEquals("the soonest one", 3 * 60_000L - 1_000L, inbox.timerLeft(1_000L))
+        // A note is not a timer, and a timer that has fired is no longer running.
+        inbox.add("buy milk", 0L, 0, Inbox.Kind.NOTE)
+        assertEquals(22 * 60_000L, inbox.timerLeft(3 * 60_000L))
+
+        // Rounded up, so it reads 0:01 right until it fires.
+        assertEquals("4:05", Inbox.countdown(4 * 60_000L + 5_000L))
+        assertEquals("0:01", Inbox.countdown(1))
+        assertEquals("0:00", Inbox.countdown(0))
+        assertEquals("25:00", Inbox.countdown(25 * 60_000L))
+        // Past an hour, whole minutes: a long wait needs no second hand.
+        assertEquals("90", Inbox.countdown(90 * 60_000L))
+    }
+
     private val now = 1_700_000_000_000L
     private val minute = 60_000L
 
