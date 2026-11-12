@@ -284,6 +284,29 @@ class AssistantTest {
     }
 
     @Test
+    fun doesArithmetic() {
+        val f = facts(LocalDateTime.of(2026, 11, 10, 9, 0))
+        assertEquals(Command.Calc(391.0), parse("what's 17 times 23"))
+        assertEquals(Command.Calc(360.0), parse("15% of 2400"))
+        assertEquals(Command.Calc(360.0), parse("what is 15 percent of 2400"))
+        assertEquals(Command.Calc(8.0), parse("5 plus 3"))
+        assertEquals(Command.Calc(25.0), parse("100 divided by 4"))
+        assertEquals(Command.Calc(5.0), parse("seven minus two"))
+        assertEquals(Command.Calc(75.0), parse("twenty five times three"))
+        assertEquals(Command.Calc(15.0), parse("१० जोड ५"))
+
+        assertEquals("That's 391.", Assistant.reply(Command.Calc(391.0), Lang.EN, f))
+        assertEquals("That's 2.5.", Assistant.reply(Command.Calc(2.5), Lang.EN, f))
+        assertEquals("३९१ हुन्छ।", Assistant.reply(Command.Calc(391.0), Lang.NE, f))
+        assertTrue(Assistant.reply(Command.Calc(Double.NaN), Lang.EN, f).contains("divide by zero"))
+        assertEquals(Command.Calc(Double.NaN).result.isNaN(), (parse("10 divided by 0") as Command.Calc).result.isNaN())
+
+        // Asking the time is still the time, even though "times" contains it.
+        assertEquals(Command.Time, parse("what time is it"))
+        assertEquals(Command.Unknown, parse("17 and 23"))
+    }
+
+    @Test
     fun givesTheMorningsOneLine() {
         val now = LocalDateTime.of(2026, 11, 10, 7, 5)
         val bs = Bs.fromAd(LocalDate.of(2026, 11, 10))!!

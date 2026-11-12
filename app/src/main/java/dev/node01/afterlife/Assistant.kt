@@ -42,6 +42,9 @@ sealed interface Command {
 
     /** "How much of my session is left?", "when does my session reset?" */
     data object SessionUsage : Command
+
+    /** "What's 17 times 23?" [result] is NaN for a division by zero. */
+    data class Calc(val result: Double) : Command
     data object Sleep : Command
     data object Wake : Command
     data object Dismiss : Command
@@ -153,6 +156,7 @@ object Assistant {
         if (t.isBlank()) return Command.Unknown
         val greeting = greeting(t)
         val clock by lazy { clockIn(t) }
+        val sum by lazy { calc(t) }
         fun has(vararg words: String) = words.any { t.contains(it) }
 
         /** Whole words only: short romanized Nepali like "sut" must not match inside English. */
@@ -185,6 +189,9 @@ object Assistant {
             has("session", "usage", "quota", "सेसन", "कोटा") -> Command.SessionUsage
 
             has("claude", "cloud", "clod", "क्लड", "क्लाउड", "क्लोड") -> Command.ClaudeStatus
+
+            // Before the time: "17 times 23" has "time" in it.
+            sum != null -> Command.Calc(sum!!)
 
             has("time", "o'clock", "समय", "बज्यो", "बजे", "टाइम", "bajyo", "baje", "kati baj") ||
                 word("samay", "samaya") -> Command.Time
@@ -437,6 +444,57 @@ object Assistant {
             t.replace(Regex("""^(take a note( that)?|note( that| down)?|write down|remember( that| to)?)\s*:?\s*"""), "").trim()
         }
 
+    /**
+     * Two numbers with something to do between them: "17 times 23", "15% of
+     * 2400", "१० जोड ५". Null when the sentence is not sums, NaN when it asks
+     * to divide by zero.
+     *
+     * shortcut: two numbers and one operator, never a chain and never
+     * brackets. Upgrade it the day someone dictates an expression.
+     */
+    internal fun calc(t: String): Double? {
+        val words = t.replace("%", " percent ").replace(Regex("""\s+"""), " ").trim().split(' ')
+        for ((i, w) in words.withIndex()) {
+            val op = OPERATORS[w] ?: continue
+            // "divided by four", "15 percent of 2400".
+            val from = if (words.getOrNull(i + 1) in setOf("by", "of")) i + 2 else i + 1
+            val right = calcNumberAt(words, from)?.first ?: continue
+            val left = calcNumberEndingAt(words, i) ?: continue
+            return when (op) {
+                '+' -> (left + right).toDouble()
+                '-' -> (left - right).toDouble()
+                '*' -> (left * right).toDouble()
+                '%' -> left.toDouble() * right / 100.0
+                else -> if (right == 0L) Double.NaN else left.toDouble() / right
+            }
+        }
+        return null
+    }
+
+    /** Like [numberAt], but any size and zero included: this is arithmetic, not minutes. */
+    private fun calcNumberAt(words: List<String>, i: Int): Pair<Long, Int>? {
+        val first = words.getOrNull(i)?.let { it.toLongOrNull() ?: NUMBERS[it] } ?: return null
+        val second = words.getOrNull(i + 1)?.let { it.toLongOrNull() ?: NUMBERS[it] }
+        return if (first in TENS && second != null && second in 1..9) (first + second) to i + 2 else first to i + 1
+    }
+
+    /** The number that finishes just before [end], "twenty five" included. */
+    private fun calcNumberEndingAt(words: List<String>, end: Int): Long? {
+        for (start in intArrayOf(end - 2, end - 1)) {
+            if (start < 0) continue
+            calcNumberAt(words, start)?.let { if (it.second == end) return it.first }
+        }
+        return null
+    }
+
+    private val OPERATORS: Map<String, Char> = mapOf(
+        "plus" to '+', "add" to '+', "जोड" to '+',
+        "minus" to '-', "less" to '-', "घटाउ" to '-',
+        "times" to '*', "multiplied" to '*', "x" to '*', "गुणा" to '*',
+        "divided" to '/', "over" to '/', "भाग" to '/',
+        "percent" to '%', "प्रतिशत" to '%',
+    )
+
     /** The number starting at [i], and the index after it. "twenty five" is one number. */
     private fun numberAt(words: List<String>, i: Int): Pair<Long, Int>? {
         val first = numberWord(words[i]) ?: return null
@@ -501,6 +559,7 @@ object Assistant {
             "Your session is ${f.usagePercent}% used." +
                 (f.usageResetsInMs?.let { " It resets in ${durationEn(it)}." } ?: "")
         }
+        is Command.Calc -> if (c.result.isNaN()) "You can't divide by zero." else "That's ${number(c.result)}."
         Command.Sleep -> "Good night."
         Command.Wake -> "I'm awake."
         Command.Dismiss -> if (f.noteDue) "Dismissed." else "There's nothing to dismiss."
@@ -556,6 +615,8 @@ object Assistant {
             "तपाईंको सेसन ${Bs.neDigits(f.usagePercent)}% प्रयोग भयो।" +
                 (f.usageResetsInMs?.let { " ${durationNe(it)}पछि रिसेट हुन्छ।" } ?: "")
         }
+        is Command.Calc ->
+            if (c.result.isNaN()) "शून्यले भाग जाँदैन।" else "${neNumber(number(c.result))} हुन्छ।"
         Command.Sleep -> "शुभरात्री।"
         Command.Wake -> "म ब्युँझिएँ।"
         Command.Dismiss -> if (f.noteDue) "हटाएँ।" else "हटाउनुपर्ने केही छैन।"
@@ -581,6 +642,15 @@ object Assistant {
 
     private fun moreEn(s: ClaudeSessions.Summary?) =
         if (s != null && s.others > 0) " And ${s.others} more." else ""
+
+    /** A result as a person would say it: whole when it is whole, two places when it is not. */
+    internal fun number(v: Double): String =
+        if (v == Math.floor(v) && !v.isInfinite()) v.toLong().toString()
+        else String.format(Locale.US, "%.2f", v).trimEnd('0').trimEnd('.')
+
+    /** The same digits in Devanagari. */
+    internal fun neNumber(digits: String): String =
+        digits.map { if (it in '0'..'9') '०' + (it - '0') else it }.joinToString("")
 
     internal fun durationEn(ms: Long): String {
         val h = ms / HOUR
