@@ -285,6 +285,30 @@ class AssistantTest {
     }
 
     @Test
+    fun convertsBetweenCalendars() {
+        val f = facts(LocalDateTime.of(2026, 11, 10, 9, 0))
+        assertEquals(Command.DateIn(8, 26, true), parse("what's mangsir 26 in english"))
+        assertEquals(Command.DateIn(12, 25, false), parse("what's december 25 in nepali"))
+        assertEquals(Command.DateIn(7, 24, true), parse("कार्तिक २४ अंग्रेजीमा"))
+
+        // Mangsir 26 of the current BS year, read back as a Gregorian date.
+        val ad = Bs.toAd(Bs.fromAd(LocalDate.of(2026, 11, 10))!!.year, 8, 26)!!
+        assertEquals(
+            "Mangsir 26, 2083 is ${ad.format(java.time.format.DateTimeFormatter.ofPattern("MMMM d, yyyy", java.util.Locale.US))}.",
+            Assistant.reply(Command.DateIn(8, 26, true), Lang.EN, f),
+        )
+        val back = Assistant.reply(Command.DateIn(12, 25, false), Lang.EN, f)
+        assertTrue(back, back.startsWith("December 25, 2026 is "))
+
+        // A day that does not exist says so rather than guessing.
+        assertEquals("There's no such date.", Assistant.reply(Command.DateIn(2, 31, false), Lang.EN, f))
+
+        // The calendar must be named, or "maybe 5 minutes" would be the fifth of May.
+        assertEquals(Command.Timer(5 * min), parse("set a timer for 5 minutes"))
+        assertEquals(Command.Language(Lang.EN), parse("speak english"))
+    }
+
+    @Test
     fun echoesAndSpells() {
         val f = facts(LocalDateTime.of(2026, 11, 10, 9, 0))
         assertEquals(Command.Echo("you're a good robot"), parse("say you're a good robot"))
