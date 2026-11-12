@@ -50,6 +50,12 @@ sealed interface Command {
     /** "How many miles is 10 km?" -- [value] is already in [to]. */
     data class Convert(val value: Double, val to: Measure) : Command
 
+    /** "Say you're a good robot" -- repeated back word for word, and a quick test of the voice. */
+    data class Echo(val text: String) : Command
+
+    /** "Spell Kathmandu." */
+    data class Spell(val text: String) : Command
+
     /** "Flip a coin." */
     data object Coin : Command
 
@@ -186,12 +192,19 @@ object Assistant {
         val clock by lazy { clockIn(t) }
         val sum by lazy { calc(t) }
         val converted by lazy { convert(t) }
+        val spelled by lazy { said(t, SPELL_EN, SPELL_NE) }
+        val echoed by lazy { said(t, ECHO_EN, ECHO_NE) }
         fun has(vararg words: String) = words.any { t.contains(it) }
 
         /** Whole words only: short romanized Nepali like "sut" must not match inside English. */
         fun word(vararg words: String) = words.any { Regex("\\b" + Regex.escape(it) + "\\b").containsMatchIn(t) }
 
         return when {
+            // First of all, so that what follows is taken as words and not as
+            // an instruction: "say go to sleep" is a thing to say, not bedtime.
+            spelled != null -> Command.Spell(spelled!!)
+            echoed != null -> Command.Echo(echoed!!)
+
             // Language first, but "nepali date" is a date, not a request to switch.
             Regex("""\b(speak|talk|use|switch to|in) nepali\b""").containsMatchIn(t) || t == "nepali" ||
                 (has("नेपालीमा") && has("बोल")) -> Command.Language(Lang.NE)
@@ -506,6 +519,20 @@ object Assistant {
         return null
     }
 
+    /**
+     * What was asked for literally: English puts the verb first ("say
+     * namaste"), Nepali puts it last ("नमस्ते भन"). Null when neither pattern
+     * fits, and null for a bare "say" with nothing after it.
+     */
+    private fun said(t: String, vararg patterns: Regex): String? = patterns
+        .firstNotNullOfOrNull { p -> p.find(t)?.groupValues?.drop(1)?.firstOrNull { it.isNotBlank() } }
+        ?.trim()?.ifBlank { null }
+
+    private val ECHO_EN = Regex("""^(?:say|repeat after me|repeat)\s+(.+)$""")
+    private val ECHO_NE = Regex("""^(.+?)\s+(?:भन्नुहोस्|भन्|भन)$""")
+    private val SPELL_EN = Regex("""^spell\s+(?:out\s+)?(.+)$""")
+    private val SPELL_NE = Regex("""^(?:हिज्जे)\s+(.+)$|^(.+?)\s+हिज्जे$""")
+
     /** Every number in the sentence, in the order said. */
     private fun numbersIn(t: String): List<Long> {
         val words = t.split(' ')
@@ -685,6 +712,8 @@ object Assistant {
         }
         is Command.Calc -> if (c.result.isNaN()) "You can't divide by zero." else "That's ${number(c.result)}."
         is Command.Convert -> "That's ${number(c.value)} ${unitName(c.to, Lang.EN)}."
+        is Command.Echo -> c.text
+        is Command.Spell -> spellOut(c.text)
         Command.Coin -> if (f.random.nextBoolean()) "Heads." else "Tails."
         is Command.Dice -> "You rolled a ${roll(c, f.random)}."
         is Command.Pick -> "${pick(c, f.random)}."
@@ -746,6 +775,8 @@ object Assistant {
         is Command.Calc ->
             if (c.result.isNaN()) "शून्यले भाग जाँदैन।" else "${neNumber(number(c.result))} हुन्छ।"
         is Command.Convert -> "${neNumber(number(c.value))} ${unitName(c.to, Lang.NE)} हुन्छ।"
+        is Command.Echo -> c.text
+        is Command.Spell -> spellOut(c.text)
         Command.Coin -> if (f.random.nextBoolean()) "चित।" else "पट।"
         is Command.Dice -> "${Bs.neDigits(roll(c, f.random))} आयो।"
         is Command.Pick -> "${Bs.neDigits(pick(c, f.random))}।"
@@ -774,6 +805,13 @@ object Assistant {
 
     private fun moreEn(s: ClaudeSessions.Summary?) =
         if (s != null && s.others > 0) " And ${s.others} more." else ""
+
+    /**
+     * "node" -> "N O D E". Spaces between the letters are what makes a speech
+     * engine read them one at a time rather than as a word. Words stay apart.
+     */
+    internal fun spellOut(text: String): String = text.trim().split(Regex("""\s+"""))
+        .joinToString("  ") { word -> word.uppercase(Locale.ROOT).toCharArray().joinToString(" ") }
 
     /** Both guard against nonsense asked for out loud: a one-sided dice, a range the wrong way round. */
     private fun roll(c: Command.Dice, random: Random): Int = random.nextInt(1, c.sides.coerceIn(2, 1_000) + 1)

@@ -123,6 +123,8 @@ with or without "Hey Buddy", is still in the code, switched off: `WAKE` in `Node
 | "How much of my session is left?" | "सेसन कति बाँकी छ?" | The 5-hour window: the percentage used, and when it resets |
 | "Go to sleep" / "Wake up" | "सुत" / "उठ" | Eyes closed and dim until a tap; alerts still wake it |
 | "Speak Nepali" / "English" | "नेपालीमा बोल" / "अंग्रेजीमा बोल" | Which language it listens for first |
+| "Say anything you like" | "नमस्ते भन" | Repeats it back — and a quick way to hear whether a voice is installed |
+| "Spell Kathmandu" | "हिज्जे काठमाडौं" | One letter at a time |
 | "Flip a coin" / "Roll a dice" / "Pick a number between 1 and 10" | "सिक्का उफार" / "पासा" | Settles an argument |
 | "Help" | "मद्दत" | Lists these |
 | "Hi" / "Hello" | "नमस्ते" | Says hi back, with a wink |

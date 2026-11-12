@@ -285,6 +285,25 @@ class AssistantTest {
     }
 
     @Test
+    fun echoesAndSpells() {
+        val f = facts(LocalDateTime.of(2026, 11, 10, 9, 0))
+        assertEquals(Command.Echo("you're a good robot"), parse("say you're a good robot"))
+        assertEquals(Command.Echo("hello"), parse("repeat after me hello"))
+        // What follows is words, not an instruction: this does not go to sleep.
+        assertEquals(Command.Echo("go to sleep"), parse("say go to sleep"))
+        assertEquals("go to sleep", Assistant.reply(parse("say go to sleep"), Lang.EN, f))
+        assertEquals(Command.Echo("नमस्ते"), parse("नमस्ते भन"))
+
+        assertEquals(Command.Spell("kathmandu"), parse("spell kathmandu"))
+        assertEquals("N O D E", Assistant.reply(Command.Spell("node"), Lang.EN, f))
+        assertEquals("H I  T H E R E", Assistant.reply(Command.Spell("hi there"), Lang.EN, f))
+
+        // "say" with nothing after it is not an echo, and a question is not one either.
+        assertEquals(Command.Unknown, parse("say"))
+        assertEquals(Command.Unknown, parse("what did you say"))
+    }
+
+    @Test
     fun flipsCoinsAndRollsDice() {
         assertEquals(Command.Coin, parse("flip a coin"))
         assertEquals(Command.Coin, parse("heads or tails"))
