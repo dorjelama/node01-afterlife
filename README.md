@@ -110,7 +110,8 @@ with or without "Hey Buddy", is still in the code, switched off: `WAKE` in `Node
 | "What's the date?" | "आज कति गते?" | Gregorian and Bikram Sambat |
 | "Set a timer for 5 minutes" | "पाँच मिनेटको टाइमर" | Rings and says so when it runs out |
 | "Focus" / "Focus for 50 minutes" | "फोकस" | 25 minutes unless you say otherwise, then tells you to take a break |
-| "Cancel the timer" | "टाइमर रद्द गर" | |
+| "Cancel the timer" | "टाइमर रद्द गर" | Calls off timers and repeating nudges alike |
+| "Remind me to stretch every 45 minutes" | "हरेक ४५ मिनेटमा पानी पिउन सम्झाउनु" | Only while the camera can see you are there: a nudge you walked away from comes round again instead of piling up |
 | "Remind me in 10 minutes to stretch" | "दस मिनेटपछि पानी पिउन सम्झाउनु" | Shows and reads it out then |
 | "Remind me at 5:30 to call mom" | "५ बजे पानी पिउन सम्झाउनु" | At that time today, or tomorrow if it has passed. Without "am" or "pm" it takes whichever comes first |
 | "Wake me at 7 am" / "Set an alarm for 6:30" | "७ बजे उठाउ" | Chirps every 10 seconds until you tap it, dark room or not. Say "am" or "pm", or it takes the next time the clock reads that |

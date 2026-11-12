@@ -34,6 +34,9 @@ sealed interface Command {
 
     /** "Wake me at seven": like [RemindAt], but it keeps ringing until you tap it off. */
     data class Alarm(val hour: Int, val minute: Int, val exact: Boolean) : Command
+
+    /** "Remind me to stretch every 45 minutes": a nudge, only while you are at the desk. */
+    data class RemindEvery(val everyMs: Long, val text: String) : Command
     data class Note(val text: String) : Command
     data object ClaudeStatus : Command
 
@@ -99,6 +102,10 @@ object Assistant {
     )
 
     const val FOCUS_MS = 25 * 60_000L
+
+    /** A nudge no oftener than this, however short an interval was asked for. */
+    private const val MIN_EVERY_MS = 60_000L
+    private const val MAX_EVERY_MS = 12 * 3_600_000L
     private const val SECOND = 1_000L
     private const val MINUTE = 60_000L
     private const val HOUR = 3_600_000L
@@ -358,6 +365,11 @@ object Assistant {
     }
 
     private fun remind(t: String): Command {
+        if (Regex("""\bevery\b""").containsMatchIn(t) || t.contains("हरेक") || t.contains("harek")) {
+            // "every hour" names no number, so a bare unit counts as one of it.
+            val every = duration(t) ?: t.split(' ').firstNotNullOfOrNull(::unitOf)
+            if (every != null) return Command.RemindEvery(every.coerceIn(MIN_EVERY_MS, MAX_EVERY_MS), remindText(t))
+        }
         clockIn(t)?.let { clock ->
             return Command.RemindAt(clock.hour, clock.minute, clock.exact, remindText(t.replace(clock.phrase, " ")))
         }
@@ -376,7 +388,8 @@ object Assistant {
         }.joinToString(" ")
     } else {
         t.substringAfter("remind me", t)
-            .replace(Regex("""\b(in|after)\s+[\w\s'-]*?\b(seconds?|secs?|minutes?|mins?|hours?|hrs?)\b"""), " ")
+            .replace(Regex("""\b(in|after|every)\s+[\w\s'-]*?\b(seconds?|secs?|minutes?|mins?|hours?|hrs?)\b"""), " ")
+            .replace(Regex("""\bevery (hour|minute|second)\b"""), " ")
             // Romanized Nepali has no Devanagari to spot it by, so it lands here.
             .replace(Regex("""\b(samjhaunu|samjhau|samjha|samjhana|yaad|yad|dila\w*|malai)\b"""), " ")
             .replace(Regex("""^\s*(to|that|about)\s+"""), "")
@@ -433,12 +446,13 @@ object Assistant {
         is Command.Timer -> c.ms?.let { "Timer set for ${durationEn(it)}." }
             ?: "For how long? Say, for example, timer five minutes."
         is Command.Focus -> "Focus for ${durationEn(c.ms)}. I'll tell you when to take a break."
-        Command.CancelTimer -> if (f.timerRunning) "Timer cancelled." else "No timer is running."
+        Command.CancelTimer -> if (f.timerRunning) "Cancelled." else "There's nothing to cancel."
         is Command.Remind -> "OK. In ${durationEn(c.ms)}, I'll remind you: ${c.text}."
         is Command.RemindAt -> "OK. At ${clockEn(dueAt(f.now, c.hour, c.minute, c.exact).hour, c.minute)}, " +
             "I'll remind you: ${c.text}."
         is Command.Alarm -> "Alarm set for ${clockEn(dueAt(f.now, c.hour, c.minute, c.exact).hour, c.minute)}. " +
             "Tap me to turn it off."
+        is Command.RemindEvery -> "OK. Every ${durationEn(c.everyMs)} while you're here: ${c.text}."
         is Command.Note -> if (c.text.isBlank()) "What should I note?" else "Noted: ${c.text}."
         Command.ClaudeStatus -> when (f.claude?.state) {
             null -> "No Claude sessions right now."
@@ -488,12 +502,13 @@ object Assistant {
         is Command.Timer -> c.ms?.let { "${durationNe(it)}को टाइमर राखेँ।" }
             ?: "कति समयको? जस्तै, पाँच मिनेटको टाइमर भन्नुहोस्।"
         is Command.Focus -> "${durationNe(c.ms)} फोकस गरौं। सकिएपछि भन्छु।"
-        Command.CancelTimer -> if (f.timerRunning) "टाइमर रद्द गरेँ।" else "कुनै टाइमर चलिरहेको छैन।"
+        Command.CancelTimer -> if (f.timerRunning) "रद्द गरेँ।" else "रद्द गर्नुपर्ने केही छैन।"
         is Command.Remind -> "हुन्छ, ${durationNe(c.ms)}पछि सम्झाउँछु: ${c.text}।"
         is Command.RemindAt ->
             "हुन्छ, ${clockNe(dueAt(f.now, c.hour, c.minute, c.exact).hour, c.minute)} बजे सम्झाउँछु: ${c.text}।"
         is Command.Alarm ->
             "${clockNe(dueAt(f.now, c.hour, c.minute, c.exact).hour, c.minute)} बजे उठाउँछु। बन्द गर्न छुनुहोस्।"
+        is Command.RemindEvery -> "हुन्छ, तपाईं यहाँ हुँदा हरेक ${durationNe(c.everyMs)}मा सम्झाउँछु: ${c.text}।"
         is Command.Note -> if (c.text.isBlank()) "के नोट गरूँ?" else "नोट गरेँ: ${c.text}।"
         Command.ClaudeStatus -> when (f.claude?.state) {
             null -> "अहिले Claude चलिरहेको छैन।"
@@ -606,6 +621,6 @@ object Assistant {
     private val NE_SECONDS = listOf("सेकेन्ड", "सेकेण्ड", "सेकन्ड", "sekend")
     private val NE_MINUTES = listOf("मिनेट", "मिनट", "मिनिट", "minet")
     private val NE_HOURS = listOf("घण्टा", "घन्टा", "घंटा", "ghanta", "ghantaa")
-    private val NE_REMIND_WORDS = listOf("सम्झा", "सम्झना", "याद", "दिला", "मलाई", "पछि")
+    private val NE_REMIND_WORDS = listOf("सम्झा", "सम्झना", "याद", "दिला", "मलाई", "पछि", "हरेक")
     private val NE_NOTE_WORDS = listOf("नोट", "लेख", "गरिदे", "राखिदे")
 }

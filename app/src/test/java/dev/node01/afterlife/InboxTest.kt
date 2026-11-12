@@ -10,6 +10,42 @@ import org.junit.Test
 class InboxTest {
 
     @Test
+    fun aNudgeComesRoundAgainAndSurvivesARestart() {
+        val inbox = Inbox()
+        inbox.add("stretch", 45 * 60_000L, 0, Inbox.Kind.REMINDER, repeatMs = 45 * 60_000L)
+        assertNull(inbox.due(44 * 60_000L))
+        assertEquals("stretch", inbox.due(45 * 60_000L)?.text)
+
+        // Dismissed, it is back in three quarters of an hour rather than gone.
+        assertTrue(inbox.dismiss(45 * 60_000L))
+        assertNull(inbox.due(45 * 60_000L))
+        assertEquals("stretch", inbox.due(90 * 60_000L)?.text)
+        assertTrue("still cancellable", inbox.cancellable(45 * 60_000L))
+
+        // It keeps its interval across a save and a restart.
+        val reloaded = Inbox.decode(inbox.encode())
+        assertEquals(45 * 60_000L, reloaded.due(90 * 60_000L)?.repeatMs)
+        assertEquals("stretch", reloaded.due(90 * 60_000L)?.text)
+
+        // "Cancel" stops it for good.
+        assertTrue(reloaded.cancelTimers(0))
+        assertNull(reloaded.due(Long.MAX_VALUE / 2))
+    }
+
+    @Test
+    fun readsNotesSavedByOlderVersions() {
+        // Before notes repeated: due, kind, text.
+        val three = Inbox.decode("1000\tREMINDER\tcall mom")
+        assertEquals("call mom", three.due(1000)?.text)
+        assertEquals(Inbox.Kind.REMINDER, three.due(1000)?.kind)
+        assertEquals(0L, three.due(1000)?.repeatMs)
+        // Before they had a kind at all: due, text.
+        val two = Inbox.decode("1000\tbuy milk")
+        assertEquals("buy milk", two.due(1000)?.text)
+        assertEquals(Inbox.Kind.NOTE, two.due(1000)?.kind)
+    }
+
+    @Test
     fun countsDownForTheCornerOfTheFace() {
         val inbox = Inbox()
         assertNull("nothing running", inbox.timerLeft(0))

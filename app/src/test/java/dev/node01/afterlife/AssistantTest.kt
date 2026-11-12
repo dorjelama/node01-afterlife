@@ -284,6 +284,25 @@ class AssistantTest {
     }
 
     @Test
+    fun understandsARepeatingNudge() {
+        assertEquals(Command.RemindEvery(45 * min, "stretch"), parse("remind me to stretch every 45 minutes"))
+        assertEquals(Command.RemindEvery(60 * min, "drink water"), parse("remind me to drink water every hour"))
+        assertEquals(Command.RemindEvery(30 * min, "look away"), parse("remind me every 30 minutes to look away"))
+        assertEquals(Command.RemindEvery(20 * min, "पानी पिउन"), parse("हरेक २० मिनेटमा पानी पिउन सम्झाउनु"))
+        // Nothing absurd: a nudge is never oftener than once a minute.
+        assertEquals(60 * sec, (parse("remind me to blink every 5 seconds") as Command.RemindEvery).everyMs)
+        // A one-off reminder is still a one-off.
+        assertEquals(Command.Remind(10 * min, "stretch"), parse("remind me in 10 minutes to stretch"))
+
+        val f = facts(LocalDateTime.of(2026, 11, 10, 9, 0))
+        assertEquals(
+            "OK. Every 45 minutes while you're here: stretch.",
+            Assistant.reply(Command.RemindEvery(45 * min, "stretch"), Lang.EN, f),
+        )
+        assertTrue(Assistant.reply(Command.RemindEvery(45 * min, "स्ट्रेच"), Lang.NE, f).contains("हरेक ४५ मिनेट"))
+    }
+
+    @Test
     fun understandsAnAlarm() {
         assertEquals(Command.Alarm(7, 0, false), parse("wake me at 7"))
         assertEquals(Command.Alarm(6, 30, true), parse("set an alarm for 6:30 am"))
@@ -390,8 +409,8 @@ class AssistantTest {
         val f = facts(LocalDateTime.of(2026, 11, 10, 9, 0))
         assertEquals("Timer set for 5 minutes.", Assistant.reply(Command.Timer(5 * min), Lang.EN, f))
         assertEquals("५ मिनेटको टाइमर राखेँ।", Assistant.reply(Command.Timer(5 * min), Lang.NE, f))
-        assertEquals("No timer is running.", Assistant.reply(Command.CancelTimer, Lang.EN, f))
-        assertEquals("Timer cancelled.", Assistant.reply(Command.CancelTimer, Lang.EN, f.copy(timerRunning = true)))
+        assertEquals("There's nothing to cancel.", Assistant.reply(Command.CancelTimer, Lang.EN, f))
+        assertEquals("Cancelled.", Assistant.reply(Command.CancelTimer, Lang.EN, f.copy(timerRunning = true)))
         assertEquals(
             "OK. In 10 minutes, I'll remind you: stretch.",
             Assistant.reply(Command.Remind(10 * min, "stretch"), Lang.EN, f),

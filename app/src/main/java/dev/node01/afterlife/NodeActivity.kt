@@ -259,7 +259,14 @@ class NodeActivity : Activity() {
         // You are looking: what NODE has been showing you counts as seen.
         if (present) sessions.acknowledge(now, presentSinceMs)
 
-        val note = inbox.due(System.currentTimeMillis())
+        var note = inbox.due(System.currentTimeMillis())
+        // A nudge nobody is there for is no nudge: let it come round again,
+        // silently, rather than pile up for whenever you walk back in.
+        if (note != null && note.repeatMs > 0 && !present) {
+            inbox.dismiss(System.currentTimeMillis())
+            saveInbox()
+            note = inbox.due(System.currentTimeMillis())
+        }
         if (note != null && note != shownNote) announce(note)
         shownNote = note
         if (replyText != null && now > replyUntilMs) replyText = null
@@ -647,7 +654,7 @@ class NodeActivity : Activity() {
         val facts = Assistant.Facts(
             now = LocalDateTime.now(),
             claude = sessions.summary(now),
-            timerRunning = inbox.timerRunning(wall),
+            timerRunning = inbox.cancellable(wall),
             noteDue = inbox.due(wall) != null,
             address = wifiAddress()?.let { urlText() },
             usagePercent = usage?.shownAt(wall),
@@ -666,6 +673,8 @@ class NodeActivity : Activity() {
                 val due = Assistant.dueAt(facts.now, command.hour, command.minute, command.exact)
                 inbox.add(Assistant.wakeUp(lang), Duration.between(facts.now, due).toMillis(), wall, Inbox.Kind.ALARM)
             }
+            is Command.RemindEvery ->
+                inbox.add(command.text, command.everyMs, wall, Inbox.Kind.REMINDER, repeatMs = command.everyMs)
             is Command.Note -> inbox.add(command.text, 0L, wall, Inbox.Kind.NOTE)?.let {
                 // Shown at once; the spoken "noted" is announcement enough.
                 shownNote = inbox.due(wall)
