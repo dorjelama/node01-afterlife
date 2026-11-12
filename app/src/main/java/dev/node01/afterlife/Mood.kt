@@ -26,6 +26,9 @@ sealed interface Caption {
 
     /** Claude has been working a long time: whole minutes, so you know it has not stalled. */
     data class Working(val minutes: Int) : Caption
+
+    /** The phone itself: [number] is degrees when [hot], otherwise percent left. */
+    data class BatteryWarning(val hot: Boolean, val number: Int) : Caption
 }
 
 /** Backlight levels. FULL means the phone's own brightness setting. */
@@ -74,19 +77,25 @@ object Mood {
         val reply: String? = null,
         /** Told "go to sleep": eyes closed until a tap or a wave. */
         val voiceAsleep: Boolean = false,
+        /** The phone's own battery, or null before the first reading. */
+        val battery: Battery? = null,
     )
 
     fun decide(i: Inputs): Look {
         val c = i.claude
         val needsYou = c?.state == ClaudeSessions.State.NEEDS_YOU
+        val battery = i.battery?.takeIf { it.wrong }
         // Amber means something needs you, whatever the caption is showing.
-        val amber = i.note != null || needsYou
+        val amber = i.note != null || needsYou || battery != null
         val caption: Caption? = when {
             // You are talking to it: show what it hears.
             i.listening -> Caption.Heard(i.heard.orEmpty())
             i.note != null -> Caption.Note(i.note)
             needsYou -> Caption.NeedsYou(c!!.others)
             i.reply != null -> Caption.Reply(i.reply)
+            // Under an approval and an answer: a hot battery lasts, and those do not.
+            battery != null ->
+                if (battery.hot) Caption.BatteryWarning(true, battery.tempC) else Caption.BatteryWarning(false, battery.percent)
             c?.state == ClaudeSessions.State.DONE -> Caption.Done(c.others)
             // Last, so a long run never hides anything that matters more.
             c?.state == ClaudeSessions.State.WORKING && c.workingForMs >= LONG_RUN_MS ->

@@ -22,4 +22,7 @@
     <string name="caption_more_fmt">" +%1$d"</string>
     <!-- Claude has been working a long time. %1$d is whole minutes. -->
     <string name="caption_working_fmt">STILL WORKING · %1$dm</string>
+    <!-- The phone's own battery. %1$d is degrees Celsius, and percent left. -->
+    <string name="caption_battery_hot_fmt">BATTERY HOT · %1$d°C</string>
+    <string name="caption_battery_low_fmt">UNPLUGGED · %1$d%%</string>
 </resources>

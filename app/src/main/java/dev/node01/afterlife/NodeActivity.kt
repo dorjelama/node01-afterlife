@@ -2,8 +2,13 @@ package dev.node01.afterlife
 
 import android.Manifest
 import android.app.Activity
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.wifi.WifiManager
+import android.os.BatteryManager
 import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
@@ -112,6 +117,9 @@ class NodeActivity : Activity() {
     private var faceY = 0f
     private var faceLogMs = 0L
     private var dark = false
+
+    /** The phone's own battery, from the sticky broadcast; null until the first one. */
+    private var battery: Battery? = null
     private var knockAtMs = NEVER
     private var wincedAtMs = NEVER
 
@@ -153,6 +161,7 @@ class NodeActivity : Activity() {
         face.start()
         chirp.start()
         startSenses()
+        registerReceiver(batteryWatch, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         wifiLock?.acquire()
         startServer()
         voiceLang = runCatching { Lang.valueOf(prefs.getString(KEY_VOICE_LANG, null) ?: "") }.getOrDefault(Lang.EN)
@@ -193,6 +202,8 @@ class NodeActivity : Activity() {
         stopPresence()
         senses?.stop()
         senses = null
+        unregisterReceiver(batteryWatch)
+        battery = null
         listener?.destroy()
         listener = null
         listening = false
@@ -258,6 +269,7 @@ class NodeActivity : Activity() {
                 heard = heard,
                 reply = replyText,
                 voiceAsleep = voiceAsleep,
+                battery = battery,
             ),
         )
         if (look != lastLook) {
@@ -339,10 +351,13 @@ class NodeActivity : Activity() {
             is Caption.Heard -> c.text.ifBlank { Assistant.listening(voiceLang) } + if (listeningOnline) " · online" else ""
             is Caption.Reply -> c.text
             is Caption.Working -> getString(R.string.caption_working_fmt, c.minutes)
+            is Caption.BatteryWarning ->
+                getString(if (c.hot) R.string.caption_battery_hot_fmt else R.string.caption_battery_low_fmt, c.number)
         }
         captionView.text = text
         // Amber only for what needs you; what you said and what NODE answers stay grey.
-        val alert = look.caption is Caption.Note || look.caption is Caption.NeedsYou
+        val alert = look.caption is Caption.Note || look.caption is Caption.NeedsYou ||
+            look.caption is Caption.BatteryWarning
         captionView.setTextColor(getColor(if (alert) R.color.node_accent else R.color.node_secondary))
         captionView.visibility = if (text == null) View.INVISIBLE else View.VISIBLE
     }
@@ -777,6 +792,29 @@ class NodeActivity : Activity() {
     private fun startSenses() {
         if (senses != null) return
         senses = Senses(this, ::onKnock, ::onPoke, ::onDark, ::onShake).also { it.start() }
+    }
+
+    /**
+     * The battery broadcast is sticky, so registering it reports the current
+     * state at once. A phone that lives on a charger can cook quietly for
+     * months; this is the one thing NODE says about its own health.
+     */
+    private val batteryWatch = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val next = Battery.of(
+                tenthsC = intent.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0),
+                level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1),
+                scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1),
+                plugged = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0,
+                wasHot = battery?.hot == true,
+            )
+            if (next == battery) return
+            val wasWrong = battery?.wrong == true
+            battery = next
+            // One chirp as it goes wrong, not one per degree.
+            if (next.wrong && !wasWrong && !dark) chirp.attention()
+            reevaluate()
+        }
     }
 
     /** Independent of the camera: a busy port must not blind the face. */

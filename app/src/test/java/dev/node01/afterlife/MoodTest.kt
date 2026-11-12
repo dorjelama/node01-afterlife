@@ -170,6 +170,22 @@ class MoodTest {
     }
 
     @Test
+    fun aBatteryGoingWrongIsAmberButYieldsToAnApproval() {
+        val hot = Battery(tempC = 47, percent = 100, plugged = true, hot = true)
+        val look = Mood.decide(sitting.copy(battery = hot))
+        assertEquals(Caption.BatteryWarning(true, 47), look.caption)
+        assertTrue(look.amber)
+        // Unplugged and low reads the other way round: the percentage, not the heat.
+        val low = Battery(tempC = 30, percent = 12, plugged = false, hot = false)
+        assertEquals(Caption.BatteryWarning(false, 12), Mood.decide(sitting.copy(battery = low)).caption)
+        // A healthy battery says nothing at all.
+        assertNull(Mood.decide(sitting.copy(battery = Battery(30, 90, true, false))).caption)
+        // Claude waiting on you still comes first: that passes, a hot battery lasts.
+        val both = sitting.copy(battery = hot, claude = Summary(State.NEEDS_YOU, "x", 0, false))
+        assertEquals(Caption.NeedsYou(0), Mood.decide(both).caption)
+    }
+
+    @Test
     fun knockStartlesEvenAsleep() {
         val look = Mood.decide(away(Mood.SLEEP_MS).copy(knockAgoMs = 100))
         assertEquals(Expression.WIDE, look.expression)
