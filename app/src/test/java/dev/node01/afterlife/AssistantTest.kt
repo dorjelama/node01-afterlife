@@ -264,6 +264,65 @@ class AssistantTest {
     }
 
     @Test
+    fun understandsAClockTime() {
+        assertEquals(Command.RemindAt(5, 30, false, "call mom"), parse("remind me at 5:30 to call mom"))
+        assertEquals(Command.RemindAt(17, 30, true, "call mom"), parse("remind me at 5:30 pm to call mom"))
+        assertEquals(Command.RemindAt(7, 0, false, "stretch"), parse("remind me at 7 to stretch"))
+        assertEquals(Command.RemindAt(20, 15, true, "Reminder"), parse("remind me at 20:15"))
+        assertEquals(Command.RemindAt(0, 30, true, "Reminder"), parse("remind me at 00:30"))
+        // Noon and midnight, where the 12 has to flip.
+        assertEquals(Command.RemindAt(12, 0, true, "lunch"), parse("remind me at 12 pm about lunch"))
+        assertEquals(Command.RemindAt(0, 0, true, "Reminder"), parse("remind me at 12 am"))
+        // Nepali, in both scripts, and romanized.
+        assertEquals(Command.RemindAt(5, 0, false, "पानी पिउन"), parse("५ बजे पानी पिउन सम्झाउनु"))
+        assertEquals(Command.RemindAt(5, 30, false, "पानी पिउन"), parse("पाँच:३० बजे पानी पिउन सम्झाउनु"))
+        assertEquals(Command.RemindAt(7, 0, false, "Reminder"), parse("saat baje samjhau"))
+        // Still a relative reminder when no clock time is named.
+        assertEquals(Command.Remind(10 * min, "stretch"), parse("remind me in 10 minutes to stretch"))
+        // "at the gym" is not a time.
+        assertEquals(Command.Note("meet her at the gym"), parse("remind me to meet her at the gym"))
+    }
+
+    @Test
+    fun picksTheNextTimeTheClockReadsThat() {
+        val morning = LocalDateTime.of(2026, 11, 10, 9, 0)
+        // Said without am or pm, the sooner reading wins: 5 in the morning means this evening.
+        assertEquals(LocalDateTime.of(2026, 11, 10, 17, 0), Assistant.dueAt(morning, 5, 0, exact = false))
+        // Before either: this morning.
+        assertEquals(
+            LocalDateTime.of(2026, 11, 10, 5, 0),
+            Assistant.dueAt(LocalDateTime.of(2026, 11, 10, 3, 0), 5, 0, exact = false),
+        )
+        // After both: tomorrow morning.
+        assertEquals(
+            LocalDateTime.of(2026, 11, 11, 5, 0),
+            Assistant.dueAt(LocalDateTime.of(2026, 11, 10, 18, 0), 5, 0, exact = false),
+        )
+        // Said exactly: that hour, today if it is still coming.
+        assertEquals(LocalDateTime.of(2026, 11, 10, 17, 30), Assistant.dueAt(morning, 17, 30, exact = true))
+        assertEquals(
+            LocalDateTime.of(2026, 11, 11, 8, 0),
+            Assistant.dueAt(morning, 8, 0, exact = true),
+        )
+    }
+
+    @Test
+    fun confirmsAClockReminderInBothLanguages() {
+        val f = facts(LocalDateTime.of(2026, 11, 10, 9, 0))
+        assertEquals(
+            "OK. At 5:30 PM, I'll remind you: call mom.",
+            Assistant.reply(Command.RemindAt(5, 30, false, "call mom"), Lang.EN, f),
+        )
+        assertEquals(
+            "हुन्छ, बेलुका ५:३० बजे सम्झाउँछु: फोन गर्न।",
+            Assistant.reply(Command.RemindAt(5, 30, false, "फोन गर्न"), Lang.NE, f),
+        )
+        assertEquals("5:30 PM", Assistant.clockEn(17, 30))
+        assertEquals("12:00 AM", Assistant.clockEn(0, 0))
+        assertEquals("बिहान ९:०५", Assistant.clockNe(9, 5))
+    }
+
+    @Test
     fun answersAboutTheSessionWindow() {
         val base = facts(LocalDateTime.of(2026, 11, 10, 9, 0))
         assertEquals(Command.SessionUsage, Assistant.parse("how much of my session is left"))

@@ -1,6 +1,7 @@
 package dev.node01.afterlife
 
 import java.time.LocalDateTime
+import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
@@ -20,6 +21,16 @@ sealed interface Command {
     data class Focus(val ms: Long) : Command
     data object CancelTimer : Command
     data class Remind(val ms: Long, val text: String) : Command
+
+    /**
+     * "Remind me at half past five." [hour] is 0..23 when [exact] -- am, pm or
+     * an hour past twelve was said -- and 1..12 when it was not, for
+     * [Assistant.dueAt] to settle against the clock.
+     *
+     * shortcut: today or tomorrow only, whichever comes first; no "on Friday"
+     * or "tomorrow at 9". Upgrade when someone asks for a second day.
+     */
+    data class RemindAt(val hour: Int, val minute: Int, val exact: Boolean, val text: String) : Command
     data class Note(val text: String) : Command
     data object ClaudeStatus : Command
 
@@ -278,23 +289,88 @@ object Assistant {
         return bare
     }
 
-    private fun remind(t: String): Command {
-        val ms = duration(t)
-        val text = if (langOf(t) == Lang.NE) {
-            // Drop the reminding words and the "N minutes" phrase; what is left is the reminder.
-            val words = t.split(' ')
-            val unitAt = words.indexOfFirst { unitOf(it) != null }
-            words.filterIndexed { i, w ->
-                NE_REMIND_WORDS.none { w.startsWith(it) } && i != unitAt && !(i == unitAt - 1 && numberWord(w) != null)
-            }.joinToString(" ")
+    /**
+     * A clock time in [t], already normalised -- "at 5 30 pm", "५ बजे",
+     * "paanch baje". Null when the sentence names no hour.
+     *
+     * The colon is gone by now ([normalise] drops punctuation), so half past
+     * five arrives here as two numbers.
+     */
+    internal fun clockIn(t: String): Clock? {
+        CLOCK_EN.find(t)?.let { m ->
+            val h = m.groupValues[1].toInt()
+            val minute = m.groupValues[2].toIntOrNull() ?: 0
+            if (h > 23 || minute > 59) return null
+            val meridiem = m.groupValues[3]
+            val hour = when {
+                meridiem.startsWith("p") && h < 12 -> h + 12
+                meridiem.startsWith("a") && h == 12 -> 0
+                else -> h
+            }
+            return Clock(hour, minute, exact = meridiem.isNotEmpty() || h == 0 || h > 12, phrase = m.value)
+        }
+        // Nepali says the hour before "बजे": "पाँच बजे", "5 30 बजे".
+        val words = t.split(' ')
+        val at = words.indexOfFirst { it.startsWith("बजे") || it.startsWith("baje") || it.startsWith("बज्") }
+        if (at <= 0) return null
+        val last = numberWord(words[at - 1]) ?: return null
+        val before = words.getOrNull(at - 2)?.let(::numberWord)
+        // Two numbers running into "बजे" are an hour and its minutes.
+        val (hour, minute) = if (before != null && last <= 59 && words[at - 1].length == 2) {
+            before to last
         } else {
-            t.substringAfter("remind me", t)
-                .replace(Regex("""\b(in|after)\s+[\w\s'-]*?\b(seconds?|secs?|minutes?|mins?|hours?|hrs?)\b"""), " ")
-                .replace(Regex("""^\s*(to|that|about)\s+"""), "")
-                .replace(Regex("""\s+"""), " ")
-        }.trim().ifEmpty { if (langOf(t) == Lang.NE) "सम्झना" else "Reminder" }
+            last to 0L
+        }
+        if (hour > 23 || minute > 59) return null
+        val from = if (minute > 0L) at - 2 else at - 1
+        return Clock(
+            hour.toInt(),
+            minute.toInt(),
+            exact = hour == 0L || hour > 12,
+            phrase = words.subList(from, at + 1).joinToString(" "),
+        )
+    }
+
+    /** An hour and minute heard in a sentence, with the words they were heard in. */
+    internal data class Clock(val hour: Int, val minute: Int, val exact: Boolean, val phrase: String)
+
+    /**
+     * The next moment the clock reads [hour]:[minute], after [now]. When the
+     * hour was said without am or pm, both readings are on offer and the
+     * sooner one wins -- "remind me at five" in the morning means this evening.
+     */
+    fun dueAt(now: LocalDateTime, hour: Int, minute: Int, exact: Boolean): LocalDateTime {
+        val hours = (if (exact) listOf(hour) else listOf(hour % 12, hour % 12 + 12)).sorted()
+        val today = now.toLocalDate()
+        return hours.map { today.atTime(it, minute) }.firstOrNull { it.isAfter(now) }
+            ?: today.plusDays(1).atTime(hours.first(), minute)
+    }
+
+    private fun remind(t: String): Command {
+        clockIn(t)?.let { clock ->
+            return Command.RemindAt(clock.hour, clock.minute, clock.exact, remindText(t.replace(clock.phrase, " ")))
+        }
+        val ms = duration(t)
+        val text = remindText(t)
         return if (ms == null) Command.Note(text) else Command.Remind(ms, text)
     }
+
+    /** What is left of a reminder once the reminding words and the time are taken out. */
+    private fun remindText(t: String): String = if (langOf(t) == Lang.NE) {
+        // Drop the reminding words and the "N minutes" phrase; what is left is the reminder.
+        val words = t.split(' ')
+        val unitAt = words.indexOfFirst { unitOf(it) != null }
+        words.filterIndexed { i, w ->
+            NE_REMIND_WORDS.none { w.startsWith(it) } && i != unitAt && !(i == unitAt - 1 && numberWord(w) != null)
+        }.joinToString(" ")
+    } else {
+        t.substringAfter("remind me", t)
+            .replace(Regex("""\b(in|after)\s+[\w\s'-]*?\b(seconds?|secs?|minutes?|mins?|hours?|hrs?)\b"""), " ")
+            // Romanized Nepali has no Devanagari to spot it by, so it lands here.
+            .replace(Regex("""\b(samjhaunu|samjhau|samjha|samjhana|yaad|yad|dila\w*|malai)\b"""), " ")
+            .replace(Regex("""^\s*(to|that|about)\s+"""), "")
+            .replace(Regex("""\s+"""), " ")
+    }.trim().ifEmpty { if (langOf(t) == Lang.NE) "सम्झना" else "Reminder" }
 
     private fun noteText(t: String): String =
         if (langOf(t) == Lang.NE) {
@@ -348,6 +424,8 @@ object Assistant {
         is Command.Focus -> "Focus for ${durationEn(c.ms)}. I'll tell you when to take a break."
         Command.CancelTimer -> if (f.timerRunning) "Timer cancelled." else "No timer is running."
         is Command.Remind -> "OK. In ${durationEn(c.ms)}, I'll remind you: ${c.text}."
+        is Command.RemindAt -> "OK. At ${clockEn(dueAt(f.now, c.hour, c.minute, c.exact).hour, c.minute)}, " +
+            "I'll remind you: ${c.text}."
         is Command.Note -> if (c.text.isBlank()) "What should I note?" else "Noted: ${c.text}."
         Command.ClaudeStatus -> when (f.claude?.state) {
             null -> "No Claude sessions right now."
@@ -387,17 +465,7 @@ object Assistant {
     }
 
     private fun replyNe(c: Command, f: Facts): String = when (c) {
-        Command.Time -> {
-            val h = f.now.hour
-            val part = when (h) {
-                in 4..11 -> "बिहान"
-                in 12..15 -> "दिउँसो"
-                in 16..18 -> "बेलुका"
-                else -> "राति"
-            }
-            val h12 = if (h % 12 == 0) 12 else h % 12
-            "अहिले $part ${Bs.neDigits(h12)}:${Bs.neDigits2(f.now.minute)} बजेको छ।"
-        }
+        Command.Time -> "अहिले ${clockNe(f.now.hour, f.now.minute)} बजेको छ।"
         Command.Date -> {
             val weekday = WEEKDAYS_NE[f.now.dayOfWeek.value % 7]
             val bs = Bs.fromAd(f.now.toLocalDate())
@@ -409,6 +477,8 @@ object Assistant {
         is Command.Focus -> "${durationNe(c.ms)} फोकस गरौं। सकिएपछि भन्छु।"
         Command.CancelTimer -> if (f.timerRunning) "टाइमर रद्द गरेँ।" else "कुनै टाइमर चलिरहेको छैन।"
         is Command.Remind -> "हुन्छ, ${durationNe(c.ms)}पछि सम्झाउँछु: ${c.text}।"
+        is Command.RemindAt ->
+            "हुन्छ, ${clockNe(dueAt(f.now, c.hour, c.minute, c.exact).hour, c.minute)} बजे सम्झाउँछु: ${c.text}।"
         is Command.Note -> if (c.text.isBlank()) "के नोट गरूँ?" else "नोट गरेँ: ${c.text}।"
         Command.ClaudeStatus -> when (f.claude?.state) {
             null -> "अहिले Claude चलिरहेको छैन।"
@@ -472,6 +542,25 @@ object Assistant {
 
     /** Sunday first, as java.time's day-of-week value modulo 7. */
     private val WEEKDAYS_NE = arrayOf("आइतबार", "सोमबार", "मंगलबार", "बुधबार", "बिहीबार", "शुक्रबार", "शनिबार")
+
+    /** "5:30 PM". */
+    internal fun clockEn(hour: Int, minute: Int): String =
+        LocalTime.of(hour, minute).format(DateTimeFormatter.ofPattern("h:mm a", Locale.US))
+
+    /** "बेलुका ५:३०" -- Nepali tells the time by part of the day, not am and pm. */
+    internal fun clockNe(hour: Int, minute: Int): String {
+        val part = when (hour) {
+            in 4..11 -> "बिहान"
+            in 12..15 -> "दिउँसो"
+            in 16..18 -> "बेलुका"
+            else -> "राति"
+        }
+        val h12 = if (hour % 12 == 0) 12 else hour % 12
+        return "$part ${Bs.neDigits(h12)}:${Bs.neDigits2(minute)}"
+    }
+
+    /** `at 5`, `at 5 30`, `at 5 30 pm` -- the colon is already gone. */
+    private val CLOCK_EN = Regex("""\bat (\d{1,2})(?: (\d{2}))?(?: (am|pm|a m|p m))?\b""")
 
     private val TENS = setOf(20L, 30L, 40L, 50L)
 

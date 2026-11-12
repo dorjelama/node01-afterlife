@@ -22,6 +22,7 @@ import android.widget.TextView
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.security.SecureRandom
+import java.time.Duration
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -645,6 +646,10 @@ class NodeActivity : Activity() {
             is Command.Focus -> inbox.add(Assistant.focusDone(lang), command.ms, wall, Inbox.Kind.TIMER)
             Command.CancelTimer -> inbox.cancelTimers(wall)
             is Command.Remind -> inbox.add(command.text, command.ms, wall, Inbox.Kind.REMINDER)
+            is Command.RemindAt -> {
+                val due = Assistant.dueAt(facts.now, command.hour, command.minute, command.exact)
+                inbox.add(command.text, Duration.between(facts.now, due).toMillis(), wall, Inbox.Kind.REMINDER)
+            }
             is Command.Note -> inbox.add(command.text, 0L, wall, Inbox.Kind.NOTE)?.let {
                 // Shown at once; the spoken "noted" is announcement enough.
                 shownNote = inbox.due(wall)

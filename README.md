@@ -112,6 +112,7 @@ with or without "Hey Buddy", is still in the code, switched off: `WAKE` in `Node
 | "Focus" / "Focus for 50 minutes" | "फोकस" | 25 minutes unless you say otherwise, then tells you to take a break |
 | "Cancel the timer" | "टाइमर रद्द गर" | |
 | "Remind me in 10 minutes to stretch" | "दस मिनेटपछि पानी पिउन सम्झाउनु" | Shows and reads it out then |
+| "Remind me at 5:30 to call mom" | "५ बजे पानी पिउन सम्झाउनु" | At that time today, or tomorrow if it has passed. Without "am" or "pm" it takes whichever comes first |
 | "Take a note: buy milk" | "नोट दूध किन्नु" | A desk note, shown now |
 | "What is Claude doing?" | "Claude के गर्दैछ?" | Working, needs you, or done — and where |
 | "How much of my session is left?" | "सेसन कति बाँकी छ?" | The 5-hour window: the percentage used, and when it resets |
@@ -254,7 +255,8 @@ Everything configurable is a constant — there is no settings screen, by design
 - It cannot see in a dark room, so in the dark it sleeps rather than pretending to follow you.
 - Everything stops whenever NODE is not in front — the power button included.
 - Only one Claude Code PC is expected; sessions from several PCs work, but share one face.
-- No reminders at a set clock time yet: a note is due now or in up to 24 hours from sending.
+- A clock-time reminder reaches today or tomorrow, whichever comes first — there is no "on
+  Friday" and no "tomorrow at nine". A desk note from the page is still due now or within 24 hours.
 - No wake word: you tap or wave to talk to it, by design.
 - Voice understands a fixed set of phrasings and greetings, not free conversation.
 
