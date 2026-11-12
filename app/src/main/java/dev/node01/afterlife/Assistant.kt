@@ -66,6 +66,16 @@ sealed interface Command {
     /** "Spell Kathmandu." */
     data class Spell(val text: String) : Command
 
+    /** "Start a stopwatch", and then "how long?" */
+    data object StopwatchStart : Command
+    data object StopwatchRead : Command
+
+    /** "Louder" / "quieter": one step of the phone's media volume. */
+    data class Volume(val up: Boolean) : Command
+
+    /** "Sing." */
+    data object Sing : Command
+
     /** "Flip a coin." */
     data object Coin : Command
 
@@ -146,6 +156,8 @@ object Assistant {
         val usageResetsInMs: Long? = null,
         /** Where a coin toss or a dice roll comes from; seeded in tests. */
         val random: Random = Random.Default,
+        /** How long the stopwatch has been running, or null if none is. */
+        val stopwatchMs: Long? = null,
     )
 
     const val FOCUS_MS = 25 * 60_000L
@@ -250,6 +262,16 @@ object Assistant {
             // Before the time: "17 times 23" has "time" in it.
             sum != null -> Command.Calc(sum!!)
             converted != null -> converted!!
+
+            // Before the timer below: a stopwatch counts up, and is not one.
+            has("stopwatch", "स्टपवाच") -> Command.StopwatchStart
+            // Not a bare "कति भयो": that is how the time is asked for.
+            has("how long", "कति समय भयो", "कति समय बित्यो") -> Command.StopwatchRead
+
+            has("louder", "speak up", "volume up", "ठूलो स्वर", "ठूलो बोल") -> Command.Volume(up = true)
+            has("quieter", "softer", "quiet down", "volume down", "बिस्तारै", "सानो स्वर") ->
+                Command.Volume(up = false)
+            has("sing", "a song", "गीत", "गाउ") -> Command.Sing
 
             has("coin", "heads or tails", "सिक्का") -> Command.Coin
             has("dice", "die", "पासा") || word("roll") -> Command.Dice(numbersIn(t).firstOrNull()?.toInt() ?: 6)
@@ -776,6 +798,10 @@ object Assistant {
             val adText = ad.format(DateTimeFormatter.ofPattern("MMMM d, yyyy", Locale.US))
             if (c.nepali) "$bsText is $adText." else "$adText is $bsText."
         } ?: "There's no such date."
+        Command.StopwatchStart -> "Stopwatch started. Ask me how long."
+        Command.StopwatchRead -> f.stopwatchMs?.let { "${durationEn(it)}." } ?: "No stopwatch is running."
+        is Command.Volume -> if (c.up) "Louder." else "Quieter."
+        Command.Sing -> "La la la!"
         Command.Coin -> if (f.random.nextBoolean()) "Heads." else "Tails."
         is Command.Dice -> "You rolled a ${roll(c, f.random)}."
         is Command.Pick -> "${pick(c, f.random)}."
@@ -783,8 +809,11 @@ object Assistant {
         Command.Wake -> "I'm awake."
         Command.Dismiss -> if (f.noteDue) "Dismissed." else "There's nothing to dismiss."
         Command.Thanks -> "You're welcome!"
-        Command.Help -> "Ask me the time or the date, set a timer or a focus session, ask me to remind you, " +
-            "take a note, or ask what Claude is doing. Or just say hi."
+        Command.Help -> "Ask me the time or the date, set a timer, a focus session or an alarm, " +
+            "ask me to remind you at five or every hour, take a note, or ask what Claude is doing " +
+            "and how much of your session is left. I can do sums, convert units, flip a coin, " +
+            "spell a word, and tell you my address. Say go to sleep to close my eyes, " +
+            "or speak Nepali to switch. Or just say hi."
         Command.Address -> f.address?.let { "My address is $it" } ?: "I'm not on Wi-Fi."
         is Command.Language -> if (c.lang == Lang.NE) "अब म नेपालीमा बोल्छु।" else "OK, I'll speak English."
         Command.Hello -> "I can hear you!"
@@ -845,6 +874,10 @@ object Assistant {
                 "${Bs.neDigits(ad.dayOfMonth)}, ${Bs.neDigits(ad.year)}"
             if (c.nepali) "$bsText भनेको $adText हो।" else "$adText भनेको $bsText हो।"
         } ?: "त्यस्तो मिति छैन।"
+        Command.StopwatchStart -> "स्टपवाच सुरु भयो। कति भयो भनेर सोध्नुहोस्।"
+        Command.StopwatchRead -> f.stopwatchMs?.let { "${durationNe(it)} भयो।" } ?: "स्टपवाच चलिरहेको छैन।"
+        is Command.Volume -> if (c.up) "ठूलो स्वरमा।" else "बिस्तारै।"
+        Command.Sing -> "ला ला ला!"
         Command.Coin -> if (f.random.nextBoolean()) "चित।" else "पट।"
         is Command.Dice -> "${Bs.neDigits(roll(c, f.random))} आयो।"
         is Command.Pick -> "${Bs.neDigits(pick(c, f.random))}।"
@@ -852,7 +885,8 @@ object Assistant {
         Command.Wake -> "म ब्युँझिएँ।"
         Command.Dismiss -> if (f.noteDue) "हटाएँ।" else "हटाउनुपर्ने केही छैन।"
         Command.Thanks -> "स्वागत छ!"
-        Command.Help -> "मलाई समय, मिति, टाइमर, फोकस, सम्झना, नोट, वा Claude के गर्दैछ भनेर सोध्न सक्नुहुन्छ। नमस्ते पनि भन्न सक्नुहुन्छ।"
+        Command.Help -> "मलाई समय, मिति, टाइमर, फोकस, अलार्म, सम्झना, नोट, वा Claude के गर्दैछ भनेर सोध्न सक्नुहुन्छ। " +
+            "हिसाब, नाप रूपान्तरण, सिक्का, र ठेगाना पनि भन्छु। सुत्न भन्नुहोस्, वा अंग्रेजीमा बोल्न लगाउनुहोस्। नमस्ते पनि भन्न सक्नुहुन्छ।"
         Command.Address -> f.address?.let { "मेरो ठेगाना: $it" } ?: "म Wi-Fi मा छैन।"
         is Command.Language -> if (c.lang == Lang.NE) "अब म नेपालीमा बोल्छु।" else "OK, I'll speak English."
         Command.Hello -> "सुनें!"

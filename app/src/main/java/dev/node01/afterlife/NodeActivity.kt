@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.media.AudioManager
 import android.net.wifi.WifiManager
 import android.os.BatteryManager
 import android.os.Bundle
@@ -687,6 +688,7 @@ class NodeActivity : Activity() {
             address = wifiAddress()?.let { urlText() },
             usagePercent = usage?.shownAt(wall),
             usageResetsInMs = usage?.resetsAtMs?.minus(wall)?.takeIf { it > 0 },
+            stopwatchMs = prefs.getLong(KEY_STOPWATCH, 0L).takeIf { it > 0 }?.let { wall - it }?.takeIf { it >= 0 },
         )
         when (command) {
             is Command.Timer -> command.ms?.let { inbox.add(Assistant.timeUp(lang), it, wall, Inbox.Kind.TIMER) }
@@ -700,6 +702,13 @@ class NodeActivity : Activity() {
             is Command.Alarm -> {
                 val due = Assistant.dueAt(facts.now, command.hour, command.minute, command.exact)
                 inbox.add(Assistant.wakeUp(lang), Duration.between(facts.now, due).toMillis(), wall, Inbox.Kind.ALARM)
+            }
+            // Wall-clock, and in prefs, so it keeps counting through a screen off.
+            Command.StopwatchStart -> prefs.edit().putLong(KEY_STOPWATCH, wall).apply()
+            is Command.Volume -> adjustVolume(command.up)
+            Command.Sing -> {
+                face.play(Act.JOY)
+                chirp.sing()
             }
             is Command.RemindEvery ->
                 inbox.add(command.text, command.everyMs, wall, Inbox.Kind.REMINDER, repeatMs = command.everyMs)
@@ -733,6 +742,17 @@ class NodeActivity : Activity() {
         voiceLang = lang
         prefs.edit().putString(KEY_VOICE_LANG, lang.name).apply()
         reevaluate()
+    }
+
+    /**
+     * One step of the phone's own media volume, which is what the speech
+     * engine plays through. Nothing to store: the phone remembers it.
+     */
+    private fun adjustVolume(up: Boolean) {
+        val audio = getSystemService(AudioManager::class.java) ?: return
+        val direction = if (up) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER
+        runCatching { audio.adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, 0) }
+            .onFailure { Log.w(TAG, "volume: ${it.message}") }
     }
 
     /** Shows [words] under the eyes for a while, and speaks them if a voice for [lang] is installed. */
@@ -1092,6 +1112,7 @@ class NodeActivity : Activity() {
         const val KEY_INBOX = "inbox"
         const val KEY_VOICE_LANG = "voice_lang"
         const val KEY_USAGE = "session_usage"
+        const val KEY_STOPWATCH = "stopwatch_started"
 
         /** How long a spoken answer stays under the eyes. */
         const val REPLY_MS = 8_000L

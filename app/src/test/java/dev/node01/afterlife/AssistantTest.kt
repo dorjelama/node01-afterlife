@@ -285,6 +285,26 @@ class AssistantTest {
     }
 
     @Test
+    fun stopwatchVolumeAndSinging() {
+        val f = facts(LocalDateTime.of(2026, 11, 10, 9, 0))
+        assertEquals(Command.StopwatchStart, parse("start a stopwatch"))
+        assertEquals(Command.StopwatchRead, parse("how long"))
+        assertEquals(Command.Volume(true), parse("louder"))
+        assertEquals(Command.Volume(false), parse("quieter"))
+        assertEquals(Command.Sing, parse("sing me a song"))
+
+        assertEquals("No stopwatch is running.", Assistant.reply(Command.StopwatchRead, Lang.EN, f))
+        assertEquals(
+            "1 minute 30 seconds.",
+            Assistant.reply(Command.StopwatchRead, Lang.EN, f.copy(stopwatchMs = 90 * sec)),
+        )
+        assertEquals("५ मिनेट भयो।", Assistant.reply(Command.StopwatchRead, Lang.NE, f.copy(stopwatchMs = 5 * min)))
+
+        // A stopwatch counts up and is not a timer, however alike they sound.
+        assertEquals(Command.Timer(5 * min), parse("set a timer for 5 minutes"))
+    }
+
+    @Test
     fun convertsBetweenCalendars() {
         val f = facts(LocalDateTime.of(2026, 11, 10, 9, 0))
         assertEquals(Command.DateIn(8, 26, true), parse("what's mangsir 26 in english"))

@@ -127,6 +127,9 @@ with or without "Hey Buddy", is still in the code, switched off: `WAKE` in `Node
 | "Say anything you like" | "नमस्ते भन" | Repeats it back — and a quick way to hear whether a voice is installed |
 | "Spell Kathmandu" | "हिज्जे काठमाडौं" | One letter at a time |
 | "Flip a coin" / "Roll a dice" / "Pick a number between 1 and 10" | "सिक्का उफार" / "पासा" | Settles an argument |
+| "Start a stopwatch" / "How long?" | "स्टपवाच" / "कति समय भयो" | Counts up, and keeps counting through a screen off |
+| "Louder" / "Quieter" | "ठूलो स्वर" / "बिस्तारै" | One step of the phone's media volume |
+| "Sing" | "गीत गाऊ" | Seven notes and a bounce, which is as much singing as a dot-matrix face can manage |
 | "Help" | "मद्दत" | Lists these |
 | "Hi" / "Hello" | "नमस्ते" | Says hi back, with a wink |
 | "Good morning" / "Good afternoon" / "Good evening" | "शुभ प्रभात" / "शुभ दिन" / "शुभ साँझ" | Says it back: "Good morning!" |

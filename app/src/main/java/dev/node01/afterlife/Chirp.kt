@@ -21,20 +21,28 @@ class Chirp {
     private var attention: AudioTrack? = null
     private var done: AudioTrack? = null
     private var listen: AudioTrack? = null
+    private var tune: AudioTrack? = null
 
     fun start() {
         attention = track(tone(880.0, 0.09) + tone(1320.0, 0.13), ATTENTION_GAIN)
         done = track(tone(1046.5, 0.09) + tone(784.0, 0.16), DONE_GAIN)
         listen = track(tone(1318.5, 0.05) + tone(1760.0, 0.07), LISTEN_GAIN)
+        // Eight notes of its own, since it has no voice to sing with.
+        tune = track(
+            SONG.fold(ShortArray(0)) { pcm, (hz, beats) -> pcm + tone(hz, beats * BEAT) },
+            DONE_GAIN,
+        )
     }
 
     fun stop() {
         attention?.release()
         done?.release()
         listen?.release()
+        tune?.release()
         attention = null
         done = null
         listen = null
+        tune = null
     }
 
     /** Claude needs you, or a note is due. */
@@ -44,6 +52,12 @@ class Chirp {
 
     /** The microphone is open. */
     fun listen() = play(listen)
+
+    /** Asked to sing: a few notes, which is as much singing as a dot-matrix face can manage. */
+    fun sing() = play(tune)
+
+    /** How long the whole tune lasts, so the caller knows when it has finished. */
+    val songMs: Long get() = (SONG.sumOf { it.second } * BEAT * 1000).toLong()
 
     private fun play(track: AudioTrack?) {
         track ?: return
@@ -87,6 +101,15 @@ class Chirp {
         const val ATTENTION_GAIN = 0.5f
         const val DONE_GAIN = 0.3f
         const val LISTEN_GAIN = 0.25f
+
+        /** A beat, in seconds: brisk enough that the whole thing is over in two. */
+        const val BEAT = 0.18
+
+        /** C D E G E C, up and back: cheerful, and nobody's copyright. */
+        val SONG = listOf(
+            523.25 to 1.0, 587.33 to 1.0, 659.25 to 1.0, 783.99 to 1.5,
+            659.25 to 1.0, 783.99 to 1.0, 1046.5 to 2.0,
+        )
 
         /** A sine with short fades at both ends, so it does not click. */
         fun tone(hz: Double, seconds: Double): ShortArray {
