@@ -33,6 +33,26 @@ class ClaudeSessionsTest {
     }
 
     @Test
+    fun timesOneUnbrokenRunOfWork() {
+        val min = 60_000L
+        sessions.onEvent(event("UserPromptSubmit"), 0)
+        // Tool after tool keeps it alive without restarting the clock.
+        sessions.onEvent(event("PostToolUse"), 5 * min)
+        sessions.onEvent(event("PostToolUse"), 18 * min)
+        assertEquals(23 * min, sessions.summary(23 * min)?.workingForMs)
+
+        // An approval in the middle ends that run; carrying on starts a new one.
+        sessions.onEvent(event("PermissionRequest"), 24 * min)
+        assertEquals("not working, so nothing to time", 0L, sessions.summary(24 * min)?.workingForMs)
+        sessions.onEvent(event("PostToolUse"), 25 * min)
+        assertEquals(2 * min, sessions.summary(27 * min)?.workingForMs)
+
+        // Done is not a long run either.
+        sessions.onEvent(event("Stop"), 28 * min)
+        assertEquals(0L, sessions.summary(28 * min)?.workingForMs)
+    }
+
+    @Test
     fun notificationsThatMeanNeedsYou() {
         for (type in listOf("permission_prompt", "elicitation_dialog", "agent_needs_input")) {
             val s = ClaudeSessions()

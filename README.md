@@ -84,6 +84,9 @@ have. The phone's own page shows this block with your address filled in, and cop
   gets a **sad face for a moment**, and nothing else: no chirp, no words, and at most one
   every 30 seconds. Failures are ordinary work. Stopping a tool yourself (`is_interrupt`)
   is not one.
+- Working for more than 20 minutes without a pause shows `STILL WORKING · 23m` in grey, so a
+  long job is visibly alive rather than possibly stalled. An approval in the middle starts the
+  count again.
 - Several sessions at once: the most urgent wins and the caption counts the rest (`+1`).
 - Hooks are best-effort, so nothing is claimed forever: "working" with no event for 20
   minutes is dropped rather than shown as still busy.

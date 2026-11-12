@@ -338,6 +338,7 @@ class NodeActivity : Activity() {
             is Caption.Done -> getString(R.string.caption_done) + more(c.others)
             is Caption.Heard -> c.text.ifBlank { Assistant.listening(voiceLang) } + if (listeningOnline) " · online" else ""
             is Caption.Reply -> c.text
+            is Caption.Working -> getString(R.string.caption_working_fmt, c.minutes)
         }
         captionView.text = text
         // Amber only for what needs you; what you said and what NODE answers stay grey.

@@ -19,13 +19,25 @@ class ClaudeSessions {
      * The one thing worth showing. [others] counts further sessions in the same
      * state; [seen] is whether you have looked at NODE since it got there.
      */
-    data class Summary(val state: State, val project: String, val others: Int, val seen: Boolean)
+    data class Summary(
+        val state: State,
+        val project: String,
+        val others: Int,
+        val seen: Boolean,
+        /** How long it has been working without a pause; 0 in any other state. */
+        val workingForMs: Long = 0L,
+    )
 
     private class Session(
         var state: State,
         var project: String,
         var changedMs: Long,
         var seenMs: Long?,
+        /**
+         * When this run of work began. [changedMs] cannot say: it is pushed
+         * forward by every event, to keep a busy session from expiring.
+         */
+        var workingSinceMs: Long? = null,
     )
 
     private val sessions = LinkedHashMap<String, Session>()
@@ -58,7 +70,7 @@ class ClaudeSessions {
 
         val project = projectOf(fields[CWD])
         if (current == null) {
-            sessions[id] = Session(next, project, nowMs, null)
+            sessions[id] = Session(next, project, nowMs, null, nowMs.takeIf { next == State.WORKING })
             return next
         }
         current.project = project
@@ -70,6 +82,8 @@ class ClaudeSessions {
         current.state = next
         current.changedMs = nowMs
         current.seenMs = null
+        // A new run of work starts now; anything else ends the one before it.
+        current.workingSinceMs = nowMs.takeIf { next == State.WORKING }
         return next
     }
 
@@ -91,7 +105,8 @@ class ClaudeSessions {
             compareBy<Session>({ rank(it.state) }, { if (it.seenMs == null) 1 else 0 }, { it.changedMs }),
         ) ?: return null
         val others = sessions.values.count { it !== top && it.state == top.state }
-        return Summary(top.state, top.project, others, top.seenMs != null)
+        val workingFor = if (top.state == State.WORKING) top.workingSinceMs?.let { nowMs - it } ?: 0L else 0L
+        return Summary(top.state, top.project, others, top.seenMs != null, workingFor)
     }
 
     private fun expired(s: Session, nowMs: Long): Boolean = when (s.state) {

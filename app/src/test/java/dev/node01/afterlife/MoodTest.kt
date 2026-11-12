@@ -153,6 +153,23 @@ class MoodTest {
     }
 
     @Test
+    fun aLongRunSaysSoWithoutHidingAnythingElse() {
+        val long = Summary(State.WORKING, "node01", 0, false, workingForMs = Mood.LONG_RUN_MS + 3 * 60_000L)
+        assertEquals(Caption.Working(23), Mood.decide(sitting.copy(claude = long)).caption)
+        // A minute short of it: still nothing to say.
+        val nearly = long.copy(workingForMs = Mood.LONG_RUN_MS - 1)
+        assertNull(Mood.decide(sitting.copy(claude = nearly)).caption)
+        // A note, or what it just heard, still wins.
+        assertEquals(Caption.Note("stretch"), Mood.decide(sitting.copy(claude = long, note = "stretch")).caption)
+        assertEquals(
+            Caption.Heard("hello"),
+            Mood.decide(sitting.copy(claude = long, listening = true, heard = "hello")).caption,
+        )
+        // Grey, not amber: it is news, not something that needs you.
+        assertFalse(Mood.decide(sitting.copy(claude = long)).amber)
+    }
+
+    @Test
     fun knockStartlesEvenAsleep() {
         val look = Mood.decide(away(Mood.SLEEP_MS).copy(knockAgoMs = 100))
         assertEquals(Expression.WIDE, look.expression)

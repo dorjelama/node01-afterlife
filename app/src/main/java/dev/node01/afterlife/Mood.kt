@@ -23,6 +23,9 @@ sealed interface Caption {
 
     /** NODE's answer to what you asked. */
     data class Reply(val text: String) : Caption
+
+    /** Claude has been working a long time: whole minutes, so you know it has not stalled. */
+    data class Working(val minutes: Int) : Caption
 }
 
 /** Backlight levels. FULL means the phone's own brightness setting. */
@@ -85,6 +88,9 @@ object Mood {
             needsYou -> Caption.NeedsYou(c!!.others)
             i.reply != null -> Caption.Reply(i.reply)
             c?.state == ClaudeSessions.State.DONE -> Caption.Done(c.others)
+            // Last, so a long run never hides anything that matters more.
+            c?.state == ClaudeSessions.State.WORKING && c.workingForMs >= LONG_RUN_MS ->
+                Caption.Working((c.workingForMs / 60_000L).toInt())
             else -> null
         }
         // Shown whenever Claude waits on you, even while a desk note has the caption.
@@ -134,6 +140,12 @@ object Mood {
 
     /** How long the wide-eyed hello lasts after a real absence. */
     const val GREET_MS = 1_500L
+
+    /**
+     * Working this long without stopping: say so under the eyes. Long enough
+     * that it means a real job, not an ordinary turn.
+     */
+    const val LONG_RUN_MS = 20 * 60_000L
 
     /** Away this long: stop searching the room and get sleepy. Also what counts as a real absence. */
     const val SEARCH_MS = 2 * 60_000L

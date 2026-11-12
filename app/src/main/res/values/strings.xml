@@ -20,4 +20,6 @@
     <string name="caption_done">DONE</string>
     <!-- Appended when more sessions are in the same state. %1$d is how many. -->
     <string name="caption_more_fmt">" +%1$d"</string>
+    <!-- Claude has been working a long time. %1$d is whole minutes. -->
+    <string name="caption_working_fmt">STILL WORKING · %1$dm</string>
 </resources>
