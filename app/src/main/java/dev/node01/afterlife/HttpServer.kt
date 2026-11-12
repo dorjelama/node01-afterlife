@@ -42,11 +42,15 @@ class HttpServer(
     @Volatile
     private var socket: ServerSocket? = null
 
-    /** Throws if the port cannot be bound. */
+    /** Throws if the port cannot be bound, leaving nothing open behind it. */
     fun start() {
-        val server = ServerSocket().apply {
-            reuseAddress = true
-            bind(InetSocketAddress(PORT))
+        val server = ServerSocket()
+        try {
+            server.reuseAddress = true
+            server.bind(InetSocketAddress(PORT))
+        } catch (e: IOException) {
+            server.close()
+            throw e
         }
         socket = server
         thread(name = "node-http") {

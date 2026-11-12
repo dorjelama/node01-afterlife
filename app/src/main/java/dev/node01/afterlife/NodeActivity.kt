@@ -122,6 +122,9 @@ class NodeActivity : Activity() {
     /** What the status line would say if something were wrong; null if all is well. */
     private var problem: String? = null
 
+    /** Why the LAN server is not up, until a retry gets it up. Kept apart so the camera recovering does not hide it. */
+    private var serverProblem: String? = null
+
     /** True only while a touch that began at a screen edge is live. */
     private var barsRequestedBySwipe = false
 
@@ -196,6 +199,8 @@ class NodeActivity : Activity() {
         // Do not leave delayed callbacks behind when the screen goes off.
         statusView.removeCallbacks(heartbeat)
         statusView.removeCallbacks(retryCamera)
+        statusView.removeCallbacks(retryServer)
+        serverProblem = null
         window.decorView.removeCallbacks(reHideBars)
         super.onStop()
     }
@@ -354,7 +359,7 @@ class NodeActivity : Activity() {
      * otherwise, while a hands-free session is listening, a dim line saying so.
      */
     private fun showStatus(undimmed: Boolean) {
-        val text = problem ?: if (undimmed) tappedUrl else if (wakeSession && !woke) {
+        val text = problem ?: serverProblem ?: if (undimmed) tappedUrl else if (wakeSession && !woke) {
             getString(R.string.status_wake) + if (listeningOnline) getString(R.string.status_online) else ""
         } else {
             null
@@ -729,11 +734,22 @@ class NodeActivity : Activity() {
         server = http
         try {
             http.start()
+            serverProblem = null
         } catch (e: Exception) {
+            // The port is still held -- by a server that has not quite let go, or
+            // by something else. Do not give up: an appliance retries until it is up.
+            server = null
             val reason = "port ${HttpServer.PORT}: ${e.message}"
             Log.e(TAG, reason)
-            problem = getString(R.string.status_error_fmt, reason)
+            serverProblem = getString(R.string.status_error_fmt, reason)
+            statusView.removeCallbacks(retryServer)
+            statusView.postDelayed(retryServer, SERVER_RETRY_MS)
         }
+    }
+
+    private val retryServer = Runnable {
+        startServer()
+        reevaluate()
     }
 
     private fun displayDegrees(): Int = when (display?.rotation) {
@@ -945,6 +961,9 @@ class NodeActivity : Activity() {
 
         /** Wait before reopening a failed camera; long enough not to thrash. */
         const val RETRY_MS = 5_000L
+
+        /** Wait before trying the LAN port again: it is usually free within moments. */
+        const val SERVER_RETRY_MS = 2_000L
 
         /**
          * Grace period before the system bars are hidden again after they
