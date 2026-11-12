@@ -118,6 +118,7 @@ with or without "Hey Buddy", is still in the code, switched off: `WAKE` in `Node
 | "Wake me at 7 am" / "Set an alarm for 6:30" | "७ बजे उठाउ" | Chirps every 10 seconds until you tap it, dark room or not. Say "am" or "pm", or it takes the next time the clock reads that |
 | "Take a note: buy milk" | "नोट दूध किन्नु" | A desk note, shown now |
 | "What's 17 times 23?" / "15% of 2400" | "१० जोड ५" | Two numbers and one operator — plus, minus, times, divided by, percent of |
+| "10 km in miles" / "70 kilos in pounds" | "२० डिग्री फरेनहाइटमा" | km↔miles, kg↔pounds, °C↔°F, and Nepali↔Indian rupees at the fixed 1.6 peg. Whole numbers |
 | "What is Claude doing?" | "Claude के गर्दैछ?" | Working, needs you, or done — and where |
 | "How much of my session is left?" | "सेसन कति बाँकी छ?" | The 5-hour window: the percentage used, and when it resets |
 | "Go to sleep" / "Wake up" | "सुत" / "उठ" | Eyes closed and dim until a tap; alerts still wake it |

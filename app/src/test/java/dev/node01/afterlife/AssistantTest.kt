@@ -284,6 +284,27 @@ class AssistantTest {
     }
 
     @Test
+    fun convertsUnits() {
+        val f = facts(LocalDateTime.of(2026, 11, 10, 9, 0))
+        assertEquals(Measure.MILE, (parse("10 km in miles") as Command.Convert).to)
+        assertEquals(6.21371, (parse("10 km in miles") as Command.Convert).value, 0.0001)
+        // The unit beside the number is what you have, wherever the other one sits.
+        assertEquals(154.32, (parse("how many pounds is 70 kilos") as Command.Convert).value, 0.01)
+        // No target named: the pair's other half.
+        assertEquals(Measure.KM, (parse("5 miles") as Command.Convert).to)
+        assertEquals(68.0, (parse("20 degrees celsius in fahrenheit") as Command.Convert).value, 0.001)
+        assertEquals(100.0, (parse("212 fahrenheit in celsius") as Command.Convert).value, 0.001)
+        // Rupees are pegged, so this needs no network and cannot go stale.
+        assertEquals(1000.0, (parse("1600 nepali rupees in indian") as Command.Convert).value, 0.001)
+        assertEquals(160.0, (parse("100 indian rupees") as Command.Convert).value, 0.001)
+
+        assertEquals("That's 6.21 miles.", Assistant.reply(parse("10 km in miles"), Lang.EN, f))
+        assertEquals("६.२१ माइल हुन्छ।", Assistant.reply(parse("10 km in miles"), Lang.NE, f))
+        // A sentence with no number is not a conversion.
+        assertEquals(Command.Unknown, parse("miles and miles"))
+    }
+
+    @Test
     fun doesArithmetic() {
         val f = facts(LocalDateTime.of(2026, 11, 10, 9, 0))
         assertEquals(Command.Calc(391.0), parse("what's 17 times 23"))

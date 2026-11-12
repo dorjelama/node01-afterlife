@@ -45,6 +45,9 @@ sealed interface Command {
 
     /** "What's 17 times 23?" [result] is NaN for a division by zero. */
     data class Calc(val result: Double) : Command
+
+    /** "How many miles is 10 km?" -- [value] is already in [to]. */
+    data class Convert(val value: Double, val to: Measure) : Command
     data object Sleep : Command
     data object Wake : Command
     data object Dismiss : Command
@@ -59,6 +62,19 @@ sealed interface Command {
     data object Address : Command
     data class Language(val lang: Lang) : Command
     data object Unknown : Command
+}
+
+/** The units NODE converts between, in pairs: each [family] has exactly two. */
+enum class Measure(val family: Int) {
+    KM(0), MILE(0),
+    KG(1), LB(1),
+    C(2), F(2),
+
+    /** Nepali and Indian rupees, pegged at 1.6, so this needs no network and never goes stale. */
+    NPR(3), INR(3),
+    ;
+
+    val other: Measure get() = entries.first { it.family == family && it != this }
 }
 
 enum class Greeting {
@@ -157,6 +173,7 @@ object Assistant {
         val greeting = greeting(t)
         val clock by lazy { clockIn(t) }
         val sum by lazy { calc(t) }
+        val converted by lazy { convert(t) }
         fun has(vararg words: String) = words.any { t.contains(it) }
 
         /** Whole words only: short romanized Nepali like "sut" must not match inside English. */
@@ -192,6 +209,7 @@ object Assistant {
 
             // Before the time: "17 times 23" has "time" in it.
             sum != null -> Command.Calc(sum!!)
+            converted != null -> converted!!
 
             has("time", "o'clock", "समय", "बज्यो", "बजे", "टाइम", "bajyo", "baje", "kati baj") ||
                 word("samay", "samaya") -> Command.Time
@@ -487,6 +505,77 @@ object Assistant {
         return null
     }
 
+    /**
+     * "10 km in miles", "how many pounds is 70 kilos", "२० डिग्री फरेनहाइटमा".
+     * The unit beside the number is what you have; any other unit of the same
+     * kind in the sentence is what you want, and without one it is the pair's
+     * other half. Whole numbers only: [normalise] drops the decimal point.
+     */
+    internal fun convert(t: String): Command.Convert? {
+        val words = t.split(' ')
+        val units = words.mapIndexedNotNull { i, w ->
+            UNIT_WORDS.entries.firstOrNull { w.startsWith(it.key) }?.let { i to it.value }
+        }
+        if (units.isEmpty()) return null
+        val found = words.indices.firstNotNullOfOrNull { i -> calcNumberAt(words, i) } ?: return null
+        // The one right after the number is what you have -- "how many pounds
+        // is 70 kilos" starts with the unit you want, not the one you have.
+        val from = (units.firstOrNull { it.first >= found.second } ?: units.first()).second
+        val to = units.map { it.second }.firstOrNull { it != from && it.family == from.family } ?: from.other
+        return Command.Convert(converted(found.first.toDouble(), from, to), to)
+    }
+
+    private fun converted(v: Double, from: Measure, to: Measure): Double = when {
+        from == to -> v
+        from == Measure.KM -> v * 0.621371
+        from == Measure.MILE -> v * 1.609344
+        from == Measure.KG -> v * 2.2046226
+        from == Measure.LB -> v * 0.45359237
+        from == Measure.C -> v * 9 / 5 + 32
+        from == Measure.F -> (v - 32) * 5 / 9
+        from == Measure.NPR -> v / NPR_PER_INR
+        else -> v * NPR_PER_INR
+    }
+
+    /** The peg has held since 1993; it is a fixed rate, not a market one. */
+    private const val NPR_PER_INR = 1.6
+
+    /** Matched on the start of a word, so plurals and Nepali suffixes come free. */
+    private val UNIT_WORDS: Map<String, Measure> = mapOf(
+        "kilometre" to Measure.KM, "kilometer" to Measure.KM, "km" to Measure.KM, "किलोमिटर" to Measure.KM,
+        "mile" to Measure.MILE, "माइल" to Measure.MILE,
+        "kilogram" to Measure.KG, "kilo" to Measure.KG, "kg" to Measure.KG, "केजी" to Measure.KG, "किलो" to Measure.KG,
+        "pound" to Measure.LB, "lbs" to Measure.LB, "lb" to Measure.LB, "पाउन्ड" to Measure.LB,
+        "celsius" to Measure.C, "centigrade" to Measure.C, "सेल्सियस" to Measure.C,
+        "fahrenheit" to Measure.F, "फरेनहाइट" to Measure.F,
+        "nepali" to Measure.NPR, "npr" to Measure.NPR, "रुपैयाँ" to Measure.NPR, "रुपिया" to Measure.NPR,
+        "indian" to Measure.INR, "inr" to Measure.INR, "भारु" to Measure.INR, "भारतीय" to Measure.INR,
+    )
+
+    internal fun unitName(unit: Measure, lang: Lang): String = if (lang == Lang.NE) {
+        when (unit) {
+            Measure.KM -> "किलोमिटर"
+            Measure.MILE -> "माइल"
+            Measure.KG -> "केजी"
+            Measure.LB -> "पाउन्ड"
+            Measure.C -> "डिग्री सेल्सियस"
+            Measure.F -> "डिग्री फरेनहाइट"
+            Measure.NPR -> "नेपाली रुपैयाँ"
+            Measure.INR -> "भारतीय रुपैयाँ"
+        }
+    } else {
+        when (unit) {
+            Measure.KM -> "kilometres"
+            Measure.MILE -> "miles"
+            Measure.KG -> "kilos"
+            Measure.LB -> "pounds"
+            Measure.C -> "degrees Celsius"
+            Measure.F -> "degrees Fahrenheit"
+            Measure.NPR -> "Nepali rupees"
+            Measure.INR -> "Indian rupees"
+        }
+    }
+
     private val OPERATORS: Map<String, Char> = mapOf(
         "plus" to '+', "add" to '+', "जोड" to '+',
         "minus" to '-', "less" to '-', "घटाउ" to '-',
@@ -560,6 +649,7 @@ object Assistant {
                 (f.usageResetsInMs?.let { " It resets in ${durationEn(it)}." } ?: "")
         }
         is Command.Calc -> if (c.result.isNaN()) "You can't divide by zero." else "That's ${number(c.result)}."
+        is Command.Convert -> "That's ${number(c.value)} ${unitName(c.to, Lang.EN)}."
         Command.Sleep -> "Good night."
         Command.Wake -> "I'm awake."
         Command.Dismiss -> if (f.noteDue) "Dismissed." else "There's nothing to dismiss."
@@ -617,6 +707,7 @@ object Assistant {
         }
         is Command.Calc ->
             if (c.result.isNaN()) "शून्यले भाग जाँदैन।" else "${neNumber(number(c.result))} हुन्छ।"
+        is Command.Convert -> "${neNumber(number(c.value))} ${unitName(c.to, Lang.NE)} हुन्छ।"
         Command.Sleep -> "शुभरात्री।"
         Command.Wake -> "म ब्युँझिएँ।"
         Command.Dismiss -> if (f.noteDue) "हटाएँ।" else "हटाउनुपर्ने केही छैन।"
