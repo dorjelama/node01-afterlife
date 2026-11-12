@@ -264,6 +264,43 @@ class AssistantTest {
     }
 
     @Test
+    fun answersAboutTheSessionWindow() {
+        val base = facts(LocalDateTime.of(2026, 11, 10, 9, 0))
+        assertEquals(Command.SessionUsage, Assistant.parse("how much of my session is left"))
+        assertEquals(Command.SessionUsage, Assistant.parse("when does my claude session reset"))
+        assertEquals(Command.SessionUsage, Assistant.parse("what's my usage"))
+        // Asking what Claude is doing is still that, not the window.
+        assertEquals(Command.ClaudeStatus, Assistant.parse("what is claude doing"))
+
+        assertTrue(Assistant.reply(Command.SessionUsage, Lang.EN, base).startsWith("I haven't been told"))
+        assertEquals(
+            "Your session is 80% used. It resets in 2 hours 10 minutes.",
+            Assistant.reply(Command.SessionUsage, Lang.EN, base.copy(usagePercent = 80, usageResetsInMs = 130 * min)),
+        )
+        // No reset time known: the percentage alone, with no dangling sentence.
+        assertEquals(
+            "Your session is 42% used.",
+            Assistant.reply(Command.SessionUsage, Lang.EN, base.copy(usagePercent = 42)),
+        )
+        assertEquals(
+            "तपाईंको सेसन ४२% प्रयोग भयो।",
+            Assistant.reply(Command.SessionUsage, Lang.NE, base.copy(usagePercent = 42)),
+        )
+    }
+
+    @Test
+    fun warnsOnceAtEachUsageMark() {
+        assertEquals(0, Assistant.usagePassed(0))
+        assertEquals(0, Assistant.usagePassed(79))
+        assertEquals(80, Assistant.usagePassed(80))
+        assertEquals(80, Assistant.usagePassed(94))
+        assertEquals(95, Assistant.usagePassed(95))
+        assertEquals(95, Assistant.usagePassed(100))
+        assertEquals("Session 95% used.", Assistant.usageWarning(95, Lang.EN))
+        assertEquals("सेसन ८०% प्रयोग भयो।", Assistant.usageWarning(80, Lang.NE))
+    }
+
+    @Test
     fun confirmsWhatItDid() {
         val f = facts(LocalDateTime.of(2026, 11, 10, 9, 0))
         assertEquals("Timer set for 5 minutes.", Assistant.reply(Command.Timer(5 * min), Lang.EN, f))

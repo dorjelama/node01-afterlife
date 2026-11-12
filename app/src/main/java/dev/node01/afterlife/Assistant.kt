@@ -22,6 +22,9 @@ sealed interface Command {
     data class Remind(val ms: Long, val text: String) : Command
     data class Note(val text: String) : Command
     data object ClaudeStatus : Command
+
+    /** "How much of my session is left?", "when does my session reset?" */
+    data object SessionUsage : Command
     data object Sleep : Command
     data object Wake : Command
     data object Dismiss : Command
@@ -75,6 +78,10 @@ object Assistant {
         val timerRunning: Boolean,
         val noteDue: Boolean,
         val address: String?,
+        /** Claude's 5-hour window, as the PC's status line last reported it. */
+        val usagePercent: Int? = null,
+        /** How long until that window resets, or null if it was never said. */
+        val usageResetsInMs: Long? = null,
     )
 
     const val FOCUS_MS = 25 * 60_000L
@@ -147,6 +154,9 @@ object Assistant {
 
             Regex("""^(take a note|note|write down|remember)\b""").containsMatchIn(t) || has("नोट") ->
                 Command.Note(noteText(t))
+
+            // Before Claude's own state: "when does my Claude session reset" asks about the window.
+            has("session", "usage", "quota", "सेसन", "कोटा") -> Command.SessionUsage
 
             has("claude", "cloud", "clod", "क्लड", "क्लाउड", "क्लोड") -> Command.ClaudeStatus
 
@@ -225,6 +235,16 @@ object Assistant {
 
     /** While the microphone is open. */
     fun listening(lang: Lang) = if (lang == Lang.NE) "सुन्दैछु…" else "Listening…"
+
+    /** Said once as the session window passes [percent]: the number, not advice. */
+    fun usageWarning(percent: Int, lang: Lang): String =
+        if (lang == Lang.NE) "सेसन ${Bs.neDigits(percent)}% प्रयोग भयो।" else "Session $percent% used."
+
+    /** The points NODE speaks up at, lowest first. */
+    val USAGE_WARN_AT = listOf(80, 95)
+
+    /** The highest of [USAGE_WARN_AT] that [percent] has reached, or 0. */
+    fun usagePassed(percent: Int): Int = USAGE_WARN_AT.lastOrNull { percent >= it } ?: 0
 
     // -- understanding ----------------------------------------------------
 
@@ -336,6 +356,12 @@ object Assistant {
             ClaudeSessions.State.WORKING -> "Claude is working."
             ClaudeSessions.State.DONE -> "Claude has finished."
         } + moreEn(f.claude)
+        Command.SessionUsage -> if (f.usagePercent == null) {
+            "I haven't been told how much of your session is used."
+        } else {
+            "Your session is ${f.usagePercent}% used." +
+                (f.usageResetsInMs?.let { " It resets in ${durationEn(it)}." } ?: "")
+        }
         Command.Sleep -> "Good night."
         Command.Wake -> "I'm awake."
         Command.Dismiss -> if (f.noteDue) "Dismissed." else "There's nothing to dismiss."
@@ -389,6 +415,12 @@ object Assistant {
             ClaudeSessions.State.NEEDS_YOU -> "Claude लाई तपाईं चाहिएको छ।"
             ClaudeSessions.State.WORKING -> "Claude काम गर्दैछ।"
             ClaudeSessions.State.DONE -> "Claude ले काम सक्यो।"
+        }
+        Command.SessionUsage -> if (f.usagePercent == null) {
+            "सेसन कति प्रयोग भयो मलाई थाहा छैन।"
+        } else {
+            "तपाईंको सेसन ${Bs.neDigits(f.usagePercent)}% प्रयोग भयो।" +
+                (f.usageResetsInMs?.let { " ${durationNe(it)}पछि रिसेट हुन्छ।" } ?: "")
         }
         Command.Sleep -> "शुभरात्री।"
         Command.Wake -> "म ब्युँझिएँ।"

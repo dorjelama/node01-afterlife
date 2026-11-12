@@ -38,7 +38,7 @@ version lives on at `9a42e35`.
 | **Claude Code** | Through Claude Code hooks on your PC. While Claude works the eyes narrow and look toward the PC. When Claude needs approval or has a question: amber, wide, an amber **!!** beside them, `NEEDS YOU`, one chirp. When it finishes: a happy bounce, then **^ ^** eyes, `DONE`, a softer chirp — held until you have actually looked |
 | **Desk notes** | Send a short note from any browser, now or in a few minutes — or say "remind me in 10 minutes to stretch". It shows in amber and is read out; tap or wave to dismiss it |
 | **Says what you send** | `POST /say` with `text=…`, from the page or one line of curl in a script, and NODE reads it out once: "Build done." Grey under the eyes, nothing to dismiss, quiet in a dark room. Nepali text is spoken in Nepali |
-| **Session %** | How much of your 5-hour Claude session limit is used, as `/usage` shows it: just the number, such as `42%`, in grey dot digits in the top-left corner. It comes from Claude Code's status line, which gets it only on Pro and Max plans and only runs in the terminal version (not the VS Code panel); the page has the lines to add to your status line script. They send the percentage and when the window resets, nothing else. After the reset it shows `0%` |
+| **Session %** | How much of your 5-hour Claude session limit is used, as `/usage` shows it: just the number, such as `42%`, in grey dot digits in the top-left corner. It comes from Claude Code's status line, which gets it only on Pro and Max plans and only runs in the terminal version (not the VS Code panel); the page has the lines to add to your status line script. They send the percentage and when the window resets, nothing else. After the reset it shows `0%`. At **80%** and **95%** it says so once, and you can ask "how much of my session is left?" |
 
 Amber means one thing: something needs you. Everything else is cyan dots on black.
 
@@ -107,6 +107,7 @@ with or without "Hey Buddy", is still in the code, switched off: `WAKE` in `Node
 | "Remind me in 10 minutes to stretch" | "दस मिनेटपछि पानी पिउन सम्झाउनु" | Shows and reads it out then |
 | "Take a note: buy milk" | "नोट दूध किन्नु" | A desk note, shown now |
 | "What is Claude doing?" | "Claude के गर्दैछ?" | Working, needs you, or done — and where |
+| "How much of my session is left?" | "सेसन कति बाँकी छ?" | The 5-hour window: the percentage used, and when it resets |
 | "Go to sleep" / "Wake up" | "सुत" / "उठ" | Eyes closed and dim until a tap; alerts still wake it |
 | "Speak Nepali" / "English" | "नेपालीमा बोल" / "अंग्रेजीमा बोल" | Which language it listens for first |
 | "Help" | "मद्दत" | Lists these |

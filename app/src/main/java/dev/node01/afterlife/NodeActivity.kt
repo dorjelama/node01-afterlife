@@ -55,6 +55,9 @@ class NodeActivity : Activity() {
 
     /** Claude's 5-hour session usage, last sent by the PC's status line; kept across restarts. */
     private var usage: SessionUsage? = null
+
+    /** The highest usage mark already spoken, so each is said once per window. */
+    private var usageWarnedAt = 0
     private val chirp = Chirp()
     private val chatter = Chatter()
 
@@ -154,6 +157,8 @@ class NodeActivity : Activity() {
         startServer()
         voiceLang = runCatching { Lang.valueOf(prefs.getString(KEY_VOICE_LANG, null) ?: "") }.getOrDefault(Lang.EN)
         usage = SessionUsage.decode(prefs.getString(KEY_USAGE, null))
+        // Where it already stood at startup is not news: note it without saying it.
+        usageWarnedAt = usage?.let { Assistant.usagePassed(it.shownAt(System.currentTimeMillis())) } ?: 0
         speaker = Speaker(this)
         listener = Listener(this, voiceEvents)
         if (granted(Manifest.permission.CAMERA)) {
@@ -348,9 +353,14 @@ class NodeActivity : Activity() {
      */
     private fun announce(note: Inbox.Note) {
         if (note.kind == Inbox.Kind.NOTE && dark) return
+        alert(note.text, Assistant.langOf(note.text))
+    }
+
+    /** One chirp for attention, then [words] once it has finished. */
+    private fun alert(words: String, lang: Lang) {
         pauseWake(SPEAK_AFTER_CHIRP_MS + SPEECH_START_MS)
         chirp.attention()
-        statusView.postDelayed({ speaker?.say(note.text, Assistant.langOf(note.text)) }, SPEAK_AFTER_CHIRP_MS)
+        statusView.postDelayed({ speaker?.say(words, lang) }, SPEAK_AFTER_CHIRP_MS)
     }
 
     private fun more(others: Int) = if (others > 0) getString(R.string.caption_more_fmt, others) else ""
@@ -580,6 +590,8 @@ class NodeActivity : Activity() {
             timerRunning = inbox.timerRunning(wall),
             noteDue = inbox.due(wall) != null,
             address = wifiAddress()?.let { urlText() },
+            usagePercent = usage?.shownAt(wall),
+            usageResetsInMs = usage?.resetsAtMs?.minus(wall)?.takeIf { it > 0 },
         )
         when (command) {
             is Command.Timer -> command.ms?.let { inbox.add(Assistant.timeUp(lang), it, wall, Inbox.Kind.TIMER) }
@@ -686,11 +698,7 @@ class NodeActivity : Activity() {
         val words = Inbox.clean(text) ?: return
         replyText = words
         replyUntilMs = SystemClock.elapsedRealtime() + REPLY_MS
-        if (TALK && !dark && !listening) {
-            pauseWake(SPEAK_AFTER_CHIRP_MS + SPEECH_START_MS)
-            chirp.attention()
-            statusView.postDelayed({ speaker?.say(words, Assistant.langOf(words)) }, SPEAK_AFTER_CHIRP_MS)
-        }
+        if (TALK && !dark && !listening) alert(words, Assistant.langOf(words))
         reevaluate()
     }
 
@@ -703,7 +711,28 @@ class NodeActivity : Activity() {
         if (next == usage) return
         usage = next
         prefs.edit().putString(KEY_USAGE, next.encode()).apply()
+        warnUsage(next.shownAt(System.currentTimeMillis()))
         reevaluate()
+    }
+
+    /**
+     * Speaks up once as the session window passes each of
+     * [Assistant.USAGE_WARN_AT]. A drop means the window reset, so the next one
+     * is worth saying again. Quiet in a dark room, and never over a sentence
+     * being heard.
+     */
+    private fun warnUsage(percent: Int) {
+        val passed = Assistant.usagePassed(percent)
+        if (passed <= usageWarnedAt) {
+            usageWarnedAt = passed
+            return
+        }
+        usageWarnedAt = passed
+        if (dark || listening) return
+        val words = Assistant.usageWarning(passed, voiceLang)
+        replyText = words
+        replyUntilMs = SystemClock.elapsedRealtime() + REPLY_MS
+        if (TALK) alert(words, voiceLang) else chirp.attention()
     }
 
     // -- camera, sensors, server ---------------------------------------------
