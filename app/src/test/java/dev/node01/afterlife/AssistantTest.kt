@@ -321,6 +321,18 @@ class AssistantTest {
     }
 
     @Test
+    fun acceptsWhatAnEnglishRecognizerMakesOfANepaliMonth() {
+        // Said aloud to an en-GB recognizer, "Mangsir" comes back as "monkey".
+        assertEquals(Command.DateIn(8, 26, true), parse("what's monkey 26 in English"))
+        // It also comes back as "your", which is far too ordinary a word to
+        // accept as a month: that one stays unanswered rather than guessed at.
+        assertEquals(Command.Unknown, parse("what's your 26 in English"))
+        assertEquals(Command.Greet(Greeting.NAME), parse("what's your name"))
+        // Spoken in Nepali, the month arrives in Devanagari and is exact.
+        assertEquals(Command.DateIn(8, 26, true), parse("मंसिर २६ अंग्रेजीमा"))
+    }
+
+    @Test
     fun askingForSomethingInALanguageDoesNotSwitchToIt() {
         // Answering a question must never change a setting: "in english" is
         // how you ask for a translation, not how you ask NODE to change over.

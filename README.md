@@ -276,6 +276,10 @@ Everything configurable is a constant — there is no settings screen, by design
   Friday" and no "tomorrow at nine". A desk note from the page is still due now or within 24 hours.
 - No wake word: you tap or wave to talk to it, by design.
 - Voice understands a fixed set of phrasings and greetings, not free conversation.
+- A Nepali month name spoken into the English recognizer comes back as whatever English word
+  sounds nearest — "Mangsir" arrives as "monkey". A few of those are accepted, but the
+  reliable way to ask is to say "speak Nepali" first, so the recognizer returns Devanagari.
+  The other direction, "what's December 25 in Nepali", works in English.
 - Sums are two numbers and one operator; conversions are whole numbers. Neither takes a chain.
 - A repeating nudge only fires while the camera can see you, so it is no use for anything
   that must happen whether you are at the desk or not.

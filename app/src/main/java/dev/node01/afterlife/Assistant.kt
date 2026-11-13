@@ -607,6 +607,10 @@ object Assistant {
         // How they are also commonly written.
         putAll(mapOf("baisakh" to 1, "jeth" to 2, "asar" to 3, "sawan" to 4, "bhadau" to 5, "asoj" to 6))
         putAll(mapOf("mangshir" to 8, "marga" to 8, "push" to 9, "falgun" to 11, "chait" to 12))
+        // What an English recognizer actually returns when it hears a Nepali
+        // month and has no such word: the nearest English one. Harmless to
+        // accept, since a date needs a calendar named and a day number too.
+        putAll(mapOf("monkey" to 8, "mansir" to 8, "munsir" to 8, "mongsir" to 8, "mug" to 10, "poos" to 9))
     }
 
     private val AD_MONTHS: Map<String, Int> = (1..12).associateBy(
