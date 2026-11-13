@@ -20,6 +20,10 @@ class HttpServerTest {
         assertEquals(Route.Face, HttpServer.route("POST", "/$key/face", key))
         assertEquals(Route.Say, HttpServer.route("POST", "/$key/say", key))
         assertEquals(Route.Usage, HttpServer.route("POST", "/$key/usage", key))
+        assertEquals(Route.Task, HttpServer.route("POST", "/$key/task", key))
+        assertEquals(Route.Pc, HttpServer.route("POST", "/$key/pc", key))
+        assertEquals(Route.Cam, HttpServer.route("GET", "/$key/cam", key))
+        assertEquals("the page's cache-buster", Route.Cam, HttpServer.route("GET", "/$key/cam?1731500000000", key))
     }
 
     @Test
@@ -28,6 +32,9 @@ class HttpServerTest {
         assertEquals(Route.NotFound, HttpServer.route("GET", "/$key/claude", key))
         assertEquals(Route.NotFound, HttpServer.route("PUT", "/$key/note", key))
         assertEquals(Route.NotFound, HttpServer.route("GET", "/$key/say", key))
+        assertEquals(Route.NotFound, HttpServer.route("GET", "/$key/task", key))
+        assertEquals(Route.NotFound, HttpServer.route("GET", "/$key/pc", key))
+        assertEquals(Route.NotFound, HttpServer.route("POST", "/$key/cam", key))
     }
 
     @Test
@@ -40,7 +47,7 @@ class HttpServerTest {
 
     @Test
     fun noOtherPathsUnderTheKey() {
-        for (rest in listOf("video", "audio", "rec/", "claude/", "claude/../note", "../$key/note", "index.html")) {
+        for (rest in listOf("video", "audio", "rec/", "cam/", "camera", "claude/", "claude/../note", "../$key/note", "index.html")) {
             assertEquals(rest, Route.NotFound, HttpServer.route("POST", "/$key/$rest", key))
             assertEquals(rest, Route.NotFound, HttpServer.route("GET", "/$key/$rest", key))
         }

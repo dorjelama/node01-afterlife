@@ -3,6 +3,8 @@ package dev.node01.afterlife
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.ImageFormat
+import android.graphics.Rect
+import android.graphics.YuvImage
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
@@ -12,19 +14,26 @@ import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.TotalCaptureResult
 import android.hardware.camera2.params.OutputConfiguration
 import android.hardware.camera2.params.SessionConfiguration
+import android.media.Image
 import android.media.ImageReader
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.SystemClock
 import android.util.Log
+import java.io.ByteArrayOutputStream
 
 /**
  * Whether you are at the desk, and where: the front camera's own face
  * detection, done by the camera hardware rather than by a library.
  *
- * Frames exist only to keep the camera running. Each one is handed straight
- * back, unread; nothing is stored, served or logged. Only the rectangle of
- * the largest face leaves this class, as a gaze direction.
+ * Frames exist to keep the camera running, and are handed straight back
+ * unread -- unless someone has the page's camera view open. Then a few a
+ * second are turned upright, compressed to JPEG and handed to [live] for
+ * that viewer; still nothing is stored or logged. The frames are the small
+ * ones face detection already runs on, so the view is low resolution by
+ * construction. While hand tracking is on, frames also go to [hands], which
+ * reads them on the phone. Otherwise only the rectangle of the largest face
+ * leaves this class, as a gaze direction.
  *
  * Camera callbacks and results run on a private thread; [onFace] and
  * [onNoFace] are delivered on the main thread, at most every [REPORT_MS].
@@ -38,6 +47,8 @@ class Presence(
     private val onFace: (x: Float, y: Float) -> Unit,
     private val onNoFace: () -> Unit,
     private val onError: (String) -> Unit,
+    /** The page's camera view: filled only while it has a viewer. */
+    private val live: Hub,
 ) {
     @Volatile
     private var running = false
@@ -47,8 +58,13 @@ class Presence(
     private var camera: CameraDevice? = null
     private var session: CameraCaptureSession? = null
 
+    /** Hand tracking, while that mode is on: frames are read on the phone for it, and go nowhere else. */
+    @Volatile
+    var hands: HandTracker? = null
+
     /** Only touched on [thread]. */
     private var lastReportMs = 0L
+    private var lastLiveMs = 0L
 
     /**
      * Throws if the front camera cannot do face detection at all. Call [stop]
@@ -88,7 +104,7 @@ class Presence(
         val handler = Handler(thread.looper)
         val reader = ImageReader.newInstance(size.width, size.height, ImageFormat.YUV_420_888, 2)
         this.reader = reader
-        reader.setOnImageAvailableListener({ it.acquireLatestImage()?.close() }, handler)
+        reader.setOnImageAvailableListener({ onFrame(it, rotation) }, handler)
 
         val results = object : CameraCaptureSession.CaptureCallback() {
             override fun onCaptureCompleted(s: CameraCaptureSession, r: CaptureRequest, result: TotalCaptureResult) {
@@ -170,6 +186,35 @@ class Presence(
         reader = null
     }
 
+    /**
+     * On [thread]. Handed straight back, unread, unless someone is watching
+     * or hand tracking is ready for a frame. [rotation] turns the frame
+     * upright, as a photo from this camera would be.
+     */
+    private fun onFrame(reader: ImageReader, rotation: Int) {
+        val image = reader.acquireLatestImage() ?: return
+        val now = SystemClock.elapsedRealtime()
+        val tracker = hands?.takeIf { it.ready }
+        val watched = live.hasSubscribers && now - lastLiveMs >= LIVE_INTERVAL_MS
+        if (tracker == null && !watched) return image.close()
+        val w = image.width
+        val h = image.height
+        try {
+            // Copied out first, so the camera has its buffer back before the compressing starts.
+            val upright = rotateNv21(image.use { nv21(it) }, w, h, rotation)
+            val (uw, uh) = if (((rotation % 360) + 360) % 180 == 0) w to h else h to w
+            tracker?.offer(upright, uw, uh, now)
+            if (!watched) return
+            lastLiveMs = now
+            val jpeg = ByteArrayOutputStream(JPEG_BUFFER_BYTES)
+            YuvImage(upright, ImageFormat.NV21, uw, uh, null).compressToJpeg(Rect(0, 0, uw, uh), LIVE_QUALITY, jpeg)
+            live.publish(jpeg.toByteArray())
+        } catch (e: RuntimeException) {
+            // A bad frame costs that frame, never the face detection.
+            Log.w(TAG, "camera view frame dropped: ${e.message}")
+        }
+    }
+
     private fun report(block: () -> Unit) {
         context.mainExecutor.execute { if (running) block() }
     }
@@ -191,6 +236,67 @@ class Presence(
         const val REPORT_MS = 100L
         const val NO_FACE_REPORT_MS = 500L
         private const val JOIN_MS = 1_000L
+
+        /** The camera view: about 10 frames a second, not 100 ms, or frames that land a hair early are skipped. */
+        private const val LIVE_INTERVAL_MS = 90L
+        private const val LIVE_QUALITY = 70
+        private const val JPEG_BUFFER_BYTES = 32 * 1024
+
+        /**
+         * An NV21 frame [w] by [h], turned clockwise by [degrees] (any multiple
+         * of 90); a quarter turn swaps its width and height. Luma moves pixel by
+         * pixel, and each chroma pair, which covers two by two pixels, as one.
+         */
+        internal fun rotateNv21(src: ByteArray, w: Int, h: Int, degrees: Int): ByteArray {
+            val d = ((degrees % 360) + 360) % 360
+            if (d == 0) return src
+            // Where (x, y) of a cw by ch plane lands in the turned plane, as an index.
+            fun to(x: Int, y: Int, cw: Int, ch: Int) = when (d) {
+                90 -> x * ch + (ch - 1 - y)
+                180 -> (ch - 1 - y) * cw + (cw - 1 - x)
+                else -> (cw - 1 - x) * ch + y
+            }
+            val out = ByteArray(src.size)
+            for (y in 0 until h) for (x in 0 until w) out[to(x, y, w, h)] = src[y * w + x]
+            val luma = w * h
+            for (y in 0 until h / 2) {
+                for (x in 0 until w / 2) {
+                    val from = luma + (y * (w / 2) + x) * 2
+                    val at = luma + to(x, y, w / 2, h / 2) * 2
+                    out[at] = src[from]
+                    out[at + 1] = src[from + 1]
+                }
+            }
+            return out
+        }
+
+        /**
+         * YUV_420_888 to the NV21 layout YuvImage wants, honouring row and pixel
+         * strides: this phone's Qualcomm HAL pads rows and interleaves chroma
+         * (pixelStride 2), other vendors hand back planar chroma (pixelStride 1).
+         */
+        private fun nv21(image: Image): ByteArray {
+            val w = image.width
+            val h = image.height
+            val out = ByteArray(w * h * 3 / 2)
+            val (yPlane, uPlane, vPlane) = image.planes
+            var pos = 0
+            val y = yPlane.buffer
+            for (row in 0 until h) {
+                y.position(row * yPlane.rowStride)
+                y.get(out, pos, w)
+                pos += w
+            }
+            val u = uPlane.buffer
+            val v = vPlane.buffer
+            for (row in 0 until h / 2) {
+                for (col in 0 until w / 2) {
+                    out[pos++] = v.get(row * vPlane.rowStride + col * vPlane.pixelStride)
+                    out[pos++] = u.get(row * uPlane.rowStride + col * uPlane.pixelStride)
+                }
+            }
+            return out
+        }
 
         /**
          * Flip either axis if, on a new phone or mount, the eyes look away from

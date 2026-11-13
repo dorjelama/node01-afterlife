@@ -33,4 +33,20 @@ class PresenceTest {
         // Sensor orientation 270 plus display rotation 90 is this phone in landscape: no turn.
         assertGaze(-0.6f, 0.4f, 0.8f, 0.7f, 360)
     }
+
+    /**
+     * A 4×2 NV21 frame, luma 0..7 row by row, then two chroma pairs -- (10, 11)
+     * under the left half and (20, 21) under the right -- turned upright for the camera view.
+     */
+    @Test
+    fun turnsCameraViewFramesUpright() {
+        val frame = byteArrayOf(0, 1, 2, 3, 4, 5, 6, 7, 10, 11, 20, 21)
+        fun turned(degrees: Int) = Presence.rotateNv21(frame, 4, 2, degrees).toList()
+        // A quarter clockwise: each column, read bottom up, becomes a row; now 2 wide and 4 tall.
+        assertEquals(listOf<Byte>(4, 0, 5, 1, 6, 2, 7, 3, 10, 11, 20, 21), turned(90))
+        assertEquals(listOf<Byte>(7, 6, 5, 4, 3, 2, 1, 0, 20, 21, 10, 11), turned(180))
+        assertEquals(listOf<Byte>(3, 7, 2, 6, 1, 5, 0, 4, 20, 21, 10, 11), turned(270))
+        // This phone in landscape: 270 + 90, no turn at all.
+        assertEquals(frame.toList(), turned(360))
+    }
 }

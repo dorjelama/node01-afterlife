@@ -16,6 +16,7 @@ import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.floor
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -54,13 +55,21 @@ class FaceView @JvmOverloads constructor(
     private val bgColor = color(R.color.node_bg)
     private val eyeColor = color(R.color.node_eye)
     private val amberColor = color(R.color.node_accent)
+    private val handColor = color(R.color.node_hand)
 
     private val offPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = color(R.color.node_dot_off) }
+    private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = bgColor }
     private val dotPaint = roundDots()
     private val zPaint = roundDots()
 
-    /** The session usage readout: information, so grey, like the captions. */
-    private val usagePaint = roundDots().apply { color = color(R.color.node_secondary) }
+    /** Readouts are information, so grey, like the captions. */
+    private val readoutPaint = roundDots().apply { color = color(R.color.node_secondary) }
+
+    /** The same at [SMALL] dots: the session usage and the time, in the top corners. */
+    private val smallPaint = roundDots().apply { color = color(R.color.node_secondary) }
+
+    /** The PC's load: small and fainter still, there when you look for it and not before. */
+    private val pcPaint = roundDots().apply { color = color(R.color.node_faint) }
     private val glowPaint = Paint(Paint.FILTER_BITMAP_FLAG)
 
     // The panel, rebuilt only when the size changes.
@@ -93,7 +102,13 @@ class FaceView @JvmOverloads constructor(
     private var usagePercent: Int? = null
     private var timerText: String? = null
     private var clockText: String? = null
-    private val glyphDots = FloatArray(2 * GLYPH_W * GLYPH_H * MAX_GLYPHS)
+    private var timeText: String? = null
+
+    /** Hands from [HandTracker], drawn in place of the eyes while there are any. */
+    private var handPoints: FloatArray? = null
+    private var handAspect = 4f / 3f
+    private var pcStats: PcStats? = null
+    private val glyphDots = FloatArray(2 * ICON_W * GLYPH_H * MAX_GLYPHS)
 
     /** Starts asleep, so the first look shown is a waking up. */
     private var current = Expression.CLOSED.params
@@ -209,6 +224,32 @@ class FaceView @JvmOverloads constructor(
         kick()
     }
 
+    /**
+     * Hands as [HandTracker] reports them, in white dots in place of the eyes:
+     * [points] are x, y pairs, 0..1 of a frame [aspect] wide to 1 tall. Null or
+     * empty gives the eyes back.
+     */
+    fun showHands(points: FloatArray?, aspect: Float) {
+        if (points == null && handPoints == null) return
+        handPoints = points
+        handAspect = aspect
+        kick()
+    }
+
+    /** The time, `h:mm`, small in the top-right corner while no timer has it; null shows nothing. */
+    fun showTime(text: String?) {
+        if (text == timeText) return
+        timeText = text
+        kick()
+    }
+
+    /** The PC's CPU, memory and disk, each an icon and a number, small in the bottom-left; null shows nothing. */
+    fun showPc(stats: PcStats?) {
+        if (stats == pcStats) return
+        pcStats = stats
+        kick()
+    }
+
     /** A hello: two quick blinks. */
     fun doubleBlink() {
         blink()
@@ -247,7 +288,7 @@ class FaceView @JvmOverloads constructor(
         }
     }
 
-    /** Picks a new spot to look at while wandering, glances away while focused, fidgets while idle. */
+    /** Picks a new spot to look at while wandering, glances away or reads while focused, fidgets while idle. */
     private val idleTick = object : Runnable {
         override fun run() {
             if (!running) return
@@ -268,10 +309,15 @@ class FaceView @JvmOverloads constructor(
                     }
                     retarget()
                 }
-                l.gaze is Gaze.Mostly -> if (Random.nextFloat() < GLANCE_CHANCE) {
-                    glancing = true
-                    retarget()
-                    postDelayed(endGlance, GLANCE_MS)
+                // Claude working: a glance at you now and then, if you are there, or something to do.
+                l.expression == Expression.FOCUSED -> when {
+                    glancing -> Unit
+                    l.gaze is Gaze.Mostly && Random.nextFloat() < GLANCE_CHANCE -> {
+                        glancing = true
+                        retarget()
+                        postDelayed(endGlance, GLANCE_MS)
+                    }
+                    Random.nextFloat() < WORK_CHANCE -> work()
                 }
                 l.expression == Expression.NEUTRAL && !l.amber && fidget == null ->
                     if (Random.nextFloat() < FIDGET_CHANCE) fidget()
@@ -286,6 +332,16 @@ class FaceView @JvmOverloads constructor(
             0 -> play(Act.WINK)
             1 -> holdFidget(Expression.CURIOUS, 1_600L)
             2 -> holdFidget(Expression.SQUINT, 1_100L)
+            else -> doubleBlink()
+        }
+    }
+
+    /** Something to do while Claude works, so the focused stare is never the same for long. */
+    private fun work() {
+        when (Random.nextInt(4)) {
+            0 -> play(Act.READ)
+            1 -> play(Act.THINK)
+            2 -> play(Act.NARROW)
             else -> doubleBlink()
         }
     }
@@ -357,7 +413,9 @@ class FaceView @JvmOverloads constructor(
 
         dotPaint.strokeWidth = 2f * dotR
         zPaint.strokeWidth = 2f * dotR
-        usagePaint.strokeWidth = 2f * dotR
+        readoutPaint.strokeWidth = 2f * dotR
+        smallPaint.strokeWidth = 2f * dotR * SMALL
+        pcPaint.strokeWidth = 2f * dotR * SMALL
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -462,6 +520,29 @@ class FaceView @JvmOverloads constructor(
                 val s = (t - DIZZY_SHAKE_AT) / (1f - DIZZY_SHAKE_AT)
                 if (s in 0f..1f) shake = sin(2.0 * PI * 2.0 * s).toFloat() * NO_SHAKE * (1f - s)
             }
+            Act.READ -> {
+                // Along a line in dot-sized steps, a flick back, then along the next one down.
+                val e = envelope(t, 0.1f, 0.15f)
+                val lines = t * READ_LINES
+                val line = min(lines.toInt(), READ_LINES - 1)
+                val along = lines - line
+                val x = if (along < READ_ALONG) along / READ_ALONG else 1f - smooth((along - READ_ALONG) / (1f - READ_ALONG))
+                gx += (2f * x - 1f) * READ_X * e
+                gy += line * READ_DROP * e
+            }
+            Act.THINK -> {
+                // Up and away from the PC, a little wider, as if the answer were on the ceiling.
+                val e = envelope(t, 0.25f, 0.25f)
+                gx += (THINK_X - gx) * e
+                gy += (THINK_Y - gy) * e
+                hei += (1f - hei) * THINK_OPEN * e
+                lid *= 1f - e
+            }
+            Act.NARROW -> {
+                val e = envelope(t, 0.3f, 0.45f)
+                hei *= 1f - NARROW_BY * e
+                squint += (NARROW_SQUINT - squint) * e
+            }
             Act.ZZZ, null -> Unit
         }
 
@@ -485,7 +566,9 @@ class FaceView @JvmOverloads constructor(
         val baseH = h * EYE_H
         on.fill(0)
         var rightCol = cCol
-        for (i in 0..1) {
+        // A hand in view takes the eyes' place; with none, the face carries on.
+        val handPts = handPoints?.takeIf { it.isNotEmpty() }
+        if (handPts != null) lightHands(handPts, handAspect) else for (i in 0..1) {
             val side = SIDES[i]
             val col = cCol + (if (i == 0) -halfCols else halfCols) + dots(eyeDx[i] * h)
             // A tilted head lifts and enlarges one eye.
@@ -517,7 +600,7 @@ class FaceView @JvmOverloads constructor(
         }
         // The right eye's outermost column, and the top row of a fully open eye.
         val rightEdge = rightCol + floor(baseW * p.width / 2f / pitch).toInt()
-        if (p.exclaim > 0.5f) addBangs(rightEdge, cRow - floor(baseH * p.height / 2f / pitch).toInt())
+        if (p.exclaim > 0.5f && handPts == null) addBangs(rightEdge, cRow - floor(baseH * p.height / 2f / pitch).toInt())
 
         var n = 0
         var minC = cols
@@ -537,17 +620,31 @@ class FaceView @JvmOverloads constructor(
             }
         }
 
-        val colour = blend(eyeColor, amberColor, p.amber)
+        val colour = if (handPts != null) handColor else blend(eyeColor, amberColor, p.amber)
         canvas.drawBitmap(panel, 0f, 0f, null)
         if (n > 0) drawGlow(canvas, glowMap, colour, minC, maxC, minR, maxR)
         dotPaint.color = colour
         if (n > 0) canvas.drawPoints(lit, 0, n, dotPaint)
-        if (playing == Act.ZZZ) drawZs(canvas, t, x0 + (rightEdge + 1) * pitch, cy - 2f * pitch, colour)
-        usagePercent?.let { drawGlyphs(canvas, "${it.coerceIn(0, 100)}%", USAGE_COL, USAGE_ROW, usagePaint) }
-        // The countdown sits opposite the usage, out of the eyes' way.
-        timerText?.let { drawGlyphs(canvas, it, dots(width.toFloat()) - glyphsWidth(it) - USAGE_COL, USAGE_ROW, usagePaint) }
+        if (playing == Act.ZZZ && handPts == null) drawZs(canvas, t, x0 + (rightEdge + 1) * pitch, cy - 2f * pitch, colour)
+        usagePercent?.let { drawSmall(canvas, "${it.coerceIn(0, 100)}%", USAGE_COL, USAGE_ROW, smallPaint) }
+        // The PC's load mirrors the usage in the bottom corner, its last row as far from the edge.
+        pcStats?.let {
+            val row = rows - 1 - USAGE_ROW - ((GLYPH_H - 1) * SMALL).roundToInt()
+            drawSmall(canvas, "c${it.cpu} r${it.ram} d${it.disk}", USAGE_COL, row, pcPaint)
+        }
+        // Opposite the usage, out of the eyes' way: a countdown while one runs, the time otherwise,
+        // its last dot level with the usage's first from the other edge.
+        val timer = timerText
+        if (timer != null) {
+            drawGlyphs(canvas, timer, dots(width.toFloat()) - glyphsWidth(timer) - USAGE_COL, USAGE_ROW, readoutPaint)
+        } else {
+            timeText?.let {
+                val col = cols - 1 - USAGE_COL - ceil((glyphsWidth(it) - 1) * SMALL).toInt()
+                drawSmall(canvas, it, col, USAGE_ROW, smallPaint)
+            }
+        }
         // A knock in the dark: the time alone, where the eyes would be.
-        clockText?.let { drawGlyphs(canvas, it, (dots(width.toFloat()) - glyphsWidth(it)) / 2, CLOCK_ROW, usagePaint) }
+        clockText?.let { drawGlyphs(canvas, it, (dots(width.toFloat()) - glyphsWidth(it)) / 2, CLOCK_ROW, readoutPaint) }
 
         if (blinking || hopping || playing != null || current != target || stretch > 0f) {
             val onlyZs = playing == Act.ZZZ && !blinking && !hopping && current == target && stretch == 0f
@@ -634,6 +731,42 @@ class FaceView @JvmOverloads constructor(
                 val a = x2 + y * y - 1f
                 if (a * a * a - x2 * y * y * y <= 0f) light(col + i, row + j, row + j)
             }
+        }
+    }
+
+    /**
+     * Each hand as lit dots: its bones as lines, its fingertips as small
+     * crosses. The camera's frame is fitted to the panel's height and centred,
+     * so a hand keeps its proportions.
+     */
+    private fun lightHands(pts: FloatArray, aspect: Float) {
+        val h = height.toFloat()
+        val frameW = h * aspect
+        val left = (width - frameW) / 2f
+        fun col(i: Int) = (left + pts[2 * i] * frameW - x0) / pitch
+        fun row(i: Int) = (pts[2 * i + 1] * h - y0) / pitch
+        for (hand in 0 until pts.size / (2 * HandTracker.POINTS)) {
+            val b = hand * HandTracker.POINTS
+            for (k in BONES.indices step 2) {
+                lightLine(col(b + BONES[k]), row(b + BONES[k]), col(b + BONES[k + 1]), row(b + BONES[k + 1]))
+            }
+            for (tip in TIPS) {
+                val c = col(b + tip).roundToInt()
+                val r = row(b + tip).roundToInt()
+                light(c - 1, r, r)
+                light(c + 1, r, r)
+                light(c, r - 1, r + 1)
+            }
+        }
+    }
+
+    /** Lights the dots along a line from ([c0], [r0]) to ([c1], [r1]), in panel dots. */
+    private fun lightLine(c0: Float, r0: Float, c1: Float, r1: Float) {
+        val steps = max(ceil(max(abs(c1 - c0), abs(r1 - r0))).toInt(), 1)
+        for (s in 0..steps) {
+            val t = s.toFloat() / steps
+            val r = (r0 + (r1 - r0) * t).roundToInt()
+            light((c0 + (c1 - c0) * t).roundToInt(), r, r)
         }
     }
 
@@ -737,26 +870,38 @@ class FaceView @JvmOverloads constructor(
     }
 
     /**
-     * [text] in 5×7 dot digits with its top-left dot at [col], [row], a dot
-     * between glyphs. Digits, `%` and `:` only; anything else is a gap.
+     * [text] in 5×7 dot glyphs with its top-left dot on the panel's dot at
+     * [col], [row], a dot between glyphs, each dot [scale] of a panel dot.
+     * Digits, `%`, `:`, a space and the PC icons of [GLYPH_CHARS]; anything
+     * else is a gap.
      */
-    private fun drawGlyphs(canvas: Canvas, text: String, col: Int, row: Int, paint: Paint) {
+    private fun drawGlyphs(canvas: Canvas, text: String, col: Int, row: Int, paint: Paint, scale: Float = 1f) {
+        val n = layoutGlyphs(text, col, row, scale)
+        if (n > 0) canvas.drawPoints(glyphDots, 0, n, paint)
+    }
+
+    /** Lays [text] out as [drawGlyphs] draws it, into [glyphDots]; returns how many of it are used. */
+    private fun layoutGlyphs(text: String, col: Int, row: Int, scale: Float): Int {
+        val step = pitch * scale
+        val left = x0 + col * pitch
+        val top = y0 + row * pitch
         var n = 0
-        var at = col
+        var at = 0
         for (ch in text.take(MAX_GLYPHS)) {
             if (ch == ':') {
                 // Two dots of its own, so a clock reads 9:42 and not 9 : 42.
                 for (r in intArrayOf(2, 4)) {
-                    glyphDots[n++] = x0 + at * pitch
-                    glyphDots[n++] = y0 + (row + r) * pitch
+                    glyphDots[n++] = left + at * step
+                    glyphDots[n++] = top + r * step
                 }
             } else {
                 glyphOf(ch)?.let { glyph ->
+                    val w = glyph.size / GLYPH_H
                     for (r in 0 until GLYPH_H) {
-                        for (c in 0 until GLYPH_W) {
-                            if (glyph[r * GLYPH_W + c]) {
-                                glyphDots[n++] = x0 + (at + c) * pitch
-                                glyphDots[n++] = y0 + (row + r) * pitch
+                        for (c in 0 until w) {
+                            if (glyph[r * w + c]) {
+                                glyphDots[n++] = left + (at + c) * step
+                                glyphDots[n++] = top + r * step
                             }
                         }
                     }
@@ -764,16 +909,42 @@ class FaceView @JvmOverloads constructor(
             }
             at += glyphWidth(ch) + 1
         }
+        return n
+    }
+
+    private fun glyphOf(ch: Char): BooleanArray? = GLYPH_CHARS.indexOf(ch).takeIf { it >= 0 }?.let { GLYPHS[it] }
+
+    private fun glyphWidth(ch: Char) = when (ch) {
+        ':' -> COLON_W
+        ' ' -> SPACE_W
+        else -> glyphOf(ch)?.let { it.size / GLYPH_H } ?: GLYPH_W
+    }
+
+    /**
+     * [text] at [SMALL] dots, over the panel. Off the panel's pitch, its dots
+     * would land on unlit ones and run together with them, so only the
+     * unlit dots a lit one would touch are blacked out. Every other unlit dot
+     * stays, and the panel carries on behind the readout.
+     */
+    private fun drawSmall(canvas: Canvas, text: String, col: Int, row: Int, paint: Paint) {
+        val n = layoutGlyphs(text, col, row, SMALL)
+        // Centre to centre, closer than this and the two would touch: both radii and a sliver.
+        val clear = pitch * (DOT * (1f + SMALL) + SMALL_GAP)
+        for (k in 0 until n step 2) {
+            val x = glyphDots[k]
+            val y = glyphDots[k + 1]
+            val c = ((x - x0) / pitch).roundToInt()
+            val r = ((y - y0) / pitch).roundToInt()
+            for (gc in c - 1..c + 1) {
+                for (gr in r - 1..r + 1) {
+                    val gx = x0 + gc * pitch
+                    val gy = y0 + gr * pitch
+                    if (hypot(gx - x, gy - y) < clear) canvas.drawCircle(gx, gy, dotR + 1f, bgPaint)
+                }
+            }
+        }
         if (n > 0) canvas.drawPoints(glyphDots, 0, n, paint)
     }
-
-    private fun glyphOf(ch: Char): BooleanArray? = when {
-        ch in '0'..'9' -> GLYPHS[ch - '0']
-        ch == '%' -> GLYPHS[PERCENT]
-        else -> null
-    }
-
-    private fun glyphWidth(ch: Char) = if (ch == ':') COLON_W else GLYPH_W
 
     /** How wide [text] is, in dots, as [drawGlyphs] lays it out. */
     private fun glyphsWidth(text: String): Int =
@@ -877,25 +1048,69 @@ class FaceView @JvmOverloads constructor(
         const val Z_RISE_DOTS = 2f
         const val Z_ALPHA = 220.0
 
+        /** A hand's bones, as pairs of MediaPipe's point numbers: thumb, the four fingers, then the palm. */
+        val BONES = intArrayOf(
+            0, 1, 1, 2, 2, 3, 3, 4,
+            0, 5, 5, 6, 6, 7, 7, 8,
+            9, 10, 10, 11, 11, 12,
+            13, 14, 14, 15, 15, 16,
+            0, 17, 17, 18, 18, 19, 19, 20,
+            5, 9, 9, 13, 13, 17,
+        )
+
+        /** The fingertips, thumb first. */
+        val TIPS = intArrayOf(4, 8, 12, 16, 20)
+
+        // Working: reading two lines, how far along each and how much lower the next, in gaze units.
+        const val READ_LINES = 2
+        const val READ_ALONG = 0.8f
+        const val READ_X = 0.2f
+        const val READ_DROP = 0.25f
+
+        // Thinking: where it looks, away from the PC and up, and how far the eyes open again.
+        const val THINK_X = -0.3f * Mood.PC_SIDE
+        const val THINK_Y = -0.7f
+        const val THINK_OPEN = 0.5f
+
+        // Narrowing: how much shorter, and how far the lower lids come up.
+        const val NARROW_BY = 0.3f
+        const val NARROW_SQUINT = 0.2f
+
         // The session usage readout: where its top-left dot sits, out of the eyes' way.
         const val USAGE_COL = 2
         const val USAGE_ROW = 1
 
+        /** The corner readouts, usage and the PC's load, at a third of the panel's dot size: there, not in the way. */
+        const val SMALL = 0.35f
+
+        /** How far, in panel dots, a small readout's dots keep clear of the unlit ones they pass. */
+        const val SMALL_GAP = 0.06f
+
         /** The night clock's top row: level with the eyes, which are closed under it. */
         const val CLOCK_ROW = 16
 
-        /** Dot digits, five wide and seven tall, as on an LED panel. */
+        /** Dot glyphs, five wide and seven tall, as on an LED panel; the PC icons are up to nine wide. */
         const val GLYPH_W = 5
         const val GLYPH_H = 7
-        const val PERCENT = 10
+        const val ICON_W = 9
 
-        /** A colon is two dots wide of nothing but itself. */
+        /** A colon is two dots wide of nothing but itself; a space, between the PC's three numbers, two. */
         const val COLON_W = 1
+        const val SPACE_W = 2
 
-        /** The longest readout: "24:59". */
-        const val MAX_GLYPHS = 6
+        /** The longest readout: the PC's "c100 r100 d100". */
+        const val MAX_GLYPHS = 14
 
-        /** 0-9, then "%": each a row of five, top to bottom. */
+        /** What each of [GLYPHS] draws, in order: the PC's icons are c, r and d. */
+        const val GLYPH_CHARS = "0123456789%crd"
+
+        /**
+         * 0-9 and "%", each a row of five, top to bottom; then the PC icons,
+         * solid where the digits are drawn in outline, so none can be taken
+         * for a number -- a chip with pins on every side, a memory stick on
+         * its contacts, a disk as a disc with its centre hole; a cylinder read
+         * as an 8 -- each mirror-symmetric.
+         */
         val GLYPHS: Array<BooleanArray> = arrayOf(
             ".###." + "#...#" + "#...#" + "#...#" + "#...#" + "#...#" + ".###.",
             "..#.." + ".##.." + "..#.." + "..#.." + "..#.." + "..#.." + ".###.",
@@ -908,6 +1123,9 @@ class FaceView @JvmOverloads constructor(
             ".###." + "#...#" + "#...#" + ".###." + "#...#" + "#...#" + ".###.",
             ".###." + "#...#" + "#...#" + ".####" + "....#" + "...#." + ".##..",
             "##..." + "##..#" + "...#." + "..#.." + ".#..." + "#..##" + "...##",
+            "..#.#.." + ".#####." + "#######" + ".#####." + "#######" + ".#####." + "..#.#..",
+            "........." + "#########" + "#########" + "#########" + "#.#.#.#.#" + "#.#.#.#.#" + ".........",
+            "..#####.." + ".#######." + "#########" + "####.####" + "#########" + ".#######." + "..#####..",
         ).map { s -> BooleanArray(s.length) { s[it] == '#' } }.toTypedArray()
 
         // Motion.
@@ -928,6 +1146,7 @@ class FaceView @JvmOverloads constructor(
         const val GLANCE_MS = 1_200L
         const val SCAN_CHANCE = 0.2f
         const val FIDGET_CHANCE = 0.08f
+        const val WORK_CHANCE = 0.25f
         const val ZZZ_CHANCE = 0.3f
 
         fun nextBlinkMs() = Random.nextLong(2_500L, 6_000L)

@@ -115,9 +115,9 @@ class Inbox(notes: List<Note> = emptyList()) {
         }
 
         /** One line, no control characters, trimmed and capped. Null if nothing is left. */
-        internal fun clean(text: String): String? =
+        internal fun clean(text: String, maxChars: Int = MAX_CHARS): String? =
             text.map { if (it.isISOControl()) ' ' else it }.joinToString("")
-                .replace(Regex(" {2,}"), " ").trim().take(MAX_CHARS).trim()
+                .replace(Regex(" {2,}"), " ").trim().take(maxChars).trim()
                 .takeIf { it.isNotEmpty() }
     }
 }

@@ -8,10 +8,14 @@
          visible, so the screen reads as a panel of dots rather than empty black. -->
     <color name="node_eye">#FF3CF0EE</color>
     <color name="node_dot_off">#FF171717</color>
+    <!-- Hand tracking: your hand in white dots, in place of the eyes. -->
+    <color name="node_hand">#FFF2F2F2</color>
 
     <!-- Monochrome for everything that is merely information. -->
     <color name="node_secondary">#FFC4C4C4</color>
     <color name="node_dim">#FF7A7A7A</color>
+    <!-- Dimmer still: the PC's load, there when you look for it and quiet otherwise. -->
+    <color name="node_faint">#FF5C5C5C</color>
 
     <!-- Apart from the eyes, the one colour, and it means one thing: something
          needs you. The eyes turn it; the caption and the "!!" are drawn in it.

@@ -22,14 +22,17 @@
   button:hover, button:focus-visible { border-color: #ffb000; color: #ffb000; outline: none; }
   textarea { width: 100%; box-sizing: border-box; height: 300px; resize: vertical; background: #0b0b0b;
              color: #c4c4c4; border: 1px solid #333; padding: 12px; font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace; }
+  textarea.field { height: 80px; background: #000; color: inherit; border: 1px solid #555; padding: 8px 12px;
+                   font: inherit; }
   .said { min-height: 1.5em; color: #ffb000; }
+  #cam { display: block; width: 480px; max-width: 100%; margin-top: 8px; background: #0b0b0b; }
   code { color: #e8e8e8; }
 </style>
 </head>
 <body>
 <main>
 <h1>NODE COMPANION</h1>
-<p>The face on your desk. Nothing it sees leaves the phone.</p>
+<p>The face on your desk. What it sees stays on the phone unless you open the camera view below.</p>
 
 <h2>DESK NOTE</h2>
 <form id="note">
@@ -48,6 +51,29 @@
 <p class="said" id="note-said" role="status"></p>
 <p>The note shows in amber under the eyes. Tap the screen or wave over its top edge to dismiss it.</p>
 
+<h2>TASKS</h2>
+<form id="task">
+  <input id="task-title" name="title" maxlength="140" required autocomplete="off"
+         placeholder="Renew the domain · reply to Sam" aria-label="Task">
+  <textarea id="task-desc" class="field" name="desc" maxlength="500"
+            placeholder="Details, if any" aria-label="Details"></textarea>
+  <button type="submit">Add</button>
+</form>
+<p class="said" id="task-said" role="status"></p>
+<p>NODE chirps once and keeps it, out of sight, until you ask. Hold a finger on the screen to see
+your tasks; tap one for its details and to mark it done. Up to 30 at a time.</p>
+
+<h2>CAMERA</h2>
+<div class="row">
+  <button type="button" id="cam-toggle" aria-controls="cam">Show</button>
+  <span class="said" id="cam-said" role="status"></span>
+</div>
+<img id="cam" alt="NODE's front camera, live" hidden>
+<p>The front camera, small and live, only while this is showing and this tab is in view;
+switching away turns it off. Nothing is recorded, on the phone or anywhere else. It crosses
+your Wi-Fi as plain HTTP, like everything on this page, and the phone's screen does not show
+that anyone is watching.</p>
+
 <h2>SAY IT</h2>
 <form id="say">
   <input id="say-text" name="text" maxlength="140" required autocomplete="off"
@@ -62,7 +88,8 @@ From a script on the PC, when a long job ends:</p>
 
 <h2>FACE</h2>
 <p>Animations. NODE also plays these by itself: hearts when you say thank you, a happy
-bounce when Claude finishes, woozy when you shake it, Z's while it sleeps.</p>
+bounce when Claude finishes, woozy when you shake it, Z's while it sleeps, and reading,
+thinking and narrowing its eyes while Claude works.</p>
 <div class="row">
   <button type="button" data-play="love">Love</button>
   <button type="button" data-play="joy">Joy</button>
@@ -71,6 +98,9 @@ bounce when Claude finishes, woozy when you shake it, Z's while it sleeps.</p>
   <button type="button" data-play="scan">Look around</button>
   <button type="button" data-play="no">Shake head</button>
   <button type="button" data-play="zzz">Z's</button>
+  <button type="button" data-play="read">Read</button>
+  <button type="button" data-play="think">Think</button>
+  <button type="button" data-play="narrow">Narrow</button>
 </div>
 <p>Expressions, held for three seconds:</p>
 <div class="row">
@@ -132,6 +162,31 @@ if [ -n "$node_pct" ]; then
   (curl.exe -s -m 2 --data "pct=${node_pct}&resets=${node_resets}" "@URL@" >/dev/null 2>&1 &)
 fi
 </script>
+
+<h2>PC LOAD</h2>
+<p>This computer's CPU, memory and disk activity, each a small icon and a number, dim in the
+bottom-left corner of the screen for as long as this runs. Paste it into a PowerShell window and
+leave it open. It sends those three numbers every 5 seconds and nothing else; stop it and they
+are gone from the screen within 15 seconds.</p>
+<textarea id="pc-lines" readonly spellcheck="false" aria-label="PowerShell lines" style="height: 230px"></textarea>
+<div class="row">
+  <button type="button" id="copy-pc">Copy</button>
+  <span class="said" id="copy-pc-said" role="status"></span>
+</div>
+<!-- Raw text, so PowerShell's quotes need no escaping; @URL@ is filled in below.
+     CIM class names, unlike performance counter names, are the same in every language of Windows. -->
+<script type="text/plain" id="pc-template">
+# NODE Companion: this PC's CPU, memory and disk activity, every 5 seconds, to the phone on the desk.
+while ($true) {
+  $os   = Get-CimInstance Win32_OperatingSystem
+  $cpu  = (Get-CimInstance Win32_Processor | Measure-Object LoadPercentage -Average).Average
+  $ram  = 100 - 100 * $os.FreePhysicalMemory / $os.TotalVisibleMemorySize
+  $disk = (Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk -Filter "Name='_Total'").PercentDiskTime
+  $body = @{ cpu = [int]$cpu; ram = [int]$ram; disk = [math]::Min(100, [int]$disk) }
+  try { Invoke-RestMethod -Method Post -Uri '@URL@' -Body $body -TimeoutSec 2 | Out-Null } catch {}
+  Start-Sleep -Seconds 5
+}
+</script>
 </main>
 
 <script>
@@ -155,6 +210,52 @@ document.getElementById('note').onsubmit = async (e) => {
   } catch (err) {
     noteSaid.textContent = 'Not sent: is NODE Companion open on the phone?';
   }
+};
+
+// -- tasks ----------------------------------------------------------------
+const taskSaid = document.getElementById('task-said');
+document.getElementById('task').onsubmit = async (e) => {
+  e.preventDefault();
+  const title = document.getElementById('task-title').value.trim();
+  const desc = document.getElementById('task-desc').value.trim();
+  if (!title) return;
+  try {
+    const res = await fetch('task', { method: 'POST', body: new URLSearchParams({ title, desc }) });
+    if (!res.ok) throw new Error(res.status);
+    taskSaid.textContent = 'Added.';
+    document.getElementById('task-title').value = '';
+    document.getElementById('task-desc').value = '';
+  } catch (err) {
+    taskSaid.textContent = 'Not sent: is NODE Companion open on the phone?';
+  }
+};
+
+// -- camera ---------------------------------------------------------------
+// Off until asked for, and off again when this tab is hidden: the phone only
+// reads camera frames while a viewer holds the stream open. The <img> plays
+// the MJPEG stream natively; dropping its src hangs up.
+const cam = document.getElementById('cam');
+const camToggle = document.getElementById('cam-toggle');
+const camSaid = document.getElementById('cam-said');
+let camOn = false;
+const showCam = (on) => {
+  camOn = on;
+  camToggle.textContent = on ? 'Hide' : 'Show';
+  camToggle.setAttribute('aria-expanded', on);
+  cam.hidden = !on;
+  if (on) {
+    camSaid.textContent = '';
+    cam.src = 'cam?' + Date.now();
+  } else {
+    cam.removeAttribute('src');
+  }
+};
+camToggle.onclick = () => showCam(!camOn);
+document.addEventListener('visibilitychange', () => { if (document.hidden && camOn) showCam(false); });
+cam.onerror = () => {
+  if (!camOn) return;
+  showCam(false);
+  camSaid.textContent = 'No picture: is NODE Companion open on the phone?';
 };
 
 // -- say it ---------------------------------------------------------------
@@ -185,7 +286,7 @@ for (const button of document.querySelectorAll('[data-play]')) {
 
 // Each act, then each expression, given time to finish before the next.
 const tour = [['love', 2900], ['joy', 1800], ['wink', 1200], ['dizzy', 3100], ['scan', 2700], ['no', 1100],
-  ['zzz', 3600], ['happy', 3300], ['wide', 3300], ['curious', 3300], ['squint', 3300], ['sad', 3300],
+  ['zzz', 3600], ['read', 2900], ['think', 2500], ['narrow', 1900], ['happy', 3300], ['wide', 3300], ['curious', 3300], ['squint', 3300], ['sad', 3300],
   ['angry', 3300], ['sleepy', 3300], ['focused', 3300], ['closed', 3300]];
 let touring = null;
 document.getElementById('tour').onclick = async () => {
@@ -235,6 +336,11 @@ document.getElementById('copy').onclick = () => copyFrom(hooks, document.getElem
 const usageLines = document.getElementById('usage-lines');
 usageLines.value = document.getElementById('usage-template').textContent.trim().replace('@URL@', base + 'usage');
 document.getElementById('copy-usage').onclick = () => copyFrom(usageLines, document.getElementById('copy-usage-said'));
+
+// -- PC load --------------------------------------------------------------
+const pcLines = document.getElementById('pc-lines');
+pcLines.value = document.getElementById('pc-template').textContent.trim().replace('@URL@', base + 'pc');
+document.getElementById('copy-pc').onclick = () => copyFrom(pcLines, document.getElementById('copy-pc-said'));
 
 for (const button of document.querySelectorAll('[data-event]')) {
   button.onclick = () => fetch('claude', {

@@ -19,7 +19,13 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
+
+        // MediaPipe ships native code for every ABI; the Redmi Note 8 needs only this one.
+        ndk { abiFilters += "arm64-v8a" }
     }
+
+    // The hand model is read straight out of the APK, which needs it stored uncompressed.
+    androidResources { noCompress += "task" }
 
     buildTypes {
         debug {
@@ -55,8 +61,10 @@ android {
     }
 }
 
-// No runtime dependencies: kotlin-stdlib is contributed automatically by the
+// One runtime dependency: MediaPipe's on-device hand landmarker, for hand
+// tracking and nothing else. kotlin-stdlib is contributed automatically by the
 // Kotlin Android plugin. JUnit is test-only and never reaches the APK.
 dependencies {
+    implementation("com.google.mediapipe:tasks-vision:0.10.35")
     testImplementation("junit:junit:4.13.2")
 }

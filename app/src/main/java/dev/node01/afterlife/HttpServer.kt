@@ -10,6 +10,7 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.net.URLDecoder
 import java.security.MessageDigest
+import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
 /**
@@ -22,13 +23,16 @@ import kotlin.concurrent.thread
  * - `POST /<key>/say`     a line to read out once, as a form: `text`
  * - `POST /<key>/usage`   Claude's 5-hour session usage from the status line, as a form:
  *                         `pct` (0..100), `resets` (Unix seconds)
+ * - `POST /<key>/task`    a task to keep until it is marked done, as a form: `title`, `desc`
+ * - `POST /<key>/pc`      the PC's load, as a form: `cpu`, `ram`, `disk` (each 0..100)
+ * - `GET  /<key>/cam`     the front camera's small live view, as MJPEG, for as long as it is held open
  *
  * Every path sits under a random key shown on the phone's screen; anything
  * else is a 404. It is plain HTTP, so anyone able to sniff the Wi-Fi can read
- * the key and what is sent. Home LAN only; never port-forward it. There is no
- * camera route: what the camera sees never leaves the phone.
+ * the key and what is sent -- the camera view included. Home LAN only; never
+ * port-forward it. The camera view is only ever live: nothing is recorded.
  *
- * [onClaude], [onNote], [onFace], [onSay] and [onUsage] are called on the connection's thread.
+ * [onClaude], [onNote], [onFace], [onSay], [onUsage], [onTask] and [onPc] are called on the connection's thread.
  *
  * One instance per session: [start], then [stop], then discard.
  */
@@ -40,6 +44,10 @@ class HttpServer(
     private val onFace: (play: String) -> Unit,
     private val onSay: (text: String) -> Unit,
     private val onUsage: (SessionUsage) -> Unit,
+    private val onTask: (title: String, description: String) -> Unit,
+    private val onPc: (PcStats) -> Unit,
+    /** JPEG frames for the camera view, filled by [Presence] only while someone is watching. */
+    private val cam: Hub,
 ) {
     @Volatile
     private var socket: ServerSocket? = null
@@ -76,6 +84,8 @@ class HttpServer(
         client.use {
             try {
                 client.soTimeout = REQUEST_TIMEOUT_MS
+                // Camera frames are small; Nagle would hold their tails for an ACK.
+                client.tcpNoDelay = true
                 val input = BufferedInputStream(client.getInputStream())
                 val out = BufferedOutputStream(client.getOutputStream(), OUT_BUFFER_BYTES)
                 val head = readHead(input) ?: return
@@ -105,6 +115,17 @@ class HttpServer(
                         respond(out, 204)
                         if (usage != null) onUsage(usage)
                     }
+                    Route.Task -> readBody(head, input, out)?.let { body ->
+                        val form = parseForm(String(body, Charsets.UTF_8))
+                        respond(out, 204)
+                        onTask(form["title"].orEmpty(), form["desc"].orEmpty())
+                    }
+                    Route.Pc -> readBody(head, input, out)?.let { body ->
+                        val stats = PcStats.parse(parseForm(String(body, Charsets.UTF_8)))
+                        respond(out, 204)
+                        if (stats != null) onPc(stats)
+                    }
+                    Route.Cam -> streamCam(out)
                     Route.NotFound -> notFound(out)
                 }
                 out.flush()
@@ -146,6 +167,31 @@ class HttpServer(
         return kept
     }
 
+    /**
+     * The camera view for an `<img>`, until the viewer hangs up or the server
+     * stops. While it is subscribed, and only then, [Presence] compresses
+     * frames. Each boundary goes out right after its frame, not ahead of the
+     * next one: browsers only show a part once they see the boundary that ends it.
+     */
+    private fun streamCam(out: OutputStream) {
+        out.write(head(200, "multipart/x-mixed-replace; boundary=frame", -1))
+        out.write(BOUNDARY)
+        out.flush()
+        val queue = cam.subscribe()
+        try {
+            while (socket != null) {
+                val jpeg = queue.poll(1, TimeUnit.SECONDS) ?: continue
+                out.write("Content-Type: image/jpeg\r\nContent-Length: ${jpeg.size}\r\n\r\n".toByteArray())
+                out.write(jpeg)
+                out.write(CRLF)
+                out.write(BOUNDARY)
+                out.flush()
+            }
+        } finally {
+            cam.unsubscribe(queue)
+        }
+    }
+
     private fun notFound(out: OutputStream) = send(out, 404, "text/plain", "not found\n".toByteArray())
 
     private fun send(out: OutputStream, status: Int, type: String, body: ByteArray) {
@@ -173,6 +219,9 @@ class HttpServer(
         data object Face : Route
         data object Say : Route
         data object Usage : Route
+        data object Task : Route
+        data object Pc : Route
+        data object Cam : Route
         data object NotFound : Route
     }
 
@@ -199,6 +248,9 @@ class HttpServer(
         /** Bodies past this are refused unread. */
         const val MAX_BODY_BYTES = 16L * 1024 * 1024
 
+        private val CRLF = "\r\n".toByteArray()
+        private val BOUNDARY = "--frame\r\n".toByteArray()
+
         private val REASONS = mapOf(
             200 to "OK",
             204 to "No Content",
@@ -221,6 +273,9 @@ class HttpServer(
                 method == "POST" && rest == "face" -> Route.Face
                 method == "POST" && rest == "say" -> Route.Say
                 method == "POST" && rest == "usage" -> Route.Usage
+                method == "POST" && rest == "task" -> Route.Task
+                method == "POST" && rest == "pc" -> Route.Pc
+                method == "GET" && rest == "cam" -> Route.Cam
                 else -> Route.NotFound
             }
         }

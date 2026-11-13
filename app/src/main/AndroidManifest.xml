@@ -2,8 +2,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- CAMERA is the front camera's face detection, used only while the
-         activity is in front, and nothing it sees leaves the phone. INTERNET
-         lets the LAN server hear from the PC. WAKE_LOCK holds a low-latency
+         activity is in front; what it sees leaves the phone only as the page's
+         live camera view, while someone has it open, and is never recorded.
+         INTERNET lets the LAN server hear from the PC. WAKE_LOCK holds a low-latency
          Wi-Fi lock, again only while in front, so a hook is answered at once
          instead of after the radio wakes. RECORD_AUDIO is for voice commands:
          the microphone is open only after a tap or a wave, for one sentence,

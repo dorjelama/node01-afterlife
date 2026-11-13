@@ -14,7 +14,7 @@ English or Nepali, with no cloud AI.
 <p align="left">
   <img alt="platform" src="https://img.shields.io/badge/platform-Android%2011%2B%20(API%2030)-000000">
   <img alt="language" src="https://img.shields.io/badge/Kotlin-2.0.21-000000">
-  <img alt="dependencies" src="https://img.shields.io/badge/runtime%20dependencies-zero-000000">
+  <img alt="dependencies" src="https://img.shields.io/badge/runtime%20dependencies-one%20(MediaPipe)-000000">
   <img alt="permissions" src="https://img.shields.io/badge/permissions-INTERNET%20CAMERA%20RECORD__AUDIO%20WAKE__LOCK-000000">
   <img alt="cloud" src="https://img.shields.io/badge/cloud%20AI-none-000000">
 </p>
@@ -33,29 +33,36 @@ version lives on at `9a42e35`.
 | **Sleeps** | Away 2 minutes: sleepy and dim. Away 10 minutes, or the room dark: eyes closed, backlight at the panel minimum |
 | **Feels the desk** | Knock on the desk and it startles. Shake the phone and it goes woozy: its eyes loll round, one up as the other drops, until it shakes it off |
 | **Briefs you in the morning** | The first time it sees you each morning, after "Good morning!": the time, the Bikram Sambat date, the weather, and how many things are waiting. One sentence, and each part is dropped when there is nothing to say |
-| **Is pettable** | Stroke a finger across the screen and its eyes turn to beating hearts: "Hehe." A stroke never opens the microphone, so you can fuss over it without talking to it |
+| **Is pettable** | Rub a finger back and forth across the screen and its eyes turn to beating hearts: "Hehe." Petting never opens the microphone, so you can fuss over it without talking to it |
+| **Swipes** | A straight swipe changes mode. **Sideways:** hand tracking on or off. **Up or down:** the corner readouts — usage, the time, the PC's load — hidden for a bare face, or shown again; a running timer always shows. Swipes that start at a screen edge are left to the system |
+| **Sees your hands** | With hand tracking on, whenever the front camera sees a hand, it takes the eyes' place in white dots: every bone as a line of dots, every fingertip a small cross, up to two hands, mirrored like a mirror. With no hand in view the face carries on, and after a minute without one the mode turns itself off. It runs on the phone with Google's MediaPipe; see [Design principles](#design-principles) |
 | **Plays** | Say hi and it winks; say "thank you" and its eyes turn to beating hearts. While you sit there it now and then winks, tilts its head or squints; with nobody there it looks around the room; asleep, Z's float up. Listening, it tilts its head. Every animation and expression can also be played from the page |
 | **Listens** | Tap the screen or wave over its top edge, wait for the blip, and speak — English or Nepali. Nothing listens until you do. See [Voice](#voice) |
 | **Talks** | A few short words of its own: "Welcome back!" ("Good morning!" once a morning), "Hey! Claude needs you.", "All done!", "Whoa!" at a knock, "Good night." when the lights go off. At most one unprompted line every 20 seconds, never in a dark room; `TALK` in `NodeActivity.kt` turns it off |
-| **Claude Code** | Through Claude Code hooks on your PC. While Claude works the eyes narrow and look toward the PC. When Claude needs approval or has a question: amber, wide, an amber **!!** beside them, `NEEDS YOU`, one chirp. When it finishes: a happy bounce, then **^ ^** eyes, `DONE`, a softer chirp — held until you have actually looked |
+| **Claude Code** | Through Claude Code hooks on your PC. While Claude works the eyes narrow and look toward the PC, and now and then read along a line or two, look up to think, or narrow harder for a moment, so the stare never sets. When Claude needs approval or has a question: amber, wide, an amber **!!** beside them, `NEEDS YOU`, one chirp. When it finishes: a happy bounce, then **^ ^** eyes, `DONE`, a softer chirp — held until you have actually looked |
 | **Desk notes** | Send a short note from any browser, now or in a few minutes — or say "remind me in 10 minutes to stretch". It shows in amber and is read out; tap or wave to dismiss it |
+| **Keeps your tasks** | Add a task with a few lines of detail from the page. NODE chirps once and keeps it out of sight — no amber, no words. Hold a finger on the screen to see the list; tap a task for its details and **✓ MARK DONE**. Up to 30 at a time, kept across restarts |
+| **Shows its view** | The page's **CAMERA** section shows what the front camera sees, small and live (320×240), only while you have it showing in a tab that is in view. Nothing is recorded. See [Privacy](#privacy) |
+| **Shows the PC's load** | Leave the page's PowerShell lines running and the PC's CPU, memory and disk activity sit small and dim in the bottom-left corner — a chip, a memory stick and a disk, each with its number. Stop the script and they are gone within 15 seconds |
+| **Tells the time** | The time, 12-hour (`12:48`), in small grey dots in the top-right corner. A running timer takes its place, and in the dark it steps aside for the large knock clock |
 | **Counts a timer down** | While a timer or focus session runs, the time left ticks in grey dot digits in the top-right corner — `24:59`, and whole minutes past an hour. Glance and see how long is left without asking |
 | **Tells the time in the dark** | Knock the desk in a dark room and the time appears in dots where the eyes are, for six seconds, with the backlight barely lifted and not a sound |
 | **Watches its own battery** | A phone that lives on a charger swells quietly. At **45°C** it goes amber with `BATTERY HOT · 47°C` until it is properly cool again (under 42°C, so it cannot flicker), and unplugged at **20%** it says `UNPLUGGED · 18%`. One chirp as either starts, not one per degree |
 | **Says what you send** | `POST /say` with `text=…`, from the page or one line of curl in a script, and NODE reads it out once: "Build done." Grey under the eyes, nothing to dismiss, quiet in a dark room. Nepali text is spoken in Nepali |
-| **Session %** | How much of your 5-hour Claude session limit is used, as `/usage` shows it: just the number, such as `42%`, in grey dot digits in the top-left corner. It comes from Claude Code's status line, which gets it only on Pro and Max plans and only runs in the terminal version (not the VS Code panel); the page has the lines to add to your status line script. They send the percentage and when the window resets, nothing else. After the reset it shows `0%`. At **80%** and **95%** it says so once, and you can ask "how much of my session is left?" |
+| **Session %** | How much of your 5-hour Claude session limit is used, as `/usage` shows it: just the number, such as `42%`, in small grey dot digits in the top-left corner. It comes from Claude Code's status line, which gets it only on Pro and Max plans and only runs in the terminal version (not the VS Code panel); the page has the lines to add to your status line script. They send the percentage and when the window resets, nothing else. After the reset it shows `0%`. At **80%** and **95%** it says so once, and you can ask "how much of my session is left?" |
 
 Amber means one thing: something needs you. Everything else is cyan dots on black.
 
 ## Use it
 
 1. Build and install (below), open **NODE Companion**, allow the camera and the microphone.
-2. **Hold a finger on the screen** for a moment to see its address for 30 seconds, such as
-   `http://192.168.1.50:8081/k7m2x9qa4c/`.
-3. Open that address on any phone or PC on the same Wi-Fi. The page sends desk notes, has NODE
-   say a line out loud, plays the face's animations, has a **Try it** row to test the Claude
-   states, and shows the Claude Code hooks and the status line lines for the session %, with
-   the address already filled in.
+2. **Hold a finger on the screen** for a moment to see your tasks and, under them, its address
+   for 30 seconds, such as `http://192.168.1.50:8081/k7m2x9qa4c/`. Tap beside the list to close it.
+3. Open that address on any phone or PC on the same Wi-Fi. The page sends desk notes and tasks,
+   shows the camera's view when you ask it to, has NODE say a line out loud, plays the face's
+   animations, has a **Try it** row to test the
+   Claude states, and shows the Claude Code hooks, the status line lines for the session % and
+   the PowerShell lines for the PC's load, with the address already filled in.
 
 The screen stays on because Android only lets the app in front use the camera. Leaving NODE,
 or pressing the power button, stops everything; coming back resumes it.
@@ -152,9 +159,20 @@ uses Google's online voice. See [engineering notes](docs/ENGINEERING-NOTES.md).
 
 ## Privacy
 
-- **Nothing the camera sees leaves the phone.** Frames are handed back to the camera unread;
-  only the rectangle of the largest face is used, as a gaze direction. Nothing is stored,
-  served or logged, and the server has no camera route.
+- **Hand tracking reads the camera on the phone and nowhere else.** While the mode is on, frames
+  go to the MediaPipe model on the phone; only the points of each hand come out of it, drawn on
+  the screen and then forgotten.
+- **The camera leaves the phone only when you open the page's camera view.** For following
+  you, frames are handed back to the camera unread, and only the rectangle of the largest
+  face is used, as a gaze direction. While someone has the page's **CAMERA** view open,
+  showing, in a tab that is in view, the front camera's picture goes to that browser: 320×240,
+  about 7–10 frames a second, live only. Hiding it, switching tabs or closing the page stops it,
+  and the phone goes back to not reading frames at all. Nothing is ever recorded, stored or
+  logged, on the phone or anywhere else.
+- **The phone does not show when someone is watching.** Anyone on your Wi-Fi with the address
+  can open the camera view, and the face looks the same whether or not they do. The view
+  crosses your Wi-Fi as **plain HTTP**, so anyone able to read your Wi-Fi traffic could see
+  it too. The key in the address is all that guards it.
 - **The microphone is open only when you ask.** After a tap or a wave, for one sentence. There
   is no wake word and nothing listens in the background. Recognition is offline when the
   phone has the model and online through Google when it does not, and the screen says
@@ -168,6 +186,8 @@ uses Google's online voice. See [engineering notes](docs/ENGINEERING-NOTES.md).
   name, session id, project folder and notification type, reads past the rest without keeping
   it, and never logs it — but the whole event still crosses your Wi-Fi as **plain HTTP**.
   Use it on a network you trust.
+- Tasks, desk notes and the PC's load cross the Wi-Fi as plain HTTP too. The PC's load is three
+  numbers and nothing else; tasks are kept on the phone until you mark them done.
 - The random key in the address is the only thing between the network and NODE. Anything
   without it gets a 404. Never port-forward 8081.
 
@@ -195,10 +215,12 @@ screen size), and softens the same on/off map, a pixel per dot, into the glow. A
 function of their own progress, and blinks, glances and fidgets are single delayed callbacks,
 not a frame loop.
 
-**Zero runtime dependencies.** Camera2's hardware face detection, `SensorManager`,
+**One runtime dependency, for one feature.** Camera2's hardware face detection, `SensorManager`,
 `SpeechRecognizer`, `TextToSpeech`, `AudioTrack` and `java.net` are all in the platform. The
-chirps are synthesized at start-up, so the repo carries no sound files. JUnit is test-only and
-never reaches the APK.
+chirps are synthesized at start-up, so the repo carries no sound files. The exception is hand
+tracking: Google's MediaPipe hand landmarker (`tasks-vision`) and its 7.8 MB model, which run
+on the phone, are loaded only while the mode is on, and take the APK from about 3 MB to 25 MB.
+JUnit is test-only and never reaches the APK.
 
 **One pure function decides.** `Mood.decide` turns what NODE senses into what it shows, and is
 unit-tested like any other function. The activity only gathers inputs and draws the answer.
@@ -291,7 +313,9 @@ app/src/main/java/dev/node01/afterlife/
 ├── Mood.kt            the personality: inputs → expression, gaze, caption, brightness
 ├── FaceView.kt        the dot-matrix panel: draws and animates the eyes
 ├── Eyes.kt            expression shapes, easing, the animations
-├── Presence.kt        front camera face detection → gaze
+├── Presence.kt        front camera face detection → gaze, and the page's camera view while it is open
+├── Hub.kt             hands camera view frames to whoever is watching, dropping them for a slow viewer
+├── HandTracker.kt     hand tracking: MediaPipe's hand landmarker on the phone, 21 points per hand
 ├── Senses.kt          knock, shake, wave, dark room
 ├── ClaudeSessions.kt  Claude Code sessions from hook events
 ├── JsonFields.kt      reads a few fields from a hook event, tolerating truncation
@@ -303,10 +327,12 @@ app/src/main/java/dev/node01/afterlife/
 ├── Chatter.kt         its small talk, and the rules that keep it from chattering
 ├── BsDate.kt          Bikram Sambat calendar
 ├── Inbox.kt           desk notes, reminders, timers, alarms and repeating nudges
+├── Tasks.kt           tasks from the page, kept until marked done
+├── PcStats.kt         the PC's CPU, memory and disk load, as its script sends it
 ├── Chirp.kt           the sounds, and the one tune
-└── HttpServer.kt      LAN server: page, hook events, notes, spoken lines
+└── HttpServer.kt      LAN server: page, hook events, notes, tasks, spoken lines, PC load, camera view
 app/src/main/assets/
-└── index.html         the page: desk notes, lines to say, Claude Code setup, test buttons
+└── index.html         the page: desk notes, tasks, camera view, lines to say, Claude Code and PC load setup, test buttons
 ```
 
 ## Notes

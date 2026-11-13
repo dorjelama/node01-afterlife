@@ -8,4 +8,10 @@
     <dimen name="status">14dp</dimen>
     <dimen name="text_gap">10dp</dimen>
     <dimen name="text_margin">22dp</dimen>
+
+    <!-- The task list: clear of the 10% edges the system swipes from, and of
+         the caption and address under it. -->
+    <dimen name="tasks_side">96dp</dimen>
+    <dimen name="tasks_top">40dp</dimen>
+    <dimen name="tasks_bottom">96dp</dimen>
 </resources>

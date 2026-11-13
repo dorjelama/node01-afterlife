@@ -129,4 +129,15 @@ enum class Act(val ms: Long) {
 
     /** Z's float up from a sleeping face. */
     ZZZ(3_400L),
+
+    // While Claude works, now and then, so the focused stare never sets.
+
+    /** Reads two lines on the PC: along, back, along the next one down. */
+    READ(2_600L),
+
+    /** Looks up and away, eyes a little wider, then back to the PC. */
+    THINK(2_200L),
+
+    /** Narrows harder for a moment, then eases off. */
+    NARROW(1_600L),
 }

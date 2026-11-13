@@ -7,18 +7,21 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.graphics.Typeface
 import android.media.AudioManager
 import android.net.wifi.WifiManager
 import android.os.BatteryManager
 import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
+import android.util.TypedValue
 import android.view.MotionEvent
 import android.view.Surface
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
+import android.widget.LinearLayout
 import android.widget.TextView
 import java.net.Inet4Address
 import java.net.NetworkInterface
@@ -48,6 +51,8 @@ class NodeActivity : Activity() {
     private lateinit var face: FaceView
     private lateinit var captionView: TextView
     private lateinit var statusView: TextView
+    private lateinit var taskList: View
+    private lateinit var taskRows: LinearLayout
 
     private val prefs by lazy { getSharedPreferences("node", MODE_PRIVATE) }
 
@@ -62,6 +67,24 @@ class NodeActivity : Activity() {
 
     private val sessions = ClaudeSessions()
     private val inbox by lazy { Inbox.decode(prefs.getString(KEY_INBOX, null)) }
+    private val tasks by lazy { Tasks.decode(prefs.getString(KEY_TASKS, null)) }
+
+    /** The task list is open over the face until this moment; every touch on it moves it on. */
+    private var tasksUntilMs = 0L
+
+    /** Hand tracking, while that mode is on; and when a hand was last seen, to turn it off when none has been. */
+    private var hands: HandTracker? = null
+    private var handSeenMs = 0L
+
+    /** The corner readouts -- usage, the time, the PC's load -- shown, or swiped away; kept across restarts. */
+    private var detailsShown = true
+
+    /** The page's camera view: [Presence] fills it, only while the server has a viewer on it. */
+    private val camView = Hub(CAM_VIEW_QUEUE)
+
+    /** The PC's load as it last sent it, and when, in elapsedRealtime: shown only while it keeps coming. */
+    private var pc: PcStats? = null
+    private var pcAtMs = NEVER
 
     /** Claude's 5-hour session usage, last sent by the PC's status line; kept across restarts. */
     private var usage: SessionUsage? = null
@@ -153,12 +176,20 @@ class NodeActivity : Activity() {
     private var lastX = 0f
     private var lastY = 0f
 
+    /** Where the live touch began, to tell a swipe's direction. */
+    private var downX = 0f
+    private var downY = 0f
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.node_face)
         face = findViewById(R.id.face)
         captionView = findViewById(R.id.caption)
         statusView = findViewById(R.id.status)
+        taskList = findViewById(R.id.tasks)
+        taskRows = findViewById(R.id.task_rows)
+        // A tap beside the list, not on it, closes it.
+        taskList.setOnClickListener { closeTasks() }
         configureWindow()
     }
 
@@ -179,6 +210,7 @@ class NodeActivity : Activity() {
         startServer()
         voiceLang = runCatching { Lang.valueOf(prefs.getString(KEY_VOICE_LANG, null) ?: "") }.getOrDefault(Lang.EN)
         usage = SessionUsage.decode(prefs.getString(KEY_USAGE, null))
+        detailsShown = prefs.getBoolean(KEY_DETAILS, true)
         // Where it already stood at startup is not news: note it without saying it.
         usageWarnedAt = usage?.let { Assistant.usagePassed(it.shownAt(System.currentTimeMillis())) } ?: 0
         speaker = Speaker(this)
@@ -212,6 +244,7 @@ class NodeActivity : Activity() {
         server?.stop()
         server = null
         wifiLock?.release()
+        stopHands()
         stopPresence()
         senses?.stop()
         senses = null
@@ -301,10 +334,18 @@ class NodeActivity : Activity() {
             face.show(look)
             showCaption(look)
         }
-        face.showUsage(usage?.shownAt(System.currentTimeMillis()))
+        face.showUsage(usage?.shownAt(System.currentTimeMillis())?.takeIf { detailsShown })
         face.showTimer(inbox.timerLeft(System.currentTimeMillis())?.let { Inbox.countdown(it) })
         val nightClock = dark && now < clockUntilMs
-        face.showClock(if (nightClock) LocalDateTime.now().format(CLOCK_FORMAT) else null)
+        val time = LocalDateTime.now().format(CLOCK_FORMAT)
+        face.showClock(if (nightClock) time else null)
+        // The corner time steps aside while the large one shows in the dark.
+        face.showTime(if (nightClock || !detailsShown) null else time)
+        // A script that has stopped sending leaves nothing behind on the face.
+        face.showPc(pc?.takeIf { detailsShown && now - pcAtMs <= PC_FRESH_MS })
+        // Nobody's hand for a while: back to the face, and the model unloaded, so the phone stays cool.
+        if (hands != null && now - handSeenMs > HANDS_IDLE_MS) stopHands()
+        if (taskList.visibility == View.VISIBLE && now >= tasksUntilMs) closeTasks()
         val undimmed = now < undimUntilMs
         setBrightness(
             when {
@@ -835,6 +876,127 @@ class NodeActivity : Activity() {
         prefs.edit().putString(KEY_INBOX, inbox.encode()).apply()
     }
 
+    /**
+     * From the page: kept until you mark it done. One chirp so you know it
+     * arrived, and nothing more -- no words, no amber; a task waits for you to
+     * ask for it. Quiet in a dark room and over a sentence being heard.
+     */
+    private fun onTask(title: String, description: String) {
+        tasks.add(title, description, System.currentTimeMillis()) ?: return
+        saveTasks()
+        if (!dark && !listening) chirp.attention()
+        if (taskList.visibility == View.VISIBLE) fillTasks()
+    }
+
+    private fun saveTasks() {
+        prefs.edit().putString(KEY_TASKS, tasks.encode()).apply()
+    }
+
+    /**
+     * A sideways swipe: hand tracking on or off. On, your hand shows in white
+     * dots in place of the eyes whenever the camera sees it; with no hand in
+     * view the face carries on. The model loads only now, and is closed again
+     * when the mode goes off.
+     */
+    private fun toggleHands() {
+        if (hands != null) return stopHands()
+        val tracker = try {
+            HandTracker(this, ::onHands)
+        } catch (e: Exception) {
+            Log.e(TAG, "hands: ${e.message}")
+            return say(getString(R.string.mode_hands_failed), voiceLang, speak = false)
+        }
+        hands = tracker
+        presence?.hands = tracker
+        handSeenMs = SystemClock.elapsedRealtime()
+        // A moment of text, so turning it on is visible before any hand is.
+        replyText = getString(R.string.mode_hands)
+        replyUntilMs = handSeenMs + MODE_CAPTION_MS
+        reevaluate()
+    }
+
+    private fun stopHands() {
+        presence?.hands = null
+        hands?.close()
+        hands = null
+        face.showHands(null, 1f)
+    }
+
+    private fun onHands(points: FloatArray, aspect: Float) {
+        if (hands == null) return
+        if (points.isNotEmpty()) handSeenMs = SystemClock.elapsedRealtime()
+        face.showHands(points, aspect)
+    }
+
+    /** An up or down swipe: the corner readouts shown, or hidden for a bare face. */
+    private fun toggleDetails() {
+        detailsShown = !detailsShown
+        prefs.edit().putBoolean(KEY_DETAILS, detailsShown).apply()
+        reevaluate()
+    }
+
+    /** From the PC, every few seconds: shown by the next heartbeat. */
+    private fun onPc(stats: PcStats) {
+        pc = stats
+        pcAtMs = SystemClock.elapsedRealtime()
+    }
+
+    /** Your tasks over the face, title by title, with the address below as before. */
+    private fun openTasks() {
+        fillTasks()
+        taskList.visibility = View.VISIBLE
+        tasksUntilMs = SystemClock.elapsedRealtime() + UNDIM_MS
+    }
+
+    private fun closeTasks() {
+        taskList.visibility = View.GONE
+        taskRows.removeAllViews()
+    }
+
+    /** A title per task; tapping one shows what it says about itself and a way to mark it done. */
+    private fun fillTasks() {
+        taskRows.removeAllViews()
+        val heading = if (tasks.size == 0) R.string.tasks_none else R.string.tasks_heading
+        taskRows.addView(taskText(getString(heading), R.color.node_dim, R.dimen.status))
+        for (task in tasks.all) {
+            val details = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                visibility = View.GONE
+            }
+            if (task.description.isNotEmpty()) details.addView(taskText(task.description, R.color.node_dim, R.dimen.status))
+            details.addView(
+                taskText(getString(R.string.task_done), R.color.node_secondary, R.dimen.status).apply {
+                    setOnClickListener {
+                        tasks.complete(task.id)
+                        saveTasks()
+                        chirp.done()
+                        fillTasks()
+                    }
+                },
+            )
+            taskRows.addView(
+                taskText(task.title, R.color.node_secondary, R.dimen.caption).apply {
+                    setOnClickListener {
+                        details.visibility = if (details.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+                    }
+                },
+            )
+            taskRows.addView(details)
+        }
+    }
+
+    /** A line of the task list, styled like the caption and status under the eyes. */
+    private fun taskText(words: String, colour: Int, size: Int) = TextView(this).apply {
+        text = words
+        setTextColor(getColor(colour))
+        setTextSize(TypedValue.COMPLEX_UNIT_PX, resources.getDimension(size))
+        typeface = Typeface.MONOSPACE
+        letterSpacing = 0.04f
+        includeFontPadding = false
+        val gap = resources.getDimensionPixelSize(R.dimen.text_gap) / 2
+        setPadding(0, gap, 0, gap)
+    }
+
     /** From the PC's status line: only the percentage and when it resets. */
     private fun onUsage(next: SessionUsage) {
         if (next == usage) return
@@ -868,7 +1030,8 @@ class NodeActivity : Activity() {
 
     private fun startPresence() {
         if (presence != null) return
-        val p = Presence(this, displayDegrees(), ::onFace, ::reevaluate, ::restartPresence)
+        val p = Presence(this, displayDegrees(), ::onFace, ::reevaluate, ::restartPresence, camView)
+        p.hands = hands
         presence = p
         try {
             p.start()
@@ -944,6 +1107,9 @@ class NodeActivity : Activity() {
             onFace = { play -> mainExecutor.execute { if (server === http) onFacePlay(play) } },
             onSay = { text -> mainExecutor.execute { if (server === http) onSay(text) } },
             onUsage = { u -> mainExecutor.execute { if (server === http) onUsage(u) } },
+            onTask = { title, desc -> mainExecutor.execute { if (server === http) onTask(title, desc) } },
+            onPc = { stats -> mainExecutor.execute { if (server === http) onPc(stats) } },
+            cam = camView,
         )
         server = http
         try {
@@ -1075,28 +1241,46 @@ class NodeActivity : Activity() {
                 strokedPx = 0f
                 lastX = ev.x
                 lastY = ev.y
+                downX = ev.x
+                downY = ev.y
                 // Only a touch starting at a system edge may be reaching for the
                 // navigation bar. Anything starting in the middle must never
                 // surface it.
                 barsRequestedBySwipe = isEdgeTouch(ev.x, ev.y)
                 if (!barsRequestedBySwipe) hideSystemBars()
+                // Reading the list keeps it open, and lit.
+                if (taskList.visibility == View.VISIBLE) {
+                    tasksUntilMs = touchAtMs + UNDIM_MS
+                    undimUntilMs = tasksUntilMs
+                }
             }
             MotionEvent.ACTION_MOVE -> {
                 strokedPx += kotlin.math.hypot(ev.x - lastX, ev.y - lastY)
                 lastX = ev.x
                 lastY = ev.y
             }
-            // In the middle: a tap talks to NODE, a stroke pets it, a long press
-            // shows its address.
+            // In the middle: a tap talks to NODE, a straight swipe changes mode
+            // -- sideways for hand tracking, up or down for the corner readouts --
+            // rubbing back and forth pets it, and a long press shows your tasks
+            // and its address.
             MotionEvent.ACTION_UP -> if (!barsRequestedBySwipe) {
                 touchAtMs = SystemClock.elapsedRealtime()
-                val strokeDots = strokedPx / resources.displayMetrics.density
+                val density = resources.displayMetrics.density
+                val strokeDots = strokedPx / density
+                val dx = (ev.x - downX) / density
+                val dy = (ev.y - downY) / density
+                val swipeDots = kotlin.math.hypot(dx, dy)
                 when {
+                    // The open list takes its own taps and scrolls.
+                    taskList.visibility == View.VISIBLE -> Unit
+                    swipeDots >= SWIPE_DP && strokeDots <= swipeDots * SWIPE_STRAIGHT ->
+                        if (kotlin.math.abs(dx) > kotlin.math.abs(dy)) toggleHands() else toggleDetails()
                     strokeDots >= STROKE_DP -> pet()
                     // Re-read every time: after a reboot NODE can start before Wi-Fi does.
                     ev.eventTime - ev.downTime >= LONG_PRESS_MS -> {
                         tappedUrl = urlText()
                         undimUntilMs = SystemClock.elapsedRealtime() + UNDIM_MS
+                        openTasks()
                         reevaluate()
                     }
                     else -> onPoke()
@@ -1114,6 +1298,8 @@ class NodeActivity : Activity() {
 
         const val KEY_URL_KEY = "url_key"
         const val KEY_INBOX = "inbox"
+        const val KEY_TASKS = "tasks"
+        const val KEY_DETAILS = "details_shown"
         const val KEY_VOICE_LANG = "voice_lang"
         const val KEY_USAGE = "session_usage"
         const val KEY_STOPWATCH = "stopwatch_started"
@@ -1184,6 +1370,20 @@ class NodeActivity : Activity() {
          */
         const val STROKE_DP = 150f
 
+        /**
+         * A touch that ends this far, in dp, from where it began, by a path no
+         * more than [SWIPE_STRAIGHT] times that long, was a swipe: rubbing back
+         * and forth travels far but ends near where it started.
+         */
+        const val SWIPE_DP = 120f
+        const val SWIPE_STRAIGHT = 1.4f
+
+        /** No hand seen for this long and hand tracking turns itself off. */
+        const val HANDS_IDLE_MS = 60_000L
+
+        /** How long turning hand tracking on says so under the eyes. */
+        const val MODE_CAPTION_MS = 1_500L
+
         /** Small talk -- "hi", "whoa", "Claude needs you". False keeps NODE to chirps and answers. */
         const val TALK = true
 
@@ -1202,8 +1402,14 @@ class NodeActivity : Activity() {
         /** Asleep: the panel minimum. The closed eyes are still just visible. */
         const val MIN_BRIGHTNESS = 0.01f
 
-        /** How long a long press shows the address and lifts the dim. */
+        /** How long a long press shows your tasks and the address, and lifts the dim. */
         const val UNDIM_MS = 30_000L
+
+        /** The PC sends its load every 5 seconds: three missed and the readout goes. */
+        const val PC_FRESH_MS = 15_000L
+
+        /** Camera view frames a slow viewer may fall behind by before frames are dropped for it. */
+        const val CAM_VIEW_QUEUE = 2
 
         const val HEARTBEAT_MS = 500L
 
