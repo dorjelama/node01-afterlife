@@ -236,10 +236,13 @@ object Assistant {
             dated != null -> dated!!
 
             // Language first, but "nepali date" is a date, not a request to switch.
-            Regex("""\b(speak|talk|use|switch to|in) nepali\b""").containsMatchIn(t) || t == "nepali" ||
+            // A switch has to be asked for: "speak Nepali", not merely "in
+            // Nepali", which is how you ask for a date or a word to be put
+            // into a language. Answering a question must never change a setting.
+            Regex("""\b(speak|talk|use|switch to) nepali\b""").containsMatchIn(t) || t == "nepali" ||
                 (has("नेपालीमा") && has("बोल")) -> Command.Language(Lang.NE)
-            Regex("""\b(speak|talk|use|switch to|in) english\b""").containsMatchIn(t) || t == "english" ||
-                has("अंग्रेजी", "अङ्ग्रेजी", "इंग्लिस", "इङ्ग्लिस") -> Command.Language(Lang.EN)
+            Regex("""\b(speak|talk|use|switch to) english\b""").containsMatchIn(t) || t == "english" ||
+                (has("अंग्रेजी", "अङ्ग्रेजी", "इंग्लिस", "इङ्ग्लिस") && has("बोल")) -> Command.Language(Lang.EN)
 
             (has("cancel", "stop", "clear") && has("timer", "focus", "pomodoro", "reminder")) ||
                 (has("रद्द", "बन्द", "रोक") && has("टाइमर", "फोकस")) -> Command.CancelTimer

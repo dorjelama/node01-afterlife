@@ -321,6 +321,22 @@ class AssistantTest {
     }
 
     @Test
+    fun askingForSomethingInALanguageDoesNotSwitchToIt() {
+        // Answering a question must never change a setting: "in english" is
+        // how you ask for a translation, not how you ask NODE to change over.
+        assertEquals(Command.DateIn(8, 26, true), parse("what's mangsir 26 in english"))
+        // Even when the month is misheard and the date lookup fails, it must
+        // not silently become a language switch.
+        assertEquals(Command.Unknown, parse("what's mancer 26 in english"))
+        // The real switch still works, in both languages.
+        assertEquals(Command.Language(Lang.EN), parse("speak english"))
+        assertEquals(Command.Language(Lang.EN), parse("english"))
+        assertEquals(Command.Language(Lang.NE), parse("switch to nepali"))
+        assertEquals(Command.Language(Lang.NE), parse("नेपालीमा बोल"))
+        assertEquals(Command.Language(Lang.EN), parse("अंग्रेजीमा बोल"))
+    }
+
+    @Test
     fun convertsBetweenCalendars() {
         val f = facts(LocalDateTime.of(2026, 11, 10, 9, 0))
         assertEquals(Command.DateIn(8, 26, true), parse("what's mangsir 26 in english"))
