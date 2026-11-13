@@ -415,6 +415,23 @@ class AssistantTest {
     }
 
     @Test
+    fun doesArithmeticWrittenInSymbols() {
+        // What the speech recognizer actually returns: "5 + 5", not "five plus five".
+        assertEquals(Command.Calc(10.0), parse("5 + 5"))
+        assertEquals(Command.Calc(10.0), parse("5+5"))
+        assertEquals(Command.Calc(10.0), parse("what's 5 + 5"))
+        assertEquals(Command.Calc(7.0), parse("10 - 3"))
+        assertEquals(Command.Calc(7.0), parse("10-3"))
+        assertEquals(Command.Calc(391.0), parse("17 x 23"))
+        assertEquals(Command.Calc(12.0), parse("3 × 4"))
+        assertEquals(Command.Calc(5.0), parse("10 / 2"))
+        assertEquals(Command.Calc(25.0), parse("100 ÷ 4"))
+        // A hyphen inside a word still joins it rather than subtracting.
+        assertEquals(Command.Timer(25 * min), parse("twenty-five minutes timer"))
+        assertEquals(Command.Remind(25 * min, "stretch"), parse("remind me in twenty-five minutes to stretch"))
+    }
+
+    @Test
     fun doesArithmetic() {
         val f = facts(LocalDateTime.of(2026, 11, 10, 9, 0))
         assertEquals(Command.Calc(391.0), parse("what's 17 times 23"))

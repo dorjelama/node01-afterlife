@@ -738,6 +738,10 @@ class NodeActivity : Activity() {
         }
         saveInbox()
         Log.d(TAG, "voice: ${command.javaClass.simpleName} ($lang)")
+        // Only the sentences it could not place, so the keywords can be tuned
+        // against what the recognizer really returns. What it understood -- a
+        // note, a reminder -- is never written down.
+        if (command == Command.Unknown) Log.d(TAG, "voice: no match for \"$text\"")
         say(Assistant.reply(command, lang, facts), lang, speak = true)
         voiceLang = lang
         prefs.edit().putString(KEY_VOICE_LANG, lang.name).apply()

@@ -544,7 +544,11 @@ object Assistant {
      * brackets. Upgrade it the day someone dictates an expression.
      */
     internal fun calc(t: String): Double? {
-        val words = t.replace("%", " percent ").replace(Regex("""\s+"""), " ").trim().split(' ')
+        // The recognizer writes sums as symbols -- "5 + 5", "10/2" -- as often
+        // as it writes the words, and may not space them.
+        val words = t.replace("%", " percent ")
+            .replace(Regex("""([+\-*/×÷])"""), " $1 ")
+            .replace(Regex("""\s+"""), " ").trim().split(' ')
         for ((i, w) in words.withIndex()) {
             val op = OPERATORS[w] ?: continue
             // "divided by four", "15 percent of 2400".
@@ -732,6 +736,8 @@ object Assistant {
         "times" to '*', "multiplied" to '*', "x" to '*', "गुणा" to '*',
         "divided" to '/', "over" to '/', "भाग" to '/',
         "percent" to '%', "प्रतिशत" to '%',
+        // As the recognizer writes them.
+        "+" to '+', "-" to '-', "*" to '*', "×" to '*', "/" to '/', "÷" to '/',
     )
 
     /** The number starting at [i], and the index after it. "twenty five" is one number. */
@@ -758,7 +764,9 @@ object Assistant {
             .joinToString("")
             .replace(Regex("""(\d)(\p{L})"""), "$1 $2")
             .replace(Regex("""[.,!?।:;"]"""), " ")
-            .replace('-', ' ')
+            // A hyphen between letters joins a word ("twenty-five"); standing
+            // alone it is a minus sign, and the sums need it.
+            .replace(Regex("""(?<=\p{L})-(?=\p{L})"""), " ")
             .replace(Regex("""\s+"""), " ")
             .trim()
 
