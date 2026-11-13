@@ -277,7 +277,7 @@ object Assistant {
             has("sing", "a song", "गीत", "गाउ") -> Command.Sing
 
             has("coin", "heads or tails", "सिक्का") -> Command.Coin
-            has("dice", "die", "पासा") || word("roll") -> Command.Dice(numbersIn(t).firstOrNull()?.toInt() ?: 6)
+            has("dice", "पासा") || word("die", "roll") -> Command.Dice(numbersIn(t).firstOrNull()?.toInt() ?: 6)
             has("pick a number", "random number", "choose a number", "संख्या छान", "नम्बर छान") ->
                 numbersIn(t).let { Command.Pick(it.getOrElse(0) { 1 }.toInt(), it.getOrElse(1) { 10 }.toInt()) }
 
@@ -520,7 +520,7 @@ object Assistant {
         }.joinToString(" ")
     } else {
         t.substringAfter("remind me", t)
-            .replace(Regex("""\b(in|after|every)\s+[\w\s'-]*?\b(seconds?|secs?|minutes?|mins?|hours?|hrs?)\b"""), " ")
+            .replace(Regex("""\b(in|after|every|for)\s+[\w\s'-]*?\b(seconds?|secs?|minutes?|mins?|hours?|hrs?)\b"""), " ")
             .replace(Regex("""\bevery (hour|minute|second)\b"""), " ")
             // Romanized Nepali has no Devanagari to spot it by, so it lands here.
             .replace(Regex("""\b(samjhaunu|samjhau|samjha|samjhana|yaad|yad|dila\w*|malai)\b"""), " ")
@@ -984,8 +984,9 @@ object Assistant {
         return "$part ${Bs.neDigits(h12)}:${Bs.neDigits2(minute)}"
     }
 
-    /** `at 5`, `for 5 30`, `at 5 30 pm` -- the colon is already gone by now. */
-    private val CLOCK_EN = Regex("""\b(?:at|for) (\d{1,2})(?: (\d{2}))?(?: (am|pm|a m|p m))?\b""")
+    /** `at 5`, `for 5 30`, `at 5 30 pm`. The colon is already gone, and "for 5 minutes" is a length, not a time. */
+    private val CLOCK_EN =
+        Regex("""\b(?:at|for) (\d{1,2})(?: (\d{2}))?(?: (am|pm|a m|p m))?\b(?!\s*(?:sec|min|hour|hr)\w*)""")
 
     private val TENS = setOf(20L, 30L, 40L, 50L)
 

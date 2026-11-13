@@ -265,6 +265,22 @@ class AssistantTest {
     }
 
     @Test
+    fun aLengthOfTimeIsNotAClockTime() {
+        // "for 5 minutes" is how long, not when: it was being heard as five o'clock.
+        assertEquals(Command.Remind(5 * min, "stretch"), parse("remind me to stretch for 5 minutes"))
+        assertEquals(Command.Remind(120 * min, "call her"), parse("remind me to call her for 2 hours"))
+        // An alarm still reads "for" as the hour, because no length follows it.
+        assertEquals(Command.Alarm(6, 30, true), parse("set an alarm for 6:30 am"))
+        assertEquals(Command.Timer(5 * min), parse("set a timer for 5 minutes"))
+    }
+
+    @Test
+    fun aWordThatMerelyContainsDieIsNotADice() {
+        assertEquals(Command.Unknown, parse("did you see the ladies"))
+        assertEquals(Command.Dice(6), parse("roll a die"))
+    }
+
+    @Test
     fun understandsAClockTime() {
         assertEquals(Command.RemindAt(5, 30, false, "call mom"), parse("remind me at 5:30 to call mom"))
         assertEquals(Command.RemindAt(17, 30, true, "call mom"), parse("remind me at 5:30 pm to call mom"))
