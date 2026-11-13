@@ -1,11 +1,8 @@
 package dev.node01.afterlife
 
-import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
-import java.time.Month
 import java.time.format.DateTimeFormatter
-import java.time.format.TextStyle
 import java.util.Locale
 import kotlin.random.Random
 
@@ -52,13 +49,6 @@ sealed interface Command {
 
     /** "How many miles is 10 km?" -- [value] is already in [to]. */
     data class Convert(val value: Double, val to: Measure) : Command
-
-    /**
-     * "What's Mangsir 26 in English?" -- one date read in the other calendar.
-     * [nepali] is which calendar the month named belongs to; the year is
-     * whichever one we are in now.
-     */
-    data class DateIn(val month: Int, val day: Int, val nepali: Boolean) : Command
 
     /** "Say you're a good robot" -- repeated back word for word, and a quick test of the voice. */
     data class Echo(val text: String) : Command
@@ -217,7 +207,6 @@ object Assistant {
         val spelled by lazy { said(t, SPELL_EN, SPELL_NE) }
         val echoed by lazy { said(t, ECHO_EN) }
         val echoedNe by lazy { said(t, ECHO_NE) }
-        val dated by lazy { dateIn(t) }
         fun has(vararg words: String) = words.any { t.contains(it) }
 
         /** Whole words only: short romanized Nepali like "sut" must not match inside English. */
@@ -230,10 +219,6 @@ object Assistant {
             // nothing else; Nepali puts its verb last and waits below.
             spelled != null -> Command.Spell(spelled!!)
             echoed != null -> Command.Echo(echoed!!)
-
-            // Before the language switch below: "... in English" is the whole
-            // point of the question, not a request to change language.
-            dated != null -> dated!!
 
             // Language first, but "nepali date" is a date, not a request to switch.
             // A switch has to be asked for: "speak Nepali", not merely "in
@@ -570,55 +555,6 @@ object Assistant {
     }
 
     /**
-     * "Mangsir 26 in English", "what's December 25 in Nepali" -- a month, a
-     * day, and which calendar you want it in.
-     *
-     * The calendar has to be named. Without that rule "maybe 5 minutes" would
-     * read as the fifth of May, and half the months are ordinary words.
-     */
-    internal fun dateIn(t: String): Command.DateIn? {
-        if (!CALENDAR_CUE.containsMatchIn(t)) return null
-        val words = t.split(' ')
-        val day = numbersIn(t).firstOrNull { it in 1..32 }?.toInt() ?: return null
-        fun monthIn(names: Map<String, Int>) =
-            words.firstNotNullOfOrNull { w -> names.entries.firstOrNull { w.startsWith(it.key) }?.value }
-        monthIn(BS_MONTHS)?.let { return Command.DateIn(it, day, nepali = true) }
-        monthIn(AD_MONTHS)?.let { return Command.DateIn(it, day, nepali = false) }
-        return null
-    }
-
-    /** The two dates for [c], or null when no such day exists. */
-    private fun resolve(c: Command.DateIn, now: LocalDateTime): Pair<BsDate, LocalDate>? = if (c.nepali) {
-        val year = Bs.fromAd(now.toLocalDate())?.year
-        val ad = year?.let { Bs.toAd(it, c.month, c.day) }
-        if (ad == null) null else BsDate(year, c.month, c.day) to ad
-    } else {
-        val ad = runCatching { LocalDate.of(now.year, c.month, c.day) }.getOrNull()
-        val bs = ad?.let { Bs.fromAd(it) }
-        if (bs == null) null else bs to ad
-    }
-
-    private val CALENDAR_CUE =
-        Regex("""\b(english|nepali|bikram|sambat|gregorian)\b|अंग्रेजी|अङ्ग्रेजी|नेपाली|विक्रम|ईस्वी""")
-
-    private val BS_MONTHS: Map<String, Int> = buildMap {
-        Bs.MONTH_NAMES.forEachIndexed { i, name -> put(name.lowercase(Locale.ROOT), i + 1) }
-        Bs.MONTH_NAMES_NE.forEachIndexed { i, name -> put(name, i + 1) }
-        // How they are also commonly written.
-        putAll(mapOf("baisakh" to 1, "jeth" to 2, "asar" to 3, "sawan" to 4, "bhadau" to 5, "asoj" to 6))
-        putAll(mapOf("mangshir" to 8, "marga" to 8, "push" to 9, "falgun" to 11, "chait" to 12))
-        // What an English recognizer actually returns when it hears a Nepali
-        // month and has no such word: the nearest English one. Harmless to
-        // accept, since a date needs a calendar named and a day number too.
-        putAll(mapOf("monkey" to 8, "mansir" to 8, "munsir" to 8, "mongsir" to 8, "mug" to 10, "poos" to 9))
-    }
-
-    private val AD_MONTHS: Map<String, Int> = (1..12).associateBy(
-        { Month.of(it).getDisplayName(TextStyle.FULL, Locale.US).lowercase(Locale.ROOT) },
-        { it },
-    )
-
-    /**
      * What was asked for literally: English puts the verb first ("say
      * namaste"), Nepali puts it last ("नमस्ते भन"). Null when neither pattern
      * fits, and null for a bare "say" with nothing after it.
@@ -814,11 +750,6 @@ object Assistant {
         is Command.Convert -> "That's ${number(c.value)} ${unitName(c.to, Lang.EN)}."
         is Command.Echo -> c.text
         is Command.Spell -> spellOut(c.text)
-        is Command.DateIn -> resolve(c, f.now)?.let { (bs, ad) ->
-            val bsText = "${bsMonthEn(bs.month)} ${bs.day}, ${bs.year}"
-            val adText = ad.format(DateTimeFormatter.ofPattern("MMMM d, yyyy", Locale.US))
-            if (c.nepali) "$bsText is $adText." else "$adText is $bsText."
-        } ?: "There's no such date."
         Command.StopwatchStart -> "Stopwatch started. Ask me how long."
         Command.StopwatchRead -> f.stopwatchMs?.let { "${durationEn(it)}." } ?: "No stopwatch is running."
         is Command.Volume -> if (c.up) "Louder." else "Quieter."
@@ -889,12 +820,6 @@ object Assistant {
         is Command.Convert -> "${neNumber(number(c.value))} ${unitName(c.to, Lang.NE)} हुन्छ।"
         is Command.Echo -> c.text
         is Command.Spell -> spellOut(c.text)
-        is Command.DateIn -> resolve(c, f.now)?.let { (bs, ad) ->
-            val bsText = "${Bs.neDigits(bs.year)} ${Bs.MONTH_NAMES_NE[bs.month - 1]} ${Bs.neDigits(bs.day)} गते"
-            val adText = "${ad.format(DateTimeFormatter.ofPattern("MMMM", Locale.US))} " +
-                "${Bs.neDigits(ad.dayOfMonth)}, ${Bs.neDigits(ad.year)}"
-            if (c.nepali) "$bsText भनेको $adText हो।" else "$adText भनेको $bsText हो।"
-        } ?: "त्यस्तो मिति छैन।"
         Command.StopwatchStart -> "स्टपवाच सुरु भयो। कति भयो भनेर सोध्नुहोस्।"
         Command.StopwatchRead -> f.stopwatchMs?.let { "${durationNe(it)} भयो।" } ?: "स्टपवाच चलिरहेको छैन।"
         is Command.Volume -> if (c.up) "ठूलो स्वरमा।" else "बिस्तारै।"

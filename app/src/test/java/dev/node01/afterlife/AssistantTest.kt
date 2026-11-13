@@ -321,55 +321,18 @@ class AssistantTest {
     }
 
     @Test
-    fun acceptsWhatAnEnglishRecognizerMakesOfANepaliMonth() {
-        // Said aloud to an en-GB recognizer, "Mangsir" comes back as "monkey".
-        assertEquals(Command.DateIn(8, 26, true), parse("what's monkey 26 in English"))
-        // It also comes back as "your", which is far too ordinary a word to
-        // accept as a month: that one stays unanswered rather than guessed at.
-        assertEquals(Command.Unknown, parse("what's your 26 in English"))
-        assertEquals(Command.Greet(Greeting.NAME), parse("what's your name"))
-        // Spoken in Nepali, the month arrives in Devanagari and is exact.
-        assertEquals(Command.DateIn(8, 26, true), parse("मंसिर २६ अंग्रेजीमा"))
-    }
-
-    @Test
     fun askingForSomethingInALanguageDoesNotSwitchToIt() {
         // Answering a question must never change a setting: "in english" is
-        // how you ask for a translation, not how you ask NODE to change over.
-        assertEquals(Command.DateIn(8, 26, true), parse("what's mangsir 26 in english"))
-        // Even when the month is misheard and the date lookup fails, it must
-        // not silently become a language switch.
-        assertEquals(Command.Unknown, parse("what's mancer 26 in english"))
+        // how you ask for something to be put into a language, not how you
+        // ask NODE to change over.
+        assertEquals(Command.Unknown, parse("what's mangsir 26 in english"))
+        assertEquals(Command.Unknown, parse("how do you write this in nepali"))
         // The real switch still works, in both languages.
         assertEquals(Command.Language(Lang.EN), parse("speak english"))
         assertEquals(Command.Language(Lang.EN), parse("english"))
         assertEquals(Command.Language(Lang.NE), parse("switch to nepali"))
         assertEquals(Command.Language(Lang.NE), parse("नेपालीमा बोल"))
         assertEquals(Command.Language(Lang.EN), parse("अंग्रेजीमा बोल"))
-    }
-
-    @Test
-    fun convertsBetweenCalendars() {
-        val f = facts(LocalDateTime.of(2026, 11, 10, 9, 0))
-        assertEquals(Command.DateIn(8, 26, true), parse("what's mangsir 26 in english"))
-        assertEquals(Command.DateIn(12, 25, false), parse("what's december 25 in nepali"))
-        assertEquals(Command.DateIn(7, 24, true), parse("कार्तिक २४ अंग्रेजीमा"))
-
-        // Mangsir 26 of the current BS year, read back as a Gregorian date.
-        val ad = Bs.toAd(Bs.fromAd(LocalDate.of(2026, 11, 10))!!.year, 8, 26)!!
-        assertEquals(
-            "Mangsir 26, 2083 is ${ad.format(java.time.format.DateTimeFormatter.ofPattern("MMMM d, yyyy", java.util.Locale.US))}.",
-            Assistant.reply(Command.DateIn(8, 26, true), Lang.EN, f),
-        )
-        val back = Assistant.reply(Command.DateIn(12, 25, false), Lang.EN, f)
-        assertTrue(back, back.startsWith("December 25, 2026 is "))
-
-        // A day that does not exist says so rather than guessing.
-        assertEquals("There's no such date.", Assistant.reply(Command.DateIn(2, 31, false), Lang.EN, f))
-
-        // The calendar must be named, or "maybe 5 minutes" would be the fifth of May.
-        assertEquals(Command.Timer(5 * min), parse("set a timer for 5 minutes"))
-        assertEquals(Command.Language(Lang.EN), parse("speak english"))
     }
 
     @Test

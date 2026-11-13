@@ -123,7 +123,6 @@ with or without "Hey Buddy", is still in the code, switched off: `WAKE` in `Node
 | "How much of my session is left?" | "सेसन कति बाँकी छ?" | The 5-hour window: the percentage used, and when it resets |
 | "Go to sleep" / "Wake up" | "सुत" / "उठ" | Eyes closed and dim until a tap; alerts still wake it |
 | "Speak Nepali" / "English" | "नेपालीमा बोल" / "अंग्रेजीमा बोल" | Which language it listens for first |
-| "What's Mangsir 26 in English?" | "डिसेम्बर २५ नेपालीमा" | The same day in the other calendar, this year. The calendar has to be named |
 | "Say anything you like" | "नमस्ते भन" | Repeats it back — and a quick way to hear whether a voice is installed |
 | "Spell Kathmandu" | "हिज्जे काठमाडौं" | One letter at a time |
 | "Flip a coin" / "Roll a dice" / "Pick a number between 1 and 10" | "सिक्का उफार" / "पासा" | Settles an argument |
@@ -276,10 +275,10 @@ Everything configurable is a constant — there is no settings screen, by design
   Friday" and no "tomorrow at nine". A desk note from the page is still due now or within 24 hours.
 - No wake word: you tap or wave to talk to it, by design.
 - Voice understands a fixed set of phrasings and greetings, not free conversation.
-- A Nepali month name spoken into the English recognizer comes back as whatever English word
-  sounds nearest — "Mangsir" arrives as "monkey". A few of those are accepted, but the
-  reliable way to ask is to say "speak Nepali" first, so the recognizer returns Devanagari.
-  The other direction, "what's December 25 in Nepali", works in English.
+- No converting one calendar to the other by voice. Spoken into the English recognizer, a
+  Nepali month name comes back as whatever English word sounds nearest — "Mangsir" arrives
+  as "monkey" — and accepting those guesses was worse than not offering it. "What's the
+  date?" still answers in both calendars, which is what the converter was mostly used for.
 - Sums are two numbers and one operator; conversions are whole numbers. Neither takes a chain.
 - A repeating nudge only fires while the camera can see you, so it is no use for anything
   that must happen whether you are at the desk or not.
