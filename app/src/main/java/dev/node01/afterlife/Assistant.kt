@@ -385,6 +385,9 @@ object Assistant {
     /** While the microphone is open. */
     fun listening(lang: Lang) = if (lang == Lang.NE) "सुन्दैछु…" else "Listening…"
 
+    /** A question, looked up, that found no answer. English only, as questions are. */
+    const val NOT_FOUND = "Sorry, I couldn't find that."
+
     /** Said once as the session window passes [percent]: the number, not advice. */
     fun usageWarning(percent: Int, lang: Lang): String =
         if (lang == Lang.NE) "सेसन ${Bs.neDigits(percent)}% प्रयोग भयो।" else "Session $percent% used."

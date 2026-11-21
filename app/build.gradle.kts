@@ -45,10 +45,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
     // No BuildConfig, no Compose, no view binding, no resource shrinking.
     buildFeatures {
         buildConfig = false
@@ -61,10 +57,17 @@ android {
     }
 }
 
-// One runtime dependency: MediaPipe's on-device hand landmarker, for hand
-// tracking and nothing else. kotlin-stdlib is contributed automatically by the
-// Kotlin Android plugin. JUnit is test-only and never reaches the APK.
+kotlin {
+    compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
+}
+
+// Two runtime dependencies: MediaPipe's on-device hand landmarker, for hand
+// tracking, and LiteRT-LM, to run NODE's own fine-tuned model (Rephraser.kt).
+// kotlin-stdlib is contributed automatically by the Kotlin Android plugin.
+// JUnit is test-only and never reaches the APK.
 dependencies {
     implementation("com.google.mediapipe:tasks-vision:0.10.35")
+    // Built with Kotlin 2.4, which is why the Kotlin plugin is 2.4 too.
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.19.1")
     testImplementation("junit:junit:4.13.2")
 }

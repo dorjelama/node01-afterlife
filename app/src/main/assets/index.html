@@ -63,6 +63,17 @@
 <p>NODE chirps once and keeps it, out of sight, until you ask. Hold a finger on the screen to see
 your tasks; tap one for its details and to mark it done. Up to 30 at a time.</p>
 
+<h2>WEBCAM</h2>
+<div class="row">
+  <button type="button" data-mode="webcam">Webcam</button>
+  <button type="button" data-mode="face">Face</button>
+  <a href="webcam">Open the webcam</a>
+  <span class="said" id="mode-said" role="status"></span>
+</div>
+<p>The phone is one or the other. As a webcam the face goes dark, the rear camera and the
+microphone stream to the webcam page, and clips are recorded to the phone; notes and alerts
+wait until it is the face again. Holding a finger on the phone's screen also brings the face back.</p>
+
 <h2>CAMERA</h2>
 <div class="row">
   <button type="button" id="cam-toggle" aria-controls="cam">Show</button>
@@ -101,6 +112,8 @@ thinking and narrowing its eyes while Claude works.</p>
   <button type="button" data-play="read">Read</button>
   <button type="button" data-play="think">Think</button>
   <button type="button" data-play="narrow">Narrow</button>
+  <button type="button" data-play="nod">Nod</button>
+  <button type="button" data-play="hmm">Hmm</button>
 </div>
 <p>Expressions, held for three seconds:</p>
 <div class="row">
@@ -229,6 +242,20 @@ document.getElementById('task').onsubmit = async (e) => {
     taskSaid.textContent = 'Not sent: is NODE Companion open on the phone?';
   }
 };
+
+// -- webcam mode ----------------------------------------------------------
+const modeSaid = document.getElementById('mode-said');
+for (const b of document.querySelectorAll('[data-mode]')) {
+  b.onclick = async () => {
+    try {
+      const res = await fetch('mode', { method: 'POST', body: new URLSearchParams({ to: b.dataset.mode }) });
+      if (!res.ok) throw new Error(res.status);
+      modeSaid.textContent = b.dataset.mode === 'webcam' ? 'Now a webcam.' : 'Now the face.';
+    } catch (err) {
+      modeSaid.textContent = 'Not sent: is NODE Companion open on the phone?';
+    }
+  };
+}
 
 // -- camera ---------------------------------------------------------------
 // Off until asked for, and off again when this tab is hidden: the phone only

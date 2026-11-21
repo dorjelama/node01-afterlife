@@ -10,6 +10,7 @@ import org.junit.Test
 class HttpServerTest {
 
     private val key = "abcdefghjk"
+    private val clip = "NODE_20261029_120000.mp4"
 
     @Test
     fun routesUnderTheKey() {
@@ -24,6 +25,13 @@ class HttpServerTest {
         assertEquals(Route.Pc, HttpServer.route("POST", "/$key/pc", key))
         assertEquals(Route.Cam, HttpServer.route("GET", "/$key/cam", key))
         assertEquals("the page's cache-buster", Route.Cam, HttpServer.route("GET", "/$key/cam?1731500000000", key))
+        assertEquals(Route.Mode, HttpServer.route("POST", "/$key/mode", key))
+        assertEquals(Route.Webcam, HttpServer.route("GET", "/$key/webcam", key))
+        assertEquals(Route.Video, HttpServer.route("GET", "/$key/video", key))
+        assertEquals(Route.Video, HttpServer.route("GET", "/$key/video?1730000000", key))
+        assertEquals(Route.Audio, HttpServer.route("GET", "/$key/audio", key))
+        assertEquals(Route.Clips, HttpServer.route("GET", "/$key/rec/", key))
+        assertEquals(Route.Clip(clip), HttpServer.route("GET", "/$key/rec/$clip", key))
     }
 
     @Test
@@ -35,6 +43,9 @@ class HttpServerTest {
         assertEquals(Route.NotFound, HttpServer.route("GET", "/$key/task", key))
         assertEquals(Route.NotFound, HttpServer.route("GET", "/$key/pc", key))
         assertEquals(Route.NotFound, HttpServer.route("POST", "/$key/cam", key))
+        assertEquals(Route.NotFound, HttpServer.route("GET", "/$key/mode", key))
+        assertEquals(Route.NotFound, HttpServer.route("POST", "/$key/video", key))
+        assertEquals(Route.NotFound, HttpServer.route("POST", "/$key/rec/$clip", key))
     }
 
     @Test
@@ -47,9 +58,23 @@ class HttpServerTest {
 
     @Test
     fun noOtherPathsUnderTheKey() {
-        for (rest in listOf("video", "audio", "rec/", "cam/", "camera", "claude/", "claude/../note", "../$key/note", "index.html")) {
+        for (rest in listOf("video/", "rec", "webcam/", "cam/", "camera", "claude/", "claude/../note", "../$key/note", "index.html")) {
             assertEquals(rest, Route.NotFound, HttpServer.route("POST", "/$key/$rest", key))
             assertEquals(rest, Route.NotFound, HttpServer.route("GET", "/$key/$rest", key))
+        }
+    }
+
+    @Test
+    fun clipNamesCannotEscapeTheFolder() {
+        for (name in listOf(
+            "../shared_prefs/node.xml",
+            "%2e%2e/x",
+            "$clip/../x",
+            "x.mp4",
+            "NODE_20261029_120000.mp4.part",
+            "/etc/hosts",
+        )) {
+            assertEquals(name, Route.NotFound, HttpServer.route("GET", "/$key/rec/$name", key))
         }
     }
 

@@ -9,19 +9,21 @@ lights go off. They wink, tilt, bounce, turn into hearts when you say thank you 
 when you shake the phone. When Claude Code on your PC needs your
 approval, they turn amber and chirp, so you can step away from the keyboard and still know.
 Tap it or wave at it and it listens: ask the time, set a timer, have it remind you — in
-English or Nepali, with no cloud AI.
+English or Nepali, with no cloud AI. Put [a small AI model](#on-phone-ai) on it and it
+understands loosely worded English too, still on the phone.
 
 <p align="left">
   <img alt="platform" src="https://img.shields.io/badge/platform-Android%2011%2B%20(API%2030)-000000">
-  <img alt="language" src="https://img.shields.io/badge/Kotlin-2.0.21-000000">
-  <img alt="dependencies" src="https://img.shields.io/badge/runtime%20dependencies-one%20(MediaPipe)-000000">
+  <img alt="language" src="https://img.shields.io/badge/Kotlin-2.4.0-000000">
+  <img alt="dependencies" src="https://img.shields.io/badge/runtime%20dependencies-two%20(MediaPipe%2C%20LiteRT--LM)-000000">
   <img alt="permissions" src="https://img.shields.io/badge/permissions-INTERNET%20CAMERA%20RECORD__AUDIO%20WAKE__LOCK-000000">
   <img alt="cloud" src="https://img.shields.io/badge/cloud%20AI-none-000000">
 </p>
 
-It installs as its own app, **NODE Companion** (`dev.node01.companion`), next to the NODE
-webcam (`dev.node01.afterlife`, on `feature/webcam`). NODE began life as a desk clock; that
-version lives on at `9a42e35`.
+It installs as **NODE Companion** (`dev.node01.companion`), and it is the NODE webcam too:
+the page's **WEBCAM** buttons turn the phone into one or the other (see
+[Webcam mode](#webcam-mode)). NODE began life as a desk clock; that version lives on at
+`9a42e35`.
 
 ---
 
@@ -145,8 +147,13 @@ with or without "Hey Buddy", is still in the code, switched off: `WAKE` in `Node
 | "What's your name?" | "तिम्रो नाम के हो?" | "I'm NODE, your desk buddy." |
 | "Bye" / "See you" | "बाइ" | "Bye! See you soon." |
 
-It answers in the language you spoke. There is no AI behind it: a fixed set of things,
-matched by keyword, so anything else gets "Sorry, I didn't catch that".
+It answers in the language you spoke. These are matched by keyword, which is instant. An
+English sentence the keywords miss goes to [the AI model on the phone](#on-phone-ai), if you
+have put one there. The model rewrites it into one of the phrases above, so "ping me in ten to
+stretch" works like "remind me in 10 minutes to stretch", and [answers a question about the
+world](#questions) from Wikipedia. Meanwhile each eye shrinks into three dots, lit one after
+another: a few seconds for a command, 15 to 25 for a question. Anything it can't place, and
+every unmatched Nepali sentence, gets "Sorry, I didn't catch that".
 
 **Offline first, online if need be.** NODE asks the phone's speech recognizer to work offline,
 which needs the Google app's offline model for the language (Google app → profile picture →
@@ -157,8 +164,110 @@ and the caption says `· online` while it listens. It tries offline again every 
 Spoken answers use a voice installed on the phone where there is one; Nepali, with none here,
 uses Google's online voice. See [engineering notes](docs/ENGINEERING-NOTES.md).
 
+## On-phone AI
+
+NODE can run a small, ready-made AI model on the phone, offline. Nothing is trained: the model
+is told NODE's commands and shown a few examples, and rewrites a loosely worded English
+sentence into a phrase NODE already understands. The keyword parser still decides what that
+phrase means, so the model can never do anything a spoken sentence couldn't already do. With
+no model on the phone, NODE behaves as before.
+
+| You say | The model rewrites it as | NODE |
+|---|---|---|
+| "ping me in ten to stretch" | `remind me in 10 minutes to stretch` | Sets the reminder |
+| "nudge me after lunch to call mum" | `remind me at 1 pm to call mum` | Sets it for 1 pm |
+| "how late is it" | `what time is it` | Tells you |
+| "who wrote harry potter" | `ASK` | Looks it up: "J. K. Rowling wrote Harry Potter." |
+| "um the thing yeah" | `UNKNOWN` | "Didn't catch that" |
+
+```mermaid
+flowchart TD
+    S["You speak"] --> R["Speech recognizer<br/>text"]
+    R --> KW{"Keyword parser<br/>Assistant.parse"}
+    KW -- "match" --> ACT["Do it<br/>timer · reminder · time …"]
+    KW -- "no match, English,<br/>model on the phone" --> M["AI model<br/>on the phone, a few seconds"]
+    KW -- "no match, otherwise" --> NO["Didn't catch that"]
+    M -- "rewrite" --> KW2{"Keyword parser<br/>once more"}
+    KW2 -- "match" --> ACT
+    KW2 -- "no match" --> NO
+    M -- "UNKNOWN" --> NO
+    M -- "ASK" --> W["Wikipedia search<br/>the question's subject only"]
+    W -- "2 best sentences" --> A["AI model<br/>writes a one-line answer"]
+    A --> SAY["Says it"]
+    W -- "nothing found" --> NF["Couldn't find that"]
+```
+
+What the model is told is `COMMANDS` and `EXAMPLES` in `Rephraser.kt`. It reads them once,
+when it loads; each sentence then gets a fresh copy of that conversation, so nothing said
+carries over to the next one. `RephraserTest` checks that the model is only ever shown
+phrases NODE understands. When it keeps getting a kind of sentence wrong, add one like it to
+`EXAMPLES`, with the phrase it should have been.
+
+### Put one on the phone
+
+Any instruction-tuned model in the `.litertlm` format works. Tried on the Redmi Note 8:
+
+| Model | Size | Right | Each sentence | Verdict |
+|---|---|---|---|---|
+| [Qwen2.5 1.5B Instruct](https://huggingface.co/litert-community/Qwen2.5-1.5B-Instruct/tree/main), `…_q8_ekv4096.litertlm` | 1.6 GB | about 8 in 10 | 2–9 s | Use this. No account needed |
+| [Qwen3 0.6B](https://huggingface.co/litert-community/Qwen3-0.6B-int4/tree/main) | 347 MB | 3 in 10 | 1.5–5 s | Too often the wrong command |
+
+With Qwen2.5 1.5B, NODE takes about a minute after it starts to load the model, and uses about
+2.7 GB of memory. Until it has loaded, sentences go by keywords only. Its mistakes are real
+commands: "can you speak up" once came out as `quieter`, so it is worth listening to what NODE
+says back. [Gemma 3 1B](https://huggingface.co/litert-community/Gemma3-1B-IT/tree/main)
+(584 MB, a Hugging Face account and the Gemma licence) is untried.
+
+Download the file on the laptop, then, with the phone plugged in:
+
+```bash
+adb push Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv4096.litertlm /sdcard/Android/data/dev.node01.companion/files/node.litertlm
+```
+
+Reopen NODE. `adb logcat -s NODE` shows how long loading took and how it rewrote a test
+sentence, `model: warm-up "is it getting late" -> "what time is it"`, and after that how long
+each rewrite took. As before, only a sentence that nothing could place is logged word for word,
+`voice: no match for "…"`. Delete the file to go back to keywords only.
+
+### Questions
+
+A question about the world ("who wrote harry potter", "how tall is mount everest") gets `ASK`
+from the model, and then:
+
+1. **Search.** NODE searches Wikipedia for the question's subject, with the question words
+   taken out ("harry potter"). That search, under a generic client name, is the only thing
+   that leaves the phone. No key or account, and no AI company sees it.
+2. **Notes.** From the top two articles' opening paragraphs it keeps two sentences: the first
+   one, which says what the subject is, and the one that shares most words with the question
+   (rarer words count for more, and "tall" counts as "height"). The model reads about 8 words
+   a second on this phone, so fewer words mean a sooner answer.
+3. **Answer.** The same model on the phone writes one short sentence from those notes, and NODE
+   says it, with a little nod. If the notes don't answer it: "Sorry, I couldn't find that."
+
+On the Redmi it takes 15 to 25 seconds in all, most of it the model reading. It knows only what
+Wikipedia's opening paragraphs say: no news, scores, prices or weather (the morning briefing has
+the weather), and an answer can be wrong. `Lookup.kt` does the search and picks the notes.
+
+## Webcam mode
+
+The phone is the companion or a webcam, never both at once. On the page, **WEBCAM → Webcam**
+stops the face, the front camera and the voice assistant, and starts the rear camera:
+
+- `http://<phone>:8081/<key>/webcam` is the live view, with sound and a list of recordings.
+  `…/video` is the bare MJPEG stream, for OBS Studio's Browser or Media source.
+- 1080p clips of five minutes each are recorded to the phone, oldest deleted first when space
+  runs short, and downloadable from `…/rec/`.
+- The screen shows one dim dot. A tap shows the address; **holding a finger on the screen
+  brings the face back**, as does **WEBCAM → Face** on the page.
+- Notes, tasks and Claude Code events sent meanwhile are kept, silently, and shown when the
+  face returns.
+- The mode is remembered, so after a power cut the phone comes back as whichever it was.
+
 ## Privacy
 
+- **In webcam mode the rear camera and the microphone are on, streamed and recorded.** Only in
+  that mode, only while NODE is in front, and only to the phone and to whoever opens the
+  webcam page with the key. The clips stay on the phone until they are overwritten.
 - **Hand tracking reads the camera on the phone and nowhere else.** While the mode is on, frames
   go to the MediaPipe model on the phone; only the points of each hand come out of it, drawn on
   the screen and then forgotten.
@@ -177,9 +286,11 @@ uses Google's online voice. See [engineering notes](docs/ENGINEERING-NOTES.md).
   is no wake word and nothing listens in the background. Recognition is offline when the
   phone has the model and online through Google when it does not, and the screen says
   which; see [Voice](#voice).
-- **No cloud AI.** The voice assistant is a fixed set of commands, not an AI. Two things leave
-  your LAN and nothing else does: online speech when the offline model is missing, and the
-  morning briefing's weather — a fixed pair of coordinates (`LAT`/`LON` in `Weather.kt`, yours
+- **No cloud AI.** The voice assistant is a fixed set of commands. If you put
+  [an AI model on the phone](#on-phone-ai), it runs there, offline, and writes every answer
+  there. Three things leave your LAN and nothing else does: online speech when the offline
+  model is missing; a [question](#questions) the model sorts as one for the web, whose subject
+  goes to Wikipedia's search under a generic client name; and the morning briefing's weather — a fixed pair of coordinates (`LAT`/`LON` in `Weather.kt`, yours
   to change) sent to Open-Meteo, with no key, no account and nothing about you or the phone.
   It times out after 3 seconds and the briefing goes on without it.
 - A hook event contains your prompt and the tools' input and output. NODE keeps only the event
@@ -195,6 +306,20 @@ uses Google's online voice. See [engineering notes](docs/ENGINEERING-NOTES.md).
 
 - **Set NODE Companion as the default Home app and the screen lock to None.** After a reboot
   or a crash it then comes straight back without anyone touching it.
+- **Or make the phone nothing but NODE** (kiosk). This needs a phone with no accounts on it and
+  working `adb shell` — a clean custom ROM, not stock MIUI, where it sits behind a Mi account.
+  In this order, because afterwards no system dialog can appear:
+  1. Install, open NODE and allow the camera and the microphone.
+  2. Tick "Always allow from this computer" on the USB debugging prompt, then
+     `adb shell settings put global adb_allowed_connection_time 0` so that never expires.
+  3. `adb shell dpm set-device-owner dev.node01.companion/dev.node01.afterlife.NodeAdmin`,
+     then reboot.
+
+  From then on there is no lock screen, no launcher, no bars, no Home or Recents: the phone
+  boots into NODE and stays there. Updating with `adb install -r -t` still works. To get
+  Android back, any one of: `adb shell dpm remove-active-admin
+  dev.node01.companion/dev.node01.afterlife.NodeAdmin`;
+  `curl -d to=release http://<phone>:8081/<key>/mode`; or a wipe from recovery.
 - **Keep it on the charger, with airflow,** and check the battery for swelling now and then.
   The front camera runs at its smallest size and 15 fps, far lighter than the webcam's 1080p
   recording, but an old battery held at 100% around the clock is still the real hazard.
@@ -215,12 +340,14 @@ screen size), and softens the same on/off map, a pixel per dot, into the glow. A
 function of their own progress, and blinks, glances and fidgets are single delayed callbacks,
 not a frame loop.
 
-**One runtime dependency, for one feature.** Camera2's hardware face detection, `SensorManager`,
+**Two runtime dependencies, each for one feature.** Camera2's hardware face detection, `SensorManager`,
 `SpeechRecognizer`, `TextToSpeech`, `AudioTrack` and `java.net` are all in the platform. The
 chirps are synthesized at start-up, so the repo carries no sound files. The exception is hand
 tracking: Google's MediaPipe hand landmarker (`tasks-vision`) and its 7.8 MB model, which run
 on the phone, are loaded only while the mode is on, and take the APK from about 3 MB to 25 MB.
-JUnit is test-only and never reaches the APK.
+The other is LiteRT-LM, which runs [the on-phone AI model](#on-phone-ai). It is loaded only when
+the model file is on the phone, and its native library takes the APK to about 52 MB. It is built
+with Kotlin 2.4, which is why the project is too. JUnit is test-only and never reaches the APK.
 
 **One pure function decides.** `Mood.decide` turns what NODE senses into what it shows, and is
 unit-tested like any other function. The activity only gathers inputs and draws the answer.
@@ -256,8 +383,11 @@ sdk.dir=/path/to/Android/Sdk
 
 ```bash
 adb devices -l
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb install -r -t app/build/outputs/apk/debug/app-debug.apk
 ```
+
+`-t` is required: the app is marked test-only, which is what keeps an `adb` way out of the
+kiosk (see [Leaving it running](#leaving-it-running)).
 
 Then open NODE Companion and tap **Allow** for the camera. On MIUI, `adb shell pm grant` is
 refused without a Mi account, so the tap is needed.
@@ -322,6 +452,8 @@ app/src/main/java/dev/node01/afterlife/
 ├── Battery.kt         the phone's own health: hot, or unplugged and draining
 ├── Weather.kt         the morning briefing's one line, and the only thing that leaves the LAN
 ├── Assistant.kt       voice commands: what was said → what to do → what to say, EN + NE
+├── Rephraser.kt       the on-phone AI model: a loose English sentence → a phrase Assistant knows, or an answer
+├── Lookup.kt          a question's subject → Wikipedia → the two sentences the answer is written from
 ├── Listener.kt        one sentence through the phone's speech recognizer, offline preferred
 ├── Speaker.kt         spoken answers, with installed voices only
 ├── Chatter.kt         its small talk, and the rules that keep it from chattering
@@ -330,8 +462,12 @@ app/src/main/java/dev/node01/afterlife/
 ├── Tasks.kt           tasks from the page, kept until marked done
 ├── PcStats.kt         the PC's CPU, memory and disk load, as its script sends it
 ├── Chirp.kt           the sounds, and the one tune
-└── HttpServer.kt      LAN server: page, hook events, notes, tasks, spoken lines, PC load, camera view
+├── Camcorder.kt       webcam mode: rear camera and microphone → loop clips and the live streams
+├── LoopRecorder.kt    webcam mode: five-minute clips on the phone, oldest deleted first
+├── NodeAdmin.kt       lets adb make NODE the device owner, for the kiosk
+└── HttpServer.kt      LAN server: page, hook events, notes, tasks, spoken lines, PC load, camera view, webcam
 app/src/main/assets/
+├── webcam.html        the webcam's page: live view, sound, recordings
 └── index.html         the page: desk notes, tasks, camera view, lines to say, Claude Code and PC load setup, test buttons
 ```
 

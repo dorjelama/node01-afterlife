@@ -2,7 +2,9 @@ package dev.node01.afterlife
 
 import android.Manifest
 import android.app.Activity
+import android.app.admin.DevicePolicyManager
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -12,7 +14,9 @@ import android.media.AudioManager
 import android.net.wifi.WifiManager
 import android.os.BatteryManager
 import android.os.Bundle
+import android.os.Environment
 import android.os.SystemClock
+import android.provider.Settings
 import android.util.Log
 import android.util.TypedValue
 import android.view.MotionEvent
@@ -23,6 +27,7 @@ import android.view.WindowInsetsController
 import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
+import java.io.File
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.security.SecureRandom
@@ -82,6 +87,21 @@ class NodeActivity : Activity() {
     /** The page's camera view: [Presence] fills it, only while the server has a viewer on it. */
     private val camView = Hub(CAM_VIEW_QUEUE)
 
+    /** Webcam mode: the rear camera, recording loop clips and streaming, in place of the face. */
+    private var webcam = false
+    private var camcorder: Camcorder? = null
+    private val webcamPage by lazy { assets.open("webcam.html").use { it.readBytes() } }
+    private val recorder by lazy {
+        LoopRecorder(getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: File(filesDir, "clips"))
+    }
+
+    // A couple of frames, or half a second of sound, per viewer before dropping.
+    private val webcamVideo = Hub(capacity = 2)
+    private val webcamAudio = Hub(capacity = 25)
+
+    private val dpm by lazy { getSystemService(DevicePolicyManager::class.java) }
+    private val admin by lazy { ComponentName(this, NodeAdmin::class.java) }
+
     /** The PC's load as it last sent it, and when, in elapsedRealtime: shown only while it keeps coming. */
     private var pc: PcStats? = null
     private var pcAtMs = NEVER
@@ -99,6 +119,10 @@ class NodeActivity : Activity() {
     private var server: HttpServer? = null
     private var listener: Listener? = null
     private var speaker: Speaker? = null
+
+    /** NODE's own model, once loaded; null with no model file on the phone. See [Rephraser]. */
+    private var rephraser: Rephraser? = null
+    private var rephrasing = false
 
     // The voice assistant.
     private var listening = false
@@ -191,10 +215,53 @@ class NodeActivity : Activity() {
         // A tap beside the list, not on it, closes it.
         taskList.setOnClickListener { closeTasks() }
         configureWindow()
+        kiosk()
+        loadRephraser()
+    }
+
+    /** Loads NODE's own model, if one has been pushed to the phone, off the main thread: it takes seconds. */
+    private fun loadRephraser() {
+        val dir = getExternalFilesDir(null) ?: return
+        thread(name = "node-model", isDaemon = true) {
+            val started = SystemClock.elapsedRealtime()
+            val loaded = Rephraser.open(dir, cacheDir) ?: return@thread
+            Log.d(TAG, "model: loaded in ${SystemClock.elapsedRealtime() - started} ms")
+            val warm = SystemClock.elapsedRealtime()
+            // A fixed sentence, not something said, so its rewrite can be logged.
+            val rewrite = loaded.rephrase(Rephraser.WARM_UP)
+            Log.d(TAG, "model: warm-up \"${Rephraser.WARM_UP}\" -> \"$rewrite\" in ${SystemClock.elapsedRealtime() - warm} ms")
+            mainExecutor.execute { if (isDestroyed) loaded.close() else rephraser = loaded }
+        }
+    }
+
+    override fun onDestroy() {
+        // Waits for a sentence in progress, on its own thread, rather than holding up the main one.
+        rephraser?.let { r -> thread(name = "node-model-close", isDaemon = true) { r.close() } }
+        rephraser = null
+        super.onDestroy()
     }
 
     override fun onStart() {
         super.onStart()
+        registerReceiver(batteryWatch, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        wifiLock?.acquire()
+        startServer()
+        val missing = PERMISSIONS.filterNot(::granted)
+        if (missing.isNotEmpty()) requestPermissions(missing.toTypedArray(), REQUEST_PERMISSIONS)
+        webcam = prefs.getBoolean(KEY_WEBCAM, false)
+        if (webcam) startWebcam() else startFace()
+        heartbeat.run()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Only as device owner: otherwise this would ask to pin the screen.
+        if (dpm.isLockTaskPermitted(packageName)) startLockTask()
+    }
+
+    /** Everything the companion runs that the webcam must not: the front camera, the microphone, sounds. */
+    private fun startFace() {
+        face.visibility = View.VISIBLE
         val now = SystemClock.elapsedRealtime()
         // Nobody seen yet: treat the start as the moment you were last here.
         faceAtMs = now - Mood.FACE_GRACE_MS - 1
@@ -205,9 +272,6 @@ class NodeActivity : Activity() {
         face.start()
         chirp.start()
         startSenses()
-        registerReceiver(batteryWatch, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-        wifiLock?.acquire()
-        startServer()
         voiceLang = runCatching { Lang.valueOf(prefs.getString(KEY_VOICE_LANG, null) ?: "") }.getOrDefault(Lang.EN)
         usage = SessionUsage.decode(prefs.getString(KEY_USAGE, null))
         detailsShown = prefs.getBoolean(KEY_DETAILS, true)
@@ -220,10 +284,7 @@ class NodeActivity : Activity() {
         } else {
             problem = getString(R.string.status_no_permission)
         }
-        val missing = PERMISSIONS.filterNot(::granted)
-        if (missing.isNotEmpty()) requestPermissions(missing.toTypedArray(), REQUEST_PERMISSIONS)
         reevaluate()
-        heartbeat.run()
     }
 
     override fun onRequestPermissionsResult(
@@ -231,7 +292,10 @@ class NodeActivity : Activity() {
         permissions: Array<out String>,
         grantResults: IntArray,
     ) {
-        if (requestCode == REQUEST_PERMISSIONS && granted(Manifest.permission.CAMERA)) {
+        if (requestCode == REQUEST_PERMISSIONS && webcam) {
+            problem = null
+            startWebcam()
+        } else if (requestCode == REQUEST_PERMISSIONS && granted(Manifest.permission.CAMERA)) {
             problem = null
             startPresence()
         }
@@ -244,12 +308,24 @@ class NodeActivity : Activity() {
         server?.stop()
         server = null
         wifiLock?.release()
+        unregisterReceiver(batteryWatch)
+        battery = null
+        // Finalizes the clip in progress, so leaving NODE never costs footage.
+        stopWebcam()
+        stopFace()
+        // Do not leave delayed callbacks behind when the screen goes off.
+        statusView.removeCallbacks(heartbeat)
+        statusView.removeCallbacks(retryServer)
+        serverProblem = null
+        window.decorView.removeCallbacks(reHideBars)
+        super.onStop()
+    }
+
+    private fun stopFace() {
         stopHands()
         stopPresence()
         senses?.stop()
         senses = null
-        unregisterReceiver(batteryWatch)
-        battery = null
         listener?.destroy()
         listener = null
         listening = false
@@ -259,14 +335,120 @@ class NodeActivity : Activity() {
         speaker = null
         chirp.stop()
         face.stop()
-        // Do not leave delayed callbacks behind when the screen goes off.
-        statusView.removeCallbacks(heartbeat)
         statusView.removeCallbacks(retryCamera)
-        statusView.removeCallbacks(retryServer)
         statusView.removeCallbacks(ringAgain)
-        serverProblem = null
-        window.decorView.removeCallbacks(reHideBars)
-        super.onStop()
+    }
+
+    // -- webcam mode ---------------------------------------------------------
+
+    /**
+     * The phone is the companion or the webcam, never both: Android gives the
+     * microphone to one user at a time, and the rear camera's 1080p encoder
+     * leaves no room for the face. Stopping one before starting the other is
+     * what hands the hardware over. Remembered, so a power cut brings back
+     * whichever it was.
+     */
+    private fun setWebcam(on: Boolean) {
+        if (on == webcam) return
+        webcam = on
+        prefs.edit().putBoolean(KEY_WEBCAM, on).apply()
+        problem = null
+        if (on) {
+            stopFace()
+            startWebcam()
+        } else {
+            stopWebcam()
+            startFace()
+        }
+    }
+
+    private fun startWebcam() {
+        face.visibility = View.INVISIBLE
+        captionView.visibility = View.INVISIBLE
+        closeTasks()
+        if (camcorder == null) {
+            if (PERMISSIONS.all(::granted)) {
+                val cam = Camcorder(this, recorder, webcamVideo, webcamAudio, ::restartWebcam)
+                camcorder = cam
+                try {
+                    cam.start()
+                } catch (e: Exception) {
+                    restartWebcam(e.message ?: e.javaClass.simpleName)
+                }
+            } else {
+                problem = getString(R.string.status_no_permission)
+            }
+        }
+        reevaluate()
+    }
+
+    private fun stopWebcam() {
+        camcorder?.stop()
+        camcorder = null
+        statusView.removeCallbacks(retryWebcam)
+    }
+
+    /** As [restartPresence]: the recognizer may also still be letting go of the microphone. */
+    private fun restartWebcam(reason: String) {
+        Log.e(TAG, reason)
+        stopWebcam()
+        problem = getString(R.string.status_error_fmt, reason)
+        statusView.postDelayed(retryWebcam, RETRY_MS)
+        reevaluate()
+    }
+
+    private val retryWebcam = Runnable {
+        problem = null
+        if (webcam) startWebcam()
+    }
+
+    /** Webcam mode's whole screen: one dim dot, or what is wrong, or the address for a while after a tap. */
+    private fun showWebcam(now: Long) {
+        val undimmed = now < undimUntilMs
+        setBrightness(if (undimmed) WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE else MIN_BRIGHTNESS)
+        val text = problem ?: serverProblem ?: if (undimmed) tappedUrl else "●"
+        if (statusView.text.toString() != text) statusView.text = text
+        statusView.visibility = View.VISIBLE
+    }
+
+    private fun onMode(to: String) {
+        when (to) {
+            "webcam" -> setWebcam(true)
+            "face" -> setWebcam(false)
+            "release" -> release()
+        }
+    }
+
+    // -- kiosk ---------------------------------------------------------------
+
+    /**
+     * Once NODE is the device owner (`adb shell dpm set-device-owner`, on a
+     * phone with no accounts) there is no Android left to see: no lock screen,
+     * no launcher but this, and in [onResume] a locked task with no bars, Home
+     * or Recents. Anywhere else this does nothing.
+     */
+    private fun kiosk() {
+        if (!dpm.isDeviceOwnerApp(packageName)) return
+        dpm.setLockTaskPackages(admin, arrayOf(packageName))
+        dpm.setLockTaskFeatures(admin, DevicePolicyManager.LOCK_TASK_FEATURE_NONE)
+        dpm.setKeyguardDisabled(admin, true)
+        // AC, USB and wireless: the screen never sleeps on the charger, even before NODE is drawn.
+        dpm.setGlobalSetting(admin, Settings.Global.STAY_ON_WHILE_PLUGGED_IN, "7")
+        val home = IntentFilter(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_HOME)
+            addCategory(Intent.CATEGORY_DEFAULT)
+        }
+        dpm.addPersistentPreferredActivity(admin, home, ComponentName(this, NodeActivity::class.java))
+    }
+
+    /** The way out that needs no cable: gives the phone back to Android. */
+    private fun release() {
+        if (!dpm.isDeviceOwnerApp(packageName)) return
+        runCatching { stopLockTask() }
+        dpm.setKeyguardDisabled(admin, false)
+        dpm.clearPackagePersistentPreferredActivities(admin, packageName)
+        @Suppress("DEPRECATION")
+        dpm.clearDeviceOwnerApp(packageName)
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -289,6 +471,8 @@ class NodeActivity : Activity() {
 
     private fun reevaluate() {
         val now = SystemClock.elapsedRealtime()
+        // Notes and alerts wait for the face to come back, rather than sound in a recording.
+        if (webcam) return showWebcam(now)
         val present = now - faceAtMs <= Mood.FACE_GRACE_MS
         val presentFor = if (present) now - presentSinceMs else 0L
         // You are looking: what NODE has been showing you counts as seen.
@@ -321,6 +505,7 @@ class NodeActivity : Activity() {
                 note = note?.text,
                 listening = listening,
                 heard = heard,
+                thinking = rephrasing,
                 reply = replyText,
                 voiceAsleep = voiceAsleep,
                 battery = battery,
@@ -555,9 +740,10 @@ class NodeActivity : Activity() {
         val waiting = inbox.size
         thread(name = "node-weather", isDaemon = true) {
             val weather = Weather.fetch()
-            mainExecutor.execute {
-                val sp = speaker ?: return@execute
-                if (!TALK || dark || listening) return@execute
+            // Not before the "Good morning" posted with this delay: it would cut the briefing off.
+            statusView.postDelayed({
+                val sp = speaker ?: return@postDelayed
+                if (!TALK || dark || listening) return@postDelayed
                 val lang = if (sp.canSpeak(voiceLang)) voiceLang else Lang.EN
                 val words = Assistant.briefing(LocalDateTime.now(), waiting, lang, weather?.let { Weather.describe(it, lang) })
                 replyText = words
@@ -566,7 +752,7 @@ class NodeActivity : Activity() {
                 // Behind the "Good morning" that is very likely still playing.
                 sp.say(words, lang, after = true)
                 reevaluate()
-            }
+            }, SPEAK_AFTER_CHIRP_MS)
         }
     }
 
@@ -715,10 +901,50 @@ class NodeActivity : Activity() {
         }
     }
 
-    /** Acts on a spoken sentence, then answers it on screen and aloud. */
-    private fun answer(text: String) {
+    /**
+     * Acts on a spoken sentence, then answers it on screen and aloud. An English
+     * sentence the keywords miss goes once to NODE's own model, if it has one,
+     * with the thinking face up meanwhile. Its rewrite comes back here
+     * [rephrased]; a question it is answered from Wikipedia instead.
+     */
+    private fun answer(text: String, rephrased: Boolean = false) {
         val command = Assistant.parse(text)
         var lang = Assistant.langOf(text)
+        val model = rephraser
+        if (command == Command.Unknown && !rephrased && lang == Lang.EN && model != null && !rephrasing) {
+            rephrasing = true
+            reevaluate()
+            thread(name = "node-rephrase", isDaemon = true) {
+                val started = SystemClock.elapsedRealtime()
+                val rewrite = model.rephrase(text)
+                // A question is searched as it was said: having the model repeat it would cost seconds.
+                // A rewrite that is no command is taken as one too: the model sometimes rewords a question.
+                val question = if (rewrite != null && (Rephraser.asks(rewrite) || Assistant.parse(rewrite) == Command.Unknown)) text else null
+                val rewritten = SystemClock.elapsedRealtime()
+                // Only a question goes online, and only as a search: the answer is written here, on the phone.
+                val notes = question?.let { Lookup.notes(it) }
+                val searched = SystemClock.elapsedRealtime()
+                val reply = if (question != null && notes != null) model.answer(question, notes) else null
+                // Whether and how fast, never what: what was said is not written down.
+                val outcome = when {
+                    question == null -> if (rewrite == null) "no rewrite" else "rewrite"
+                    reply != null -> "answer"
+                    notes != null -> "notes without an answer"
+                    else -> "nothing found"
+                }
+                Log.d(TAG, "model: $outcome in ${SystemClock.elapsedRealtime() - started} ms " +
+                    "(rewrite ${rewritten - started}, search ${searched - rewritten}, answer ${SystemClock.elapsedRealtime() - searched})")
+                mainExecutor.execute {
+                    rephrasing = false
+                    if (isDestroyed) return@execute
+                    if (question == null) return@execute answer(rewrite ?: text, rephrased = true)
+                    if (reply != null) face.play(Act.NOD)
+                    say(reply ?: Assistant.NOT_FOUND, Lang.EN, speak = true)
+                    reevaluate()
+                }
+            }
+            return
+        }
         val wall = System.currentTimeMillis()
         val now = SystemClock.elapsedRealtime()
         val facts = Assistant.Facts(
@@ -1110,6 +1336,11 @@ class NodeActivity : Activity() {
             onTask = { title, desc -> mainExecutor.execute { if (server === http) onTask(title, desc) } },
             onPc = { stats -> mainExecutor.execute { if (server === http) onPc(stats) } },
             cam = camView,
+            webcamPage = webcamPage,
+            recorder = recorder,
+            video = webcamVideo,
+            audio = webcamAudio,
+            onMode = { to -> mainExecutor.execute { if (server === http) onMode(to) } },
         )
         server = http
         try {
@@ -1271,6 +1502,14 @@ class NodeActivity : Activity() {
                 val dy = (ev.y - downY) / density
                 val swipeDots = kotlin.math.hypot(dx, dy)
                 when {
+                    // The way back that needs no Wi-Fi: hold to be the face again; a tap shows the address.
+                    webcam -> if (ev.eventTime - ev.downTime >= LONG_PRESS_MS) {
+                        setWebcam(false)
+                    } else {
+                        tappedUrl = urlText()
+                        undimUntilMs = SystemClock.elapsedRealtime() + UNDIM_MS
+                        reevaluate()
+                    }
                     // The open list takes its own taps and scrolls.
                     taskList.visibility == View.VISIBLE -> Unit
                     swipeDots >= SWIPE_DP && strokeDots <= swipeDots * SWIPE_STRAIGHT ->
@@ -1297,6 +1536,7 @@ class NodeActivity : Activity() {
         const val REQUEST_PERMISSIONS = 1
 
         const val KEY_URL_KEY = "url_key"
+        const val KEY_WEBCAM = "webcam"
         const val KEY_INBOX = "inbox"
         const val KEY_TASKS = "tasks"
         const val KEY_DETAILS = "details_shown"

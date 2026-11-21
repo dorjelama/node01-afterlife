@@ -17,13 +17,20 @@ import java.util.Locale
  */
 class Speaker(context: Context) : TextToSpeech.OnInitListener {
 
-    private val tts = TextToSpeech(context.applicationContext, this, GOOGLE_TTS)
+    private val app = context.applicationContext
+    private var tts = TextToSpeech(app, this, GOOGLE_TTS)
     private var ready = false
     private val voices = HashMap<Lang, Voice>()
+
+    /** Lines asked for while reconnecting to the engine, said once it is back. */
+    private val pending = ArrayList<Pair<String, Lang>>()
 
     override fun onInit(status: Int) {
         if (status != TextToSpeech.SUCCESS) {
             Log.w(TAG, "speech output unavailable ($status)")
+            // Silent, as when the engine is missing at start: shown, not spoken.
+            voices.clear()
+            pending.clear()
             return
         }
         tts.setAudioAttributes(
@@ -45,6 +52,9 @@ class Speaker(context: Context) : TextToSpeech.OnInitListener {
             tts.voice = voice
             tts.speak(".", TextToSpeech.QUEUE_FLUSH, Bundle().apply { putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 0f) }, WARM_UP)
         }
+        val waiting = pending.toList()
+        pending.clear()
+        for ((text, lang) in waiting) say(text, lang, after = true)
         Log.d(TAG, "voices: " + Lang.values().joinToString { lang ->
             voices[lang]?.let { "$lang=${it.name}${if (it.isNetworkConnectionRequired) " (online)" else ""}" } ?: "$lang=none"
         })
@@ -59,9 +69,21 @@ class Speaker(context: Context) : TextToSpeech.OnInitListener {
     /** Says [text], cutting off anything being said -- or, if [after], once it has finished. */
     fun say(text: String, lang: Lang, after: Boolean = false) {
         val voice = voices[lang] ?: return
-        if (!ready) return
+        if (!ready) {
+            // Voices known but not ready: reconnecting. Before the first init there are no voices.
+            pending += text to lang
+            return
+        }
         tts.voice = voice
-        tts.speak(text, if (after) TextToSpeech.QUEUE_ADD else TextToSpeech.QUEUE_FLUSH, null, UTTERANCE)
+        if (tts.speak(text, if (after) TextToSpeech.QUEUE_ADD else TextToSpeech.QUEUE_FLUSH, null, UTTERANCE) == TextToSpeech.ERROR) {
+            // The engine's process was killed (MIUI does this to idle apps) and
+            // TextToSpeech never binds again by itself: start a new one.
+            Log.w(TAG, "speech engine lost, reconnecting")
+            pending += text to lang
+            ready = false
+            runCatching { tts.shutdown() }
+            tts = TextToSpeech(app, this, GOOGLE_TTS)
+        }
     }
 
     fun stop() {
@@ -69,6 +91,7 @@ class Speaker(context: Context) : TextToSpeech.OnInitListener {
     }
 
     fun shutdown() {
+        pending.clear()
         tts.stop()
         tts.shutdown()
         ready = false

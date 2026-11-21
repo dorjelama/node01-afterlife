@@ -131,6 +131,9 @@ class FaceView @JvmOverloads constructor(
     private var actStartMs = NEVER
     private var winkSide = 1f
 
+    /** How far the eyes have shrunk into thinking dots: 0 not at all, 1 all the way. */
+    private var thinkK = 0f
+
     // Per eye, left then right, for acts that move the eyes apart from each other.
     private val eyeDx = FloatArray(2)
     private val eyeDy = FloatArray(2)
@@ -338,10 +341,12 @@ class FaceView @JvmOverloads constructor(
 
     /** Something to do while Claude works, so the focused stare is never the same for long. */
     private fun work() {
-        when (Random.nextInt(4)) {
-            0 -> play(Act.READ)
-            1 -> play(Act.THINK)
-            2 -> play(Act.NARROW)
+        when (Random.nextInt(7)) {
+            0, 1 -> play(Act.READ)
+            2 -> play(Act.THINK)
+            3 -> play(Act.NARROW)
+            4 -> play(Act.NOD)
+            5 -> play(Act.HMM)
             else -> doubleBlink()
         }
     }
@@ -543,8 +548,24 @@ class FaceView @JvmOverloads constructor(
                 hei *= 1f - NARROW_BY * e
                 squint += (NARROW_SQUINT - squint) * e
             }
+            Act.NOD -> {
+                // Down and back, twice, the second smaller.
+                gy += abs(sin(PI * 2.0 * t)).toFloat() * NOD_DROP * (1f - 0.4f * t)
+            }
+            Act.HMM -> {
+                val e = envelope(t, 0.2f, 0.25f)
+                tilt += (1f - tilt) * e
+                squint += (HMM_SQUINT - squint) * e
+                gy += (HMM_Y - gy) * e
+            }
             Act.ZZZ, null -> Unit
         }
+        // Thinking: the eyes shrink away into three dots each, and grow back when it is done.
+        val thinkTo = if (shown() == Expression.THINKING) 1f else 0f
+        thinkK += (thinkTo - thinkK) * (1f - exp(-dtMs / THINK_EASE_MS).toFloat())
+        if (abs(thinkTo - thinkK) < SETTLED) thinkK = thinkTo
+        eyeScale *= 1f - thinkK
+        val thinkStep = ((now / THINK_STEP_MS) % 3).toInt()
 
         val w = width.toFloat()
         val h = height.toFloat()
@@ -597,6 +618,7 @@ class FaceView @JvmOverloads constructor(
                 lightEye(col, row)
             }
             if (heart > 0.01f) lightHeart(col, row, baseW * HEART * heart * scale)
+            if (thinkK > THINK_DOTS_AT) lightThinkingDots(col, row, side, thinkStep)
         }
         // The right eye's outermost column, and the top row of a fully open eye.
         val rightEdge = rightCol + floor(baseW * p.width / 2f / pitch).toInt()
@@ -646,9 +668,11 @@ class FaceView @JvmOverloads constructor(
         // A knock in the dark: the time alone, where the eyes would be.
         clockText?.let { drawGlyphs(canvas, it, (dots(width.toFloat()) - glyphsWidth(it)) / 2, CLOCK_ROW, readoutPaint) }
 
-        if (blinking || hopping || playing != null || current != target || stretch > 0f) {
-            val onlyZs = playing == Act.ZZZ && !blinking && !hopping && current == target && stretch == 0f
-            if (onlyZs) postInvalidateDelayed(SLOW_FRAME_MS) else postInvalidateOnAnimation()
+        if (blinking || hopping || playing != null || current != target || stretch > 0f || thinkK > 0f) {
+            // Z's and thinking dots move in whole-dot steps: half the frame rate is plenty for them.
+            val gentle = (playing == Act.ZZZ || playing == null && thinkK == 1f) &&
+                !blinking && !hopping && current == target && stretch == 0f
+            if (gentle) postInvalidateDelayed(SLOW_FRAME_MS) else postInvalidateOnAnimation()
         } else {
             animating = false
         }
@@ -787,6 +811,26 @@ class FaceView @JvmOverloads constructor(
             for (k in 0 until BANG_W_DOTS) {
                 light(col0 + k, topRow, topRow + BANG_H_DOTS - 1)
                 light(col0 + k, topRow + BANG_H_DOTS + 1, topRow + BANG_H_DOTS + BANG_W_DOTS)
+            }
+        }
+    }
+
+    /**
+     * An eye shrunk into three dots in a row, centred on the dot at [col],
+     * [row]: the [step]th large, the others single dots. The large one steps
+     * outward from the nose, so the two eyes stay mirror images.
+     */
+    private fun lightThinkingDots(col: Int, row: Int, side: Float, step: Int) {
+        for (k in 0..2) {
+            val c = col + side.toInt() * (k - 1) * THINK_SPACE_DOTS
+            if (k != step) {
+                light(c, row, row)
+                continue
+            }
+            // Five dots across with the corners off: at this size, as round as a dot gets.
+            for (dc in -2..2) {
+                val reach = if (abs(dc) == 2) 1 else 2
+                light(c + dc, row - reach, row + reach)
             }
         }
     }
@@ -1061,10 +1105,10 @@ class FaceView @JvmOverloads constructor(
         /** The fingertips, thumb first. */
         val TIPS = intArrayOf(4, 8, 12, 16, 20)
 
-        // Working: reading two lines, how far along each and how much lower the next, in gaze units.
-        const val READ_LINES = 2
+        // Working: reading three lines, how far along each and how much lower the next, in gaze units.
+        const val READ_LINES = 3
         const val READ_ALONG = 0.8f
-        const val READ_X = 0.2f
+        const val READ_X = 0.4f
         const val READ_DROP = 0.25f
 
         // Thinking: where it looks, away from the PC and up, and how far the eyes open again.
@@ -1072,9 +1116,22 @@ class FaceView @JvmOverloads constructor(
         const val THINK_Y = -0.7f
         const val THINK_OPEN = 0.5f
 
+        // The held thinking face: each eye shrinks into three dots, a large one stepping along them.
+        const val THINK_EASE_MS = 140.0
+        const val THINK_STEP_MS = 280L
+        const val THINK_SPACE_DOTS = 4
+        const val THINK_DOTS_AT = 0.6f
+
         // Narrowing: how much shorter, and how far the lower lids come up.
         const val NARROW_BY = 0.3f
         const val NARROW_SQUINT = 0.2f
+
+        // Nodding: how far down each nod goes, in gaze units.
+        const val NOD_DROP = 0.5f
+
+        // Hmm: the squint, and a glance up while it wonders.
+        const val HMM_SQUINT = 0.2f
+        const val HMM_Y = -0.3f
 
         // The session usage readout: where its top-left dot sits, out of the eyes' way.
         const val USAGE_COL = 2
@@ -1146,7 +1203,8 @@ class FaceView @JvmOverloads constructor(
         const val GLANCE_MS = 1_200L
         const val SCAN_CHANCE = 0.2f
         const val FIDGET_CHANCE = 0.08f
-        const val WORK_CHANCE = 0.25f
+        // Something every few seconds while Claude works: at a quarter it was one every ~11 s and read as frozen.
+        const val WORK_CHANCE = 0.7f
         const val ZZZ_CHANCE = 0.3f
 
         fun nextBlinkMs() = Random.nextLong(2_500L, 6_000L)

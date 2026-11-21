@@ -90,6 +90,17 @@ class MoodTest {
     }
 
     @Test
+    fun thinkingShowsEvenInTheDarkOrAway() {
+        for (i in listOf(sitting, sitting.copy(dark = true), away(Mood.SLEEP_MS + 1))) {
+            val look = Mood.decide(i.copy(thinking = true))
+            assertEquals(Expression.THINKING, look.expression)
+            assertEquals(Light.FULL, look.light)
+        }
+        // Still amber under it: thinking is no reason to hide that Claude waits on you.
+        assertTrue(Mood.decide(sitting.copy(thinking = true, claude = Summary(State.NEEDS_YOU, "x", 0, false))).amber)
+    }
+
+    @Test
     fun listeningTakesTheCaptionButKeepsTheAlert() {
         val look = Mood.decide(
             sitting.copy(listening = true, heard = "", claude = Summary(State.NEEDS_YOU, "x", 0, false)),

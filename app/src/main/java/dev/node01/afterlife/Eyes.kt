@@ -101,6 +101,9 @@ enum class Expression(val params: EyeParams) {
 
     /** Suspicious, or smug: lids down, cheeks up. */
     SQUINT(EyeParams(height = 0.92f, lid = 0.22f, squint = 0.25f)),
+
+    /** Working out an answer: [FaceView] shrinks each eye into three dots, lit one after another. */
+    THINKING(EyeParams()),
 }
 
 /**
@@ -132,12 +135,18 @@ enum class Act(val ms: Long) {
 
     // While Claude works, now and then, so the focused stare never sets.
 
-    /** Reads two lines on the PC: along, back, along the next one down. */
-    READ(2_600L),
+    /** Reads three lines on the PC: along, back, along the next one down. */
+    READ(3_400L),
 
     /** Looks up and away, eyes a little wider, then back to the PC. */
     THINK(2_200L),
 
     /** Narrows harder for a moment, then eases off. */
     NARROW(1_600L),
+
+    /** Two small nods at the PC: got it. */
+    NOD(1_100L),
+
+    /** Head tilts, eyes squint a little: hmm, what is this? */
+    HMM(2_000L),
 }

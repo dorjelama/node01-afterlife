@@ -73,6 +73,8 @@ object Mood {
         val listening: Boolean = false,
         /** What has been heard so far while [listening]. */
         val heard: String? = null,
+        /** The on-phone model is working out what was said, or an answer to it. */
+        val thinking: Boolean = false,
         /** NODE's latest spoken answer, while it is still worth showing. */
         val reply: String? = null,
         /** Told "go to sleep": eyes closed until a tap or a wave. */
@@ -113,6 +115,8 @@ object Mood {
         val (expression, gaze) = when {
             startled -> Expression.WIDE to atYou
             i.listening -> Expression.CURIOUS to atYou
+            // You are waiting on it, whatever else is going on, dark room or not.
+            i.thinking -> Expression.THINKING to AHEAD
             amber -> Expression.WIDE to atYou
             i.petAgoMs < PET_MS -> Expression.HAPPY to atYou
             i.voiceAsleep -> Expression.CLOSED to RESTING
@@ -131,7 +135,7 @@ object Mood {
         val light = when {
             // Visible from across the room -- but not a beacon in a dark one.
             amber -> if (i.dark) Light.DOZE else Light.FULL
-            i.listening || i.reply != null -> Light.FULL
+            i.listening || i.thinking || i.reply != null -> Light.FULL
             i.voiceAsleep -> Light.MIN
             i.present -> Light.FULL
             expression == Expression.CLOSED -> Light.MIN

@@ -26,13 +26,17 @@ import kotlin.concurrent.thread
  * - `POST /<key>/task`    a task to keep until it is marked done, as a form: `title`, `desc`
  * - `POST /<key>/pc`      the PC's load, as a form: `cpu`, `ram`, `disk` (each 0..100)
  * - `GET  /<key>/cam`     the front camera's small live view, as MJPEG, for as long as it is held open
+ * - `POST /<key>/mode`    what the phone is, as a form: `to` = `webcam`, `face`, or `release` to leave kiosk
+ * - `GET  /<key>/webcam`  the webcam's page: `video` (MJPEG), `audio` (PCM) and `rec/` (clips) beside it
  *
  * Every path sits under a random key shown on the phone's screen; anything
  * else is a 404. It is plain HTTP, so anyone able to sniff the Wi-Fi can read
- * the key and what is sent -- the camera view included. Home LAN only; never
- * port-forward it. The camera view is only ever live: nothing is recorded.
+ * the key and what is sent -- the camera views and the microphone included.
+ * Home LAN only; never port-forward it. The front camera's view is only ever
+ * live. The rear camera and the microphone run, and record clips to the phone,
+ * only in webcam mode; in face mode `video` and `audio` stay open but silent.
  *
- * [onClaude], [onNote], [onFace], [onSay], [onUsage], [onTask] and [onPc] are called on the connection's thread.
+ * [onClaude], [onNote], [onFace], [onSay], [onUsage], [onTask], [onPc] and [onMode] are called on the connection's thread.
  *
  * One instance per session: [start], then [stop], then discard.
  */
@@ -48,6 +52,11 @@ class HttpServer(
     private val onPc: (PcStats) -> Unit,
     /** JPEG frames for the camera view, filled by [Presence] only while someone is watching. */
     private val cam: Hub,
+    private val webcamPage: ByteArray,
+    private val recorder: LoopRecorder,
+    private val video: Hub,
+    private val audio: Hub,
+    private val onMode: (to: String) -> Unit,
 ) {
     @Volatile
     private var socket: ServerSocket? = null
@@ -89,7 +98,7 @@ class HttpServer(
                 val input = BufferedInputStream(client.getInputStream())
                 val out = BufferedOutputStream(client.getOutputStream(), OUT_BUFFER_BYTES)
                 val head = readHead(input) ?: return
-                when (route(head.method, head.path, key)) {
+                when (val r = route(head.method, head.path, key)) {
                     Route.Page -> send(out, 200, "text/html; charset=utf-8", page)
                     Route.Claude -> readBody(head, input, out)?.let { body ->
                         respond(out, 204)
@@ -125,7 +134,24 @@ class HttpServer(
                         respond(out, 204)
                         if (stats != null) onPc(stats)
                     }
-                    Route.Cam -> streamCam(out)
+                    Route.Cam -> streamJpeg(out, cam)
+                    Route.Mode -> readBody(head, input, out)?.let { body ->
+                        val form = parseForm(String(body, Charsets.UTF_8))
+                        respond(out, 204)
+                        onMode(form["to"].orEmpty())
+                    }
+                    Route.Webcam -> send(out, 200, "text/html; charset=utf-8", webcamPage)
+                    Route.Video -> streamJpeg(out, video)
+                    Route.Audio -> {
+                        // Raw signed 16-bit little-endian mono PCM at 48 kHz; the page plays it with Web Audio.
+                        out.write(head(200, "application/octet-stream", -1))
+                        relay(audio) { pcm ->
+                            out.write(pcm)
+                            out.flush()
+                        }
+                    }
+                    Route.Clips -> send(out, 200, "text/html; charset=utf-8", clipList())
+                    is Route.Clip -> sendClip(out, r.name)
                     Route.NotFound -> notFound(out)
                 }
                 out.flush()
@@ -168,28 +194,58 @@ class HttpServer(
     }
 
     /**
-     * The camera view for an `<img>`, until the viewer hangs up or the server
-     * stops. While it is subscribed, and only then, [Presence] compresses
+     * A camera's view for an `<img>`, until the viewer hangs up or the server
+     * stops. While it is subscribed, and only then, the camera compresses
      * frames. Each boundary goes out right after its frame, not ahead of the
      * next one: browsers only show a part once they see the boundary that ends it.
      */
-    private fun streamCam(out: OutputStream) {
+    private fun streamJpeg(out: OutputStream, hub: Hub) {
         out.write(head(200, "multipart/x-mixed-replace; boundary=frame", -1))
         out.write(BOUNDARY)
         out.flush()
-        val queue = cam.subscribe()
+        relay(hub) { jpeg ->
+            out.write("Content-Type: image/jpeg\r\nContent-Length: ${jpeg.size}\r\n\r\n".toByteArray())
+            out.write(jpeg)
+            out.write(CRLF)
+            out.write(BOUNDARY)
+            out.flush()
+        }
+    }
+
+    /** Copies [hub] to one viewer until it hangs up or the server stops. */
+    private fun relay(hub: Hub, write: (ByteArray) -> Unit) {
+        val queue = hub.subscribe()
         try {
             while (socket != null) {
-                val jpeg = queue.poll(1, TimeUnit.SECONDS) ?: continue
-                out.write("Content-Type: image/jpeg\r\nContent-Length: ${jpeg.size}\r\n\r\n".toByteArray())
-                out.write(jpeg)
-                out.write(CRLF)
-                out.write(BOUNDARY)
-                out.flush()
+                val chunk = queue.poll(1, TimeUnit.SECONDS) ?: continue
+                write(chunk)
             }
         } finally {
-            cam.unsubscribe(queue)
+            hub.unsubscribe(queue)
         }
+    }
+
+    // Clip names are fixed to [LoopRecorder.CLIP_NAME], so they need no HTML escaping.
+    private fun clipList(): ByteArray = buildString {
+        append("<!doctype html><html lang=en><meta charset=utf-8>")
+        append("<meta name=viewport content=\"width=device-width, initial-scale=1\">")
+        append("<title>NODE recordings</title>")
+        append("<style>body{margin:0;padding:16px;background:#000;color:#c4c4c4;")
+        append("font:14px/1.6 ui-monospace,monospace}a{color:#ffb000}li{margin:6px 0}</style>")
+        append("<p><a href=\"../webcam\">&larr; live</a></p>")
+        val clips = recorder.finishedClips()
+        if (clips.isEmpty()) append("<p>No finished clips yet.</p>")
+        append("<ul>")
+        for (f in clips) {
+            append("<li><a href=\"${f.name}\" download>${f.name}</a> ${f.length() / 1_000_000} MB</li>")
+        }
+        append("</ul></html>")
+    }.toByteArray()
+
+    private fun sendClip(out: OutputStream, name: String) {
+        val file = recorder.finishedClip(name) ?: return notFound(out)
+        out.write(head(200, "video/mp4", file.length()))
+        file.inputStream().use { it.copyTo(out, OUT_BUFFER_BYTES) }
     }
 
     private fun notFound(out: OutputStream) = send(out, 404, "text/plain", "not found\n".toByteArray())
@@ -222,6 +278,12 @@ class HttpServer(
         data object Task : Route
         data object Pc : Route
         data object Cam : Route
+        data object Mode : Route
+        data object Webcam : Route
+        data object Video : Route
+        data object Audio : Route
+        data object Clips : Route
+        data class Clip(val name: String) : Route
         data object NotFound : Route
     }
 
@@ -266,6 +328,7 @@ class HttpServer(
             // Constant-time: the key is all that stands between the LAN and NODE.
             if (!MessageDigest.isEqual(head, prefix)) return Route.NotFound
             val rest = path.substring(prefix.size).substringBefore('?')
+            val clip = rest.removePrefix("rec/")
             return when {
                 method == "GET" && rest == "" -> Route.Page
                 method == "POST" && rest == "claude" -> Route.Claude
@@ -276,6 +339,13 @@ class HttpServer(
                 method == "POST" && rest == "task" -> Route.Task
                 method == "POST" && rest == "pc" -> Route.Pc
                 method == "GET" && rest == "cam" -> Route.Cam
+                method == "POST" && rest == "mode" -> Route.Mode
+                method == "GET" && rest == "webcam" -> Route.Webcam
+                method == "GET" && rest == "video" -> Route.Video
+                method == "GET" && rest == "audio" -> Route.Audio
+                method == "GET" && rest == "rec/" -> Route.Clips
+                // The fixed name pattern is the path-traversal guard.
+                method == "GET" && rest.startsWith("rec/") && LoopRecorder.CLIP_NAME.matches(clip) -> Route.Clip(clip)
                 else -> Route.NotFound
             }
         }
