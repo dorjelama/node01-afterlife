@@ -131,8 +131,20 @@ class FaceView @JvmOverloads constructor(
     private var actStartMs = NEVER
     private var winkSide = 1f
 
-    /** How far the eyes have shrunk into thinking dots: 0 not at all, 1 all the way. */
-    private var thinkK = 0f
+    // Thinking, as a cat: the eyes' dots stream into it, it walks, and they stream back into eyes.
+    private enum class Cat { NONE, FORMING, PLAYING, RETURNING }
+    private var cat = Cat.NONE
+    private var catSinceMs = NEVER
+    private var catRow = 0
+    private var play: CatPlay? = null
+    private var catSteps = 0
+
+    /** The eyes as they were when thinking began: what streams into the cat, and what it streams back into. */
+    private var eyeDots = IntArray(0)
+
+    // The swarm in flight: dot k goes from (morphFrom[2k], morphFrom[2k+1]) to the same in morphTo.
+    private var morphFrom = IntArray(0)
+    private var morphTo = IntArray(0)
 
     // Per eye, left then right, for acts that move the eyes apart from each other.
     private val eyeDx = FloatArray(2)
@@ -560,13 +572,6 @@ class FaceView @JvmOverloads constructor(
             }
             Act.ZZZ, null -> Unit
         }
-        // Thinking: the eyes shrink away into three dots each, and grow back when it is done.
-        val thinkTo = if (shown() == Expression.THINKING) 1f else 0f
-        thinkK += (thinkTo - thinkK) * (1f - exp(-dtMs / THINK_EASE_MS).toFloat())
-        if (abs(thinkTo - thinkK) < SETTLED) thinkK = thinkTo
-        eyeScale *= 1f - thinkK
-        val thinkStep = ((now / THINK_STEP_MS) % 3).toInt()
-
         val w = width.toFloat()
         val h = height.toFloat()
         val rawCx = w / 2f + (gx * GAZE_X + shake) * h
@@ -589,7 +594,12 @@ class FaceView @JvmOverloads constructor(
         var rightCol = cCol
         // A hand in view takes the eyes' place; with none, the face carries on.
         val handPts = handPoints?.takeIf { it.isNotEmpty() }
-        if (handPts != null) lightHands(handPts, handAspect) else for (i in 0..1) {
+        val thinking = shown() == Expression.THINKING
+        if (handPts != null) {
+            lightHands(handPts, handAspect)
+        } else if (cat != Cat.NONE) {
+            lightCat(now, thinking)
+        } else for (i in 0..1) {
             val side = SIDES[i]
             val col = cCol + (if (i == 0) -halfCols else halfCols) + dots(eyeDx[i] * h)
             // A tilted head lifts and enlarges one eye.
@@ -618,8 +628,9 @@ class FaceView @JvmOverloads constructor(
                 lightEye(col, row)
             }
             if (heart > 0.01f) lightHeart(col, row, baseW * HEART * heart * scale)
-            if (thinkK > THINK_DOTS_AT) lightThinkingDots(col, row, side, thinkStep)
         }
+        // Thinking begins: the eyes just lit are what streams into the cat.
+        if (thinking && handPts == null && cat == Cat.NONE) startCat(now, cRow)
         // The right eye's outermost column, and the top row of a fully open eye.
         val rightEdge = rightCol + floor(baseW * p.width / 2f / pitch).toInt()
         if (p.exclaim > 0.5f && handPts == null) addBangs(rightEdge, cRow - floor(baseH * p.height / 2f / pitch).toInt())
@@ -668,9 +679,9 @@ class FaceView @JvmOverloads constructor(
         // A knock in the dark: the time alone, where the eyes would be.
         clockText?.let { drawGlyphs(canvas, it, (dots(width.toFloat()) - glyphsWidth(it)) / 2, CLOCK_ROW, readoutPaint) }
 
-        if (blinking || hopping || playing != null || current != target || stretch > 0f || thinkK > 0f) {
-            // Z's and thinking dots move in whole-dot steps: half the frame rate is plenty for them.
-            val gentle = (playing == Act.ZZZ || playing == null && thinkK == 1f) &&
+        if (blinking || hopping || playing != null || current != target || stretch > 0f || cat != Cat.NONE) {
+            // Z's and the walking cat move in whole-dot steps: half the frame rate is plenty for them.
+            val gentle = (playing == Act.ZZZ || playing == null && cat == Cat.PLAYING) &&
                 !blinking && !hopping && current == target && stretch == 0f
             if (gentle) postInvalidateDelayed(SLOW_FRAME_MS) else postInvalidateOnAnimation()
         } else {
@@ -815,25 +826,112 @@ class FaceView @JvmOverloads constructor(
         }
     }
 
+    /** Thinking has begun: the eyes just lit stream into the cat, standing mid-panel, over [MORPH_MS]. */
+    private fun startCat(now: Long, cRow: Int) {
+        val dots = ArrayList<Int>()
+        for (k in on.indices) if (on[k].toInt() != 0) {
+            dots += k % cols
+            dots += k / cols
+        }
+        eyeDots = dots.toIntArray()
+        val lo = CAT_MARGIN
+        val p = CatPlay(lo, max(lo, cols - CatShape.W - CAT_MARGIN), (cols - CatShape.W) / 2, Random(now))
+        play = p
+        catRow = cRow - CatShape.H / 2
+        morph(eyeDots, catDots(p))
+        cat = Cat.FORMING
+        catSinceMs = now
+    }
+
     /**
-     * An eye shrunk into three dots in a row, centred on the dot at [col],
-     * [row]: the [step]th large, the others single dots. The large one steps
-     * outward from the nose, so the two eyes stay mirror images.
+     * NODE thinking, as a cat: formed from the eyes' dots, it plays on the
+     * panel -- see [CatPlay] -- and when the thinking is done its dots stream
+     * back into the eyes.
      */
-    private fun lightThinkingDots(col: Int, row: Int, side: Float, step: Int) {
-        for (k in 0..2) {
-            val c = col + side.toInt() * (k - 1) * THINK_SPACE_DOTS
-            if (k != step) {
-                light(c, row, row)
-                continue
+    private fun lightCat(now: Long, thinking: Boolean) {
+        val t = (now - catSinceMs) / MORPH_MS.toFloat()
+        when (cat) {
+            Cat.FORMING -> if (t < 1f) return lightMorph(t) else {
+                cat = Cat.PLAYING
+                catSinceMs = now
+                catSteps = 0
             }
-            // Five dots across with the corners off: at this size, as round as a dot gets.
-            for (dc in -2..2) {
-                val reach = if (abs(dc) == 2) 1 else 2
-                light(c + dc, row - reach, row + reach)
+            Cat.RETURNING -> {
+                if (t >= 1f) cat = Cat.NONE
+                return lightMorph(min(t, 1f))
             }
+            else -> Unit
+        }
+        val p = play ?: return
+        val due = ((now - catSinceMs) / CAT_STEP_MS).toInt()
+        while (catSteps < due) {
+            p.step()
+            catSteps++
+        }
+        if (!thinking) {
+            morph(catDots(p), eyeDots)
+            cat = Cat.RETURNING
+            catSinceMs = now
+        }
+        val f = CatShape.FRAMES[p.frame]
+        for (k in f.indices step 2) {
+            val r = catRow - p.lift + f[k + 1]
+            light(catCol(p, f[k]), r, r)
         }
     }
+
+    /** The cat's dots where it is now, as (col, row) pairs. */
+    private fun catDots(p: CatPlay): IntArray {
+        val f = CatShape.FRAMES[p.frame]
+        return IntArray(f.size) { if (it % 2 == 0) catCol(p, f[it]) else catRow - p.lift + f[it] }
+    }
+
+    /** The panel column of the cat's column [dx], drawn facing whichever way it is going. */
+    private fun catCol(p: CatPlay, dx: Int) = p.x + if (p.facing > 0) dx else CatShape.W - 1 - dx
+
+    /**
+     * Pairs every dot of [from] with one of [to], both taken left to right, so
+     * the swarm flows across rather than crossing itself; the smaller side's
+     * dots are shared out among the larger's.
+     */
+    private fun morph(from: IntArray, to: IntArray) {
+        val a = byColumn(from)
+        val b = byColumn(to)
+        // Nothing to fly from or to (no eyes lit, say): nothing flies.
+        val n = if (a.isEmpty() || b.isEmpty()) 0 else max(a.size, b.size) / 2
+        morphFrom = IntArray(2 * n)
+        morphTo = IntArray(2 * n)
+        for (k in 0 until n) {
+            val i = k * (a.size / 2) / n
+            val j = k * (b.size / 2) / n
+            morphFrom[2 * k] = a[2 * i]
+            morphFrom[2 * k + 1] = a[2 * i + 1]
+            morphTo[2 * k] = b[2 * j]
+            morphTo[2 * k + 1] = b[2 * j + 1]
+        }
+    }
+
+    private fun byColumn(dots: IntArray): IntArray {
+        val order = (0 until dots.size / 2).sortedWith(compareBy({ dots[2 * it] }, { dots[2 * it + 1] }))
+        return IntArray(dots.size) { dots[2 * order[it / 2] + it % 2] }
+    }
+
+    /**
+     * The swarm [t] (0..1) of the way there: each dot sets off at its own
+     * moment and arcs up on the way, like a cloud of tiny machines rebuilding.
+     */
+    private fun lightMorph(t: Float) {
+        for (k in 0 until morphFrom.size / 2) {
+            val p = smooth((t - scatter(k) * MORPH_SPREAD) / (1f - MORPH_SPREAD))
+            val lift = sin(PI * p).toFloat() * (1f + MORPH_LIFT * scatter(k + 7919))
+            val c = (morphFrom[2 * k] + (morphTo[2 * k] - morphFrom[2 * k]) * p).roundToInt()
+            val r = (morphFrom[2 * k + 1] + (morphTo[2 * k + 1] - morphFrom[2 * k + 1]) * p - lift).roundToInt()
+            light(c, r, r)
+        }
+    }
+
+    /** A fixed 0..1 for [k]: each dot of the swarm scatters the same way every time. */
+    private fun scatter(k: Int) = ((k * 2654435761L) ushr 8 and 0xFFFF).toFloat() / 0xFFFF
 
     /**
      * Z's drifting up and to the right from ([x], [y]), each bigger than the
@@ -1116,11 +1214,15 @@ class FaceView @JvmOverloads constructor(
         const val THINK_Y = -0.7f
         const val THINK_OPEN = 0.5f
 
-        // The held thinking face: each eye shrinks into three dots, a large one stepping along them.
-        const val THINK_EASE_MS = 140.0
-        const val THINK_STEP_MS = 280L
-        const val THINK_SPACE_DOTS = 4
-        const val THINK_DOTS_AT = 0.6f
+        // Thinking: the eyes become a cat at play, a step every CAT_STEP_MS, kept CAT_MARGIN dots from the edges.
+        const val CAT_STEP_MS = 220L
+        const val CAT_MARGIN = 3
+        const val MORPH_MS = 1_100L
+        /** How much of the morph the swarm's dots spread their setting off over. */
+        const val MORPH_SPREAD = 0.45f
+        /** How many dots higher than one the swarm's arc may go. */
+        const val MORPH_LIFT = 3f
+
 
         // Narrowing: how much shorter, and how far the lower lids come up.
         const val NARROW_BY = 0.3f
