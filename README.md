@@ -228,8 +228,15 @@ adb push Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv4096.litertlm /sdcard/And
 
 Reopen NODE. `adb logcat -s NODE` shows how long loading took and how it rewrote a test
 sentence, `model: warm-up "is it getting late" -> "what time is it"`, and after that how long
-each rewrite took. As before, only a sentence that nothing could place is logged word for word,
-`voice: no match for "…"`. Delete the file to go back to keywords only.
+each sentence took. What the model was asked and what it made of it goes to `asked.log`, beside
+the model, one dated line each, and each new line drops those older than a week:
+
+```bash
+adb shell cat /sdcard/Android/data/dev.node01.companion/files/asked.log
+# 2026-11-22 01:35:40  "what is the capital of nepal" -> ASK -> "Kathmandu" (17.5 s)
+```
+
+Delete the model file to go back to keywords only.
 
 ### Questions
 
@@ -290,7 +297,8 @@ stops the face, the front camera and the voice assistant, and starts the rear ca
   which; see [Voice](#voice).
 - **No cloud AI.** The voice assistant is a fixed set of commands. If you put
   [an AI model on the phone](#on-phone-ai), it runs there, offline, and writes every answer
-  there. Three things leave your LAN and nothing else does: online speech when the offline
+  there. What it was asked and answered stays on the phone, in `asked.log`, for a week.
+  Three things leave your LAN and nothing else does: online speech when the offline
   model is missing; a [question](#questions) the model sorts as one for the web, whose subject
   goes to Wikipedia's search under a generic client name; and the morning briefing's weather — a fixed pair of coordinates (`LAT`/`LON` in `Weather.kt`, yours
   to change) sent to Open-Meteo, with no key, no account and nothing about you or the phone.

@@ -925,15 +925,22 @@ class NodeActivity : Activity() {
                 val notes = question?.let { Lookup.notes(it) }
                 val searched = SystemClock.elapsedRealtime()
                 val reply = if (question != null && notes != null) model.answer(question, notes) else null
-                // Whether and how fast, never what: what was said is not written down.
                 val outcome = when {
                     question == null -> if (rewrite == null) "no rewrite" else "rewrite"
                     reply != null -> "answer"
                     notes != null -> "notes without an answer"
                     else -> "nothing found"
                 }
-                Log.d(TAG, "model: $outcome in ${SystemClock.elapsedRealtime() - started} ms " +
+                val tookMs = SystemClock.elapsedRealtime() - started
+                // Logcat gets how long; what was said and made of it goes to the week-long asked.log.
+                Log.d(TAG, "model: $outcome in $tookMs ms " +
                     "(rewrite ${rewritten - started}, search ${searched - rewritten}, answer ${SystemClock.elapsedRealtime() - searched})")
+                val made = when {
+                    question == null -> rewrite?.let { "\"$it\"" } ?: "UNKNOWN"
+                    reply != null -> "ASK -> \"$reply\""
+                    else -> "ASK -> $outcome"
+                }
+                getExternalFilesDir(null)?.let { AskedLog.add(it, LocalDateTime.now(), "\"$text\" -> $made (${tookMs / 100 / 10.0} s)") }
                 mainExecutor.execute {
                     rephrasing = false
                     if (isDestroyed) return@execute
