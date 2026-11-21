@@ -1,84 +1,96 @@
 package dev.node01.afterlife
 
-import android.util.Log
-import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * Fixed station location.
+ * This morning's weather, for the one line NODE says when it first sees you.
  *
- * NODE is a desk appliance -- it does not move. Baking the coordinates in costs
- * no location permission, no GPS wakeup, and never drifts. Set these once.
- */
-object Station {
-    // Kathmandu, Nepal. Open-Meteo's grid is roughly 10km, so city-level
-    // coordinates give the same reading as a precise address -- set your own
-    // here. While both are 0.0 the fetch is skipped and the readout stays "--".
-    const val LATITUDE = 27.7017
-    const val LONGITUDE = 85.3206
-
-    val configured: Boolean
-        get() = LATITUDE != 0.0 || LONGITUDE != 0.0
-}
-
-/**
- * Current temperature from Open-Meteo. No API key, no signup, no third-party
- * library -- HttpURLConnection and org.json are both in the platform.
+ * The only thing in NODE that talks to the internet. It sends a fixed pair of
+ * coordinates -- [LAT] and [LON] below, yours to change -- and nothing else:
+ * no identifier, no account, no phone. Open-Meteo needs no key. If it fails,
+ * or is slow, or there is no Wi-Fi, the briefing simply goes without it.
  *
- * One request per hour, started from the existing minute tick rather than a
- * timer, service or WorkManager, so NODE still owns no scheduling of its own.
+ * [parse] and [describe] are pure and tested; [fetch] blocks and must be
+ * called off the main thread.
  */
-class WeatherClient {
+object Weather {
 
-    @Volatile
-    private var inFlight = false
+    /** Kathmandu. Change these two to wherever NODE's desk is. */
+    const val LAT = 27.7172
+    const val LON = 85.3240
+
+    data class Now(val tempC: Int, val code: Int)
+
+    /** Blocking, and never throws: null for anything that did not work. */
+    fun fetch(): Now? = runCatching {
+        val url = URL(
+            "https://api.open-meteo.com/v1/forecast" +
+                "?latitude=$LAT&longitude=$LON&current=temperature_2m,weather_code",
+        )
+        val connection = (url.openConnection() as HttpURLConnection).apply {
+            connectTimeout = TIMEOUT_MS
+            readTimeout = TIMEOUT_MS
+            // A generic client name: NODE never says whose phone it is.
+            setRequestProperty("User-Agent", "NODE-Companion")
+        }
+        try {
+            if (connection.responseCode != 200) return null
+            parse(connection.inputStream.bufferedReader().use { it.readText() }.take(MAX_BYTES))
+        } finally {
+            connection.disconnect()
+        }
+    }.getOrNull()
 
     /**
-     * Fetches on a throwaway background thread. [onResult] is invoked with the
-     * temperature in Celsius, or null on any failure, on that same background
-     * thread -- callers are responsible for getting back to the main thread.
+     * The two numbers, out of a small flat reply. Read with a regex rather
+     * than a parser: they sit inside a "current" object, and [JsonFields]
+     * deliberately looks no deeper than the top level.
      */
-    fun fetch(onResult: (Double?) -> Unit) {
-        if (inFlight || !Station.configured) return
-        inFlight = true
-
-        Thread({
-            var result: Double? = null
-            var conn: HttpURLConnection? = null
-            try {
-                val url = URL(
-                    "https://api.open-meteo.com/v1/forecast" +
-                        "?latitude=${Station.LATITUDE}" +
-                        "&longitude=${Station.LONGITUDE}" +
-                        "&current=temperature_2m",
-                )
-                conn = (url.openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 8_000
-                    readTimeout = 8_000
-                    requestMethod = "GET"
-                }
-                if (conn.responseCode == 200) {
-                    val body = conn.inputStream.bufferedReader().use { it.readText() }
-                    result = JSONObject(body)
-                        .getJSONObject("current")
-                        .getDouble("temperature_2m")
-                } else {
-                    Log.w(TAG, "weather http ${conn.responseCode}")
-                }
-            } catch (e: Exception) {
-                // Offline, DNS failure, malformed payload -- all identical from
-                // NODE's point of view: no fresh reading, keep showing stale.
-                Log.w(TAG, "weather fetch failed: ${e.javaClass.simpleName}")
-            } finally {
-                conn?.disconnect()
-                inFlight = false
-            }
-            onResult(result)
-        }, "node-weather").start()
+    internal fun parse(json: String): Now? {
+        val temp = Regex(""""temperature_2m"\s*:\s*(-?\d+(?:\.\d+)?)""").find(json)
+            ?.groupValues?.get(1)?.toDoubleOrNull() ?: return null
+        val code = Regex(""""weather_code"\s*:\s*(\d+)""").find(json)
+            ?.groupValues?.get(1)?.toIntOrNull() ?: return null
+        return Now(Math.round(temp).toInt(), code)
     }
 
-    private companion object {
-        const val TAG = "NODE"
+    /** "18 degrees, light rain." */
+    fun describe(now: Now, lang: Lang): String = if (lang == Lang.NE) {
+        "${Bs.neDigits(now.tempC)} डिग्री, ${conditionNe(now.code)}"
+    } else {
+        "${now.tempC} degrees, ${conditionEn(now.code)}"
     }
+
+    /** WMO weather codes, in the handful of bands worth telling apart out loud. */
+    private fun conditionEn(code: Int): String = when (code) {
+        0 -> "clear"
+        1, 2 -> "partly cloudy"
+        3 -> "overcast"
+        45, 48 -> "foggy"
+        in 51..57 -> "drizzle"
+        in 61..67 -> "rain"
+        in 71..77, 85, 86 -> "snow"
+        in 80..82 -> "showers"
+        in 95..99 -> "thunderstorms"
+        else -> "cloudy"
+    }
+
+    private fun conditionNe(code: Int): String = when (code) {
+        0 -> "सफा"
+        1, 2 -> "केही बादल"
+        3 -> "बादल लागेको"
+        45, 48 -> "कुहिरो"
+        in 51..57 -> "सिमसिम पानी"
+        in 61..67 -> "पानी परेको"
+        in 71..77, 85, 86 -> "हिउँ"
+        in 80..82 -> "झरी"
+        in 95..99 -> "चट्याङसहित वर्षा"
+        else -> "बादल"
+    }
+
+    /** Short: the briefing waits on this, and a morning hello must not hang. */
+    private const val TIMEOUT_MS = 3_000
+
+    private const val MAX_BYTES = 4_096
 }

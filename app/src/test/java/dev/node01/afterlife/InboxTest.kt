@@ -1,0 +1,149 @@
+package dev.node01.afterlife
+
+import dev.node01.afterlife.Inbox.Kind
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class InboxTest {
+
+    @Test
+    fun aNudgeComesRoundAgainAndSurvivesARestart() {
+        val inbox = Inbox()
+        inbox.add("stretch", 45 * 60_000L, 0, Inbox.Kind.REMINDER, repeatMs = 45 * 60_000L)
+        assertNull(inbox.due(44 * 60_000L))
+        assertEquals("stretch", inbox.due(45 * 60_000L)?.text)
+
+        // Dismissed, it is back in three quarters of an hour rather than gone.
+        assertTrue(inbox.dismiss(45 * 60_000L))
+        assertNull(inbox.due(45 * 60_000L))
+        assertEquals("stretch", inbox.due(90 * 60_000L)?.text)
+        assertTrue("still cancellable", inbox.cancellable(45 * 60_000L))
+
+        // It keeps its interval across a save and a restart.
+        val reloaded = Inbox.decode(inbox.encode())
+        assertEquals(45 * 60_000L, reloaded.due(90 * 60_000L)?.repeatMs)
+        assertEquals("stretch", reloaded.due(90 * 60_000L)?.text)
+
+        // "Cancel" stops it for good.
+        assertTrue(reloaded.cancelTimers(0))
+        assertNull(reloaded.due(Long.MAX_VALUE / 2))
+    }
+
+    @Test
+    fun readsNotesSavedByOlderVersions() {
+        // Before notes repeated: due, kind, text.
+        val three = Inbox.decode("1000\tREMINDER\tcall mom")
+        assertEquals("call mom", three.due(1000)?.text)
+        assertEquals(Inbox.Kind.REMINDER, three.due(1000)?.kind)
+        assertEquals(0L, three.due(1000)?.repeatMs)
+        // Before they had a kind at all: due, text.
+        val two = Inbox.decode("1000\tbuy milk")
+        assertEquals("buy milk", two.due(1000)?.text)
+        assertEquals(Inbox.Kind.NOTE, two.due(1000)?.kind)
+    }
+
+    @Test
+    fun countsDownForTheCornerOfTheFace() {
+        val inbox = Inbox()
+        assertNull("nothing running", inbox.timerLeft(0))
+        inbox.add("focus done", 25 * 60_000L, 0, Inbox.Kind.TIMER)
+        inbox.add("tea", 3 * 60_000L, 0, Inbox.Kind.TIMER)
+        assertEquals("the soonest one", 3 * 60_000L - 1_000L, inbox.timerLeft(1_000L))
+        // A note is not a timer, and a timer that has fired is no longer running.
+        inbox.add("buy milk", 0L, 0, Inbox.Kind.NOTE)
+        assertEquals(22 * 60_000L, inbox.timerLeft(3 * 60_000L))
+
+        // Rounded up, so it reads 0:01 right until it fires.
+        assertEquals("4:05", Inbox.countdown(4 * 60_000L + 5_000L))
+        assertEquals("0:01", Inbox.countdown(1))
+        assertEquals("0:00", Inbox.countdown(0))
+        assertEquals("25:00", Inbox.countdown(25 * 60_000L))
+        // Past an hour, whole minutes: a long wait needs no second hand.
+        assertEquals("90", Inbox.countdown(90 * 60_000L))
+    }
+
+    private val now = 1_700_000_000_000L
+    private val minute = 60_000L
+
+    @Test
+    fun dueNowOrLater() {
+        val inbox = Inbox()
+        inbox.add("later", 10 * minute, now)
+        inbox.add("now", 0, now)
+        assertEquals("now", inbox.due(now)?.text)
+        assertTrue(inbox.dismiss(now))
+        assertNull(inbox.due(now))
+        assertEquals("later", inbox.due(now + 10 * minute)?.text)
+        assertFalse(inbox.dismiss(now))
+    }
+
+    @Test
+    fun cleansText() {
+        val inbox = Inbox()
+        assertEquals("two lines and tab", inbox.add("  two\nlines\tand   tab ", 0, now)?.text)
+        assertNull(inbox.add(" \n\t ", 0, now))
+        assertEquals(Inbox.MAX_CHARS, inbox.add("x".repeat(500), 0, now)?.text?.length)
+    }
+
+    @Test
+    fun delayIsBounded() {
+        val inbox = Inbox()
+        assertEquals(now, inbox.add("a", -5, now)?.dueMs)
+        assertEquals(now + Inbox.MAX_DELAY_MS, inbox.add("b", Long.MAX_VALUE / 2, now)?.dueMs)
+    }
+
+    @Test
+    fun oldestGiveWay() {
+        val inbox = Inbox()
+        repeat(Inbox.MAX_NOTES + 3) { inbox.add("n$it", 0, now + it) }
+        assertEquals(Inbox.MAX_NOTES, inbox.size)
+        assertEquals("n3", inbox.due(now + 100)?.text)
+    }
+
+    @Test
+    fun timersCanBeCancelledAndNothingElse() {
+        val inbox = Inbox()
+        inbox.add("Time's up.", 5 * minute, now, Kind.TIMER)
+        inbox.add("stretch", 5 * minute, now, Kind.REMINDER)
+        inbox.add("desk note", 5 * minute, now, Kind.NOTE)
+        assertTrue(inbox.timerRunning(now))
+        assertTrue(inbox.cancelTimers(now))
+        assertFalse(inbox.timerRunning(now))
+        assertFalse("nothing left to cancel", inbox.cancelTimers(now))
+        assertEquals(2, inbox.size)
+    }
+
+    @Test
+    fun aTimerThatHasRungIsNoLongerRunning() {
+        val inbox = Inbox()
+        inbox.add("Time's up.", minute, now, Kind.TIMER)
+        assertFalse(inbox.timerRunning(now + minute))
+        assertFalse("ringing, so dismissed rather than cancelled", inbox.cancelTimers(now + minute))
+        assertEquals(Kind.TIMER, inbox.due(now + minute)?.kind)
+    }
+
+    @Test
+    fun survivesARestart() {
+        val inbox = Inbox()
+        inbox.add("drink water", 5 * minute, now, Kind.REMINDER)
+        inbox.add("stretch · now", 0, now)
+        inbox.add("समय सकियो।", 25 * minute, now, Kind.TIMER)
+        val restored = Inbox.decode(inbox.encode())
+        assertEquals(inbox.encode(), restored.encode())
+        assertEquals("stretch · now", restored.due(now)?.text)
+        assertTrue(restored.dismiss(now))
+        assertEquals(Kind.REMINDER, restored.due(now + 5 * minute)?.kind)
+        assertTrue(restored.timerRunning(now))
+        assertEquals(0, Inbox.decode(null).size)
+        assertEquals(0, Inbox.decode("garbage\nmore\tgarbage").size)
+    }
+
+    @Test
+    fun readsNotesSavedBeforeKinds() {
+        val restored = Inbox.decode("$now\tStretch · drink water")
+        assertEquals(Inbox.Note(now, "Stretch · drink water", Kind.NOTE), restored.due(now))
+    }
+}

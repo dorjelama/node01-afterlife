@@ -18,7 +18,7 @@
         <item name="android:windowActionBar">false</item>
         <item name="android:windowContentTransitions">false</item>
 
-        <!-- No activity transitions. Nothing in NODE animates. -->
+        <!-- No activity transitions. Only the face animates. -->
         <item name="android:windowAnimationStyle">@null</item>
 
         <!-- Bars are hidden at runtime via WindowInsetsController; these keep

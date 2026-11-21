@@ -9,7 +9,9 @@ android {
     buildToolsVersion = "34.0.0"
 
     defaultConfig {
-        applicationId = "dev.node01.afterlife"
+        // Its own app, installed alongside the NODE webcam (dev.node01.afterlife,
+        // on feature/webcam). The Kotlin namespace stays shared.
+        applicationId = "dev.node01.companion"
         // The target hardware is a Redmi Note 8 on Android 11 (API 30). Pinning
         // minSdk to 30 lets us use WindowInsetsController directly with no
         // legacy systemUiVisibility fallback path.
@@ -17,7 +19,13 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
+
+        // MediaPipe ships native code for every ABI; the Redmi Note 8 needs only this one.
+        ndk { abiFilters += "arm64-v8a" }
     }
+
+    // The hand model is read straight out of the APK, which needs it stored uncompressed.
+    androidResources { noCompress += "task" }
 
     buildTypes {
         debug {
@@ -37,10 +45,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
     // No BuildConfig, no Compose, no view binding, no resource shrinking.
     buildFeatures {
         buildConfig = false
@@ -53,7 +57,17 @@ android {
     }
 }
 
-// Intentionally empty. NODE has no third-party dependencies; kotlin-stdlib is
-// contributed automatically by the Kotlin Android plugin.
+kotlin {
+    compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
+}
+
+// Two runtime dependencies: MediaPipe's on-device hand landmarker, for hand
+// tracking, and LiteRT-LM, to run NODE's own fine-tuned model (Rephraser.kt).
+// kotlin-stdlib is contributed automatically by the Kotlin Android plugin.
+// JUnit is test-only and never reaches the APK.
 dependencies {
+    implementation("com.google.mediapipe:tasks-vision:0.10.35")
+    // Built with Kotlin 2.4, which is why the Kotlin plugin is 2.4 too.
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.19.1")
+    testImplementation("junit:junit:4.13.2")
 }

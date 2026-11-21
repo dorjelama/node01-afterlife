@@ -61,6 +61,138 @@ no root and no unlocked bootloader.
 off. UI interaction cannot be scripted over adb on this device — taps and swipes must be tested
 by hand.
 
+`adb shell input keyevent KEYCODE_WAKEUP` is worse: it exits cleanly and does nothing. The
+screen stays asleep, so check `dumpsys power | grep mWakefulness` rather than trusting it.
+
+---
+
+## MIUI blocks `pm grant`
+
+`adb shell pm grant <pkg> android.permission.CAMERA` fails with
+`SecurityException: grantRuntimePermission: Neither user 2000 nor current process has
+android.permission.GRANT_RUNTIME_PERMISSIONS`. MIUI gates it behind *USB debugging (Security
+settings)*, which wants a Mi account. The permission has to be granted by tapping **Allow** on
+the phone. A fresh install also waits behind the lock screen until someone unlocks it.
+
+---
+
+## Wi-Fi power save starves the LAN server
+
+**Symptom.** With NODE in front and the screen on, the first request after a quiet spell took
+1.5–4 s to connect, or timed out, while the very next one took 5 ms. Ping from the PC lost half
+its packets, with `Destination host unreachable` reported by the PC itself: its ARP requests
+were going unanswered.
+
+**Cause.** The phone's Wi-Fi sleeps between beacons whenever it is idle, screen on or not.
+Fine for a phone, fatal for a server that a Claude Code hook gives two seconds.
+
+**Fix.** Hold a `WIFI_MODE_FULL_LOW_LATENCY` lock (needs only the normal `WAKE_LOCK`
+permission) from `onStart` to `onStop`. Android honours it only for the foreground app with the
+screen on, which is exactly when NODE serves. Measured after 20 s idle: connect fell from
+timeouts to 3–120 ms. `adb shell dumpsys wifi | grep WifiLock` shows it held as `type=4`.
+
+**Then use 2.4 GHz.** Even with the lock active (`dumpsys wifi` counted 28 minutes of low-latency
+mode), on this router's 5 GHz network the phone stayed associated yet went unreachable for
+~20 s at a time, three times a minute — no disconnect in its log, and the wired PC-to-router
+path lossless. One minute of a request every 2 s: **20/30** delivered on 5 GHz
+(`dorjelama_wfn_5`, 5805 MHz) against **29/30** on 2.4 GHz (`dorjelama_wfn_2`, 2417 MHz), the
+single miss being the first request after switching. Keep the phone on 2.4 GHz and turn off
+auto-connect for the 5 GHz network, or Android drifts back to it.
+
+---
+
+## Offline speech: the packs you download are not the ones used
+
+**Symptom.** With *English (US)* and *English (UK)* downloaded under Google app → Settings →
+Voice → Offline speech recognition, every `SpeechRecognizer` request with
+`EXTRA_PREFER_OFFLINE` still failed within a tenth of a second with error **13**
+(`ERROR_LANGUAGE_UNAVAILABLE`, named only from Android 12 but sent on 11 too) — and **12**
+(`ERROR_LANGUAGE_NOT_SUPPORTED`) for `en-IN`. Each attempt made the recognizer beep.
+
+**Cause.** The Google app's log, with tags in `com.google.android.googlequicksearchbox`, shows
+the request going to its newer on-device engine, SODA, which keeps its own copy of each model:
+
+```
+I/fohv: Offline recognizer - start listening
+I/fohv: Initialize Soda [locale: …]
+I/SodaLPDirGenerator: Found matching installed packs: …
+W/SodaLPDirGenerator: Returning no LP, as MDD has not downloaded this pack yet.
+E/fohv: Failed to get language pack of required locale
+```
+
+MDD is the Google app's background downloader. It fetches the SODA pack on its own schedule —
+typically on Wi-Fi, charging and idle — and NODE, holding the screen on, keeps the phone from
+ever being idle. Its jobs are anonymous (`BackgroundTasksJobService`, WorkManager), so there
+is no single job to run by hand.
+
+**What to do.** Leave NODE, screen off, on charger and Wi-Fi for a while (overnight), so MDD
+can run; turning on Gboard's offline or faster voice typing may fetch the same model sooner.
+Read the log above again to see whether the pack has arrived. Do not drop
+`EXTRA_PREFER_OFFLINE` to make it work: the recognizer would then send speech to Google.
+
+---
+
+## The recognizer's beep is a notification sound
+
+**Symptom.** Hands-free listening restarts the recognizer every ~5 s (each online session ends
+at the first silence), and Google's recognizer beeps on every start. Muting `STREAM_MUSIC`,
+`STREAM_SYSTEM` and `STREAM_NOTIFICATION` around `startListening` silenced nothing.
+
+**Cause.** `dumpsys audio` shows the beep as an `AudioTrack` from the Google app with
+`usage=USAGE_NOTIFICATION_EVENT`, so it plays on the notification stream. On this phone
+`adjustStreamVolume(STREAM_NOTIFICATION, ADJUST_MUTE)` is refused (it never appears in the audio
+event log) while the music and system mutes go through.
+
+**Fix.** `setStreamVolume(STREAM_NOTIFICATION, 0, 0)` *is* allowed. NODE turns the notification
+volume to 0 while hands-free listening runs and puts it back when it stops. NODE's own sounds
+are unaffected: chirps are `USAGE_ASSISTANCE_SONIFICATION` and speech `USAGE_ASSISTANT`.
+`android.speech.extra.DICTATION_MODE` was tried to make sessions last longer and changed nothing.
+
+---
+
+## Front camera facts (Redmi Note 8)
+
+From `adb shell dumpsys media.camera`, camera `1`, facing front:
+
+| Key | Value |
+|---|---|
+| `availableFaceDetectModes` | `[0 1]`: OFF and SIMPLE, no FULL. Up to 10 faces |
+| `sensor.orientation` | 270 |
+| `supportedHardwareLevel` | 3 (LEVEL_3) |
+| `aeAvailableTargetFpsRanges` | `[15 15] [20 20] [7 24] [24 24]` |
+| Smallest YUV sizes | 320×240, 176×144, 160×120 |
+
+The companion runs it at 320×240 and a fixed 15 fps: enough for SIMPLE face detection, which
+the camera computes on the full sensor regardless of the stream size. With the activity locked
+to landscape the display rotation is 90°, so sensor orientation plus display rotation is 360°:
+no turn, only the front-camera mirror.
+
+---
+
+## Glow the dots from the dot map, not with a blur
+
+The glow behind the lit dots started as a `BlurMaskFilter` on the eyes' smooth outline (which
+hardware canvases support from API 28). The outline changes every frame of an animation, so the
+blur is redone every frame. Measured with `adb shell dumpsys gfxinfo dev.node01.companion` over
+the same tour of animations at 2340x1080:
+
+| Glow | GPU median | GPU 90th | Janky |
+|---|---|---|---|
+| `BlurMaskFilter` on the outline | 12 ms | 17 ms | 5.7% |
+| None | 7 ms | 16 ms | 2.8% |
+| The on/off dot map, one pixel per dot, box-blurred on the CPU and drawn scaled up with filtering | 8 ms | 18 ms | 3.3% |
+
+The dot-map glow costs about a millisecond and follows the dots exactly. Leaving out the
+full-screen bitmap of unlit dots saved another ~3 ms at the median but did not change the jank,
+which stays around 3% whatever is drawn: it comes from the first frames of an animation, while
+the GPU clocks up from idle. A settled face draws no frames at all.
+
+**Deciding dots.** Rasterising the outline into a one-pixel-per-dot bitmap and reading it back
+looked neat but was not symmetric: Skia's fill rule takes a pixel whose centre lies exactly on
+a left edge and drops one exactly on a right edge, so an eye could lose a corner dot on one
+side only. Dots are instead tested in code at whole-dot offsets from the eye's centre, edges
+included on both sides, so the two halves come out identical.
+
 ---
 
 ## Window relayout surfaces the system bars
@@ -97,66 +229,6 @@ Reseating the cable resolved it. **USB is far more reliable than wireless debugg
 MIUI switched wireless debugging off twice unprompted mid-session, each time silently, leaving
 a stale mDNS entry advertising a dead port. After an `adb kill-server`, mDNS returning nothing
 is the tell.
-
----
-
-## Battery: measured, not estimated
-
-**The fuel gauge is unusable for runtime estimates.**
-`BatteryManager.BATTERY_PROPERTY_CURRENT_NOW` sampled six seconds after launch reported
-**~1.17A** against a true steady draw nearer **220mA**, because the CPU, GPU and the weather
-fetch were all active. That produced `0H 45M LEFT` at 42% when the truth was about four hours.
-
-NODE instead measures the observed percentage drop over wall-clock time, which captures what
-DESK mode really costs including the backlight. The anchor is persisted to `SharedPreferences`
-— an in-memory anchor is discarded by any process restart, and `adb install -r` alone restarts
-the app (`Killing ... due to installPackageLI`), which repeatedly reset the measurement during
-development.
-
-**Measured figures on this device**
-
-| Condition | Result |
-|---|---|
-| Screen lit at `0.10` brightness | ~10.3 %/hour |
-| Implied runtime from full | ~9–10 hours |
-| Battery real capacity (charge counter) | ~2050 mAh against a 4000 mAh design rating |
-
-The backlight is essentially the entire power budget on an IPS panel — black pixels save
-nothing. Minimum brightness plus quiet hours roughly halves daily consumption, but an
-always-lit LCD cannot reach multi-day standby. Only the screen genuinely being off does that.
-
----
-
-## Bikram Sambat calendar data
-
-BS month lengths are astronomically determined and vary 29–32 days, so they cannot be computed
-— they must come from a table. NODE's is anchored on **BS 2000/01/01 = AD 1943-04-14**.
-
-**Two public tables were compared and they disagree for BS 2081–2088.** One had obviously
-synthetic data past 2080 — every year ending `30, 30, 30` — and was rejected. The other carries
-realistic varying lengths across 1975–2099 and is the one used.
-
-Verified against a live Nepali calendar at five points, including *past* the divergence:
-
-| Check | Expected | Status |
-|---|---|---|
-| Epoch round-trip | AD 1943-04-14 = BS 2000/01/01 | ✅ |
-| Reference day | AD 2026-08-16 = 31 Shrawan 2083 | ✅ |
-| Nepali New Year 2083 | AD 2026-04-14 = BS 2083/01/01 | ✅ |
-| Ashoj 2083 length | 31 days, 17 Sep – 17 Oct 2026 | ✅ |
-| Nepali New Year 2084 | AD 2027-04-14, Baishakh = 31 days | ✅ |
-
-Dates outside BS 2000–2099 fall back to the Gregorian calendar rather than rendering an empty
-pane.
-
----
-
-## Devanagari rendering
-
-`Typeface.MONOSPACE` carries no Devanagari glyphs; Android's font fallback supplies them, and
-it works without bundling a font. Letter-spacing must be eased wherever Devanagari appears —
-0.08 on the calendar title, 0.05 and 0.06 on the temperature and power lines — because wide
-tracking pulls matras away from their base glyphs in a connected script.
 
 ---
 

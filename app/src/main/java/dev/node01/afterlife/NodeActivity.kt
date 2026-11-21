@@ -1,123 +1,454 @@
 package dev.node01.afterlife
 
+import android.Manifest
 import android.app.Activity
+import android.app.admin.DevicePolicyManager
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.graphics.Typeface
+import android.media.AudioManager
+import android.net.wifi.WifiManager
 import android.os.BatteryManager
-import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.SystemClock
+import android.provider.Settings
 import android.util.Log
+import android.util.TypedValue
 import android.view.MotionEvent
+import android.view.Surface
+import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
+import android.widget.LinearLayout
 import android.widget.TextView
+import java.io.File
+import java.net.Inet4Address
+import java.net.NetworkInterface
+import java.security.SecureRandom
+import java.time.Duration
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
-import kotlin.math.roundToInt
+import kotlin.concurrent.thread
 
 /**
- * The whole of NODE.
+ * The whole of NODE Companion: a face on the desk that notices you, tells you
+ * when Claude Code on the PC needs you or has finished, and answers a few
+ * spoken questions after a tap or a wave.
  *
- * Power model: NODE owns no timers, no handlers, no services and no wake locks
- * of its own. The only recurring work is driven by the system's own minute
- * pulse, [Intent.ACTION_TIME_TICK], which is delivered exclusively to
- * runtime-registered receivers. Registered in [onStart], dropped in [onStop] --
- * so a backgrounded NODE costs nothing at all.
+ * Everything starts in [onStart] and stops in [onStop] -- the camera, the
+ * sensors, the LAN server, speech and the face's own timers. Nothing runs in
+ * the background. Android only lets the app in front use the camera, which
+ * is why the screen is held on.
  *
- * Battery is read on demand once per tick from the sticky
- * [Intent.ACTION_BATTERY_CHANGED] broadcast rather than by holding a live
- * receiver, which would otherwise wake us on every voltage and temperature
- * change for a number that only renders to whole percent.
+ * All state lives on the main thread. Every input -- a face, a knock, a hook
+ * event, a spoken sentence, the half-second heartbeat -- ends in
+ * [reevaluate], which asks [Mood] what to show.
  */
 class NodeActivity : Activity() {
 
-    private lateinit var clockView: ClockView
-    private lateinit var calendarView: CalendarView
-    private lateinit var powerView: TextView
-    private lateinit var tempView: TextView
+    private lateinit var face: FaceView
+    private lateinit var captionView: TextView
+    private lateinit var statusView: TextView
+    private lateinit var taskList: View
+    private lateinit var taskRows: LinearLayout
 
-    private val weather = WeatherClient()
-    private var tempC: Double? = null
-    private var tempFetchedAt = 0L
-
-    /**
-     * The drain anchor is persisted, not held in memory. Any process restart --
-     * a reinstall, a reboot, MIUI reclaiming the app -- would otherwise discard
-     * the measurement and leave the appliance with no estimate for another five
-     * minutes. Wall-clock time is used rather than elapsedRealtime precisely so
-     * it survives those restarts.
-     */
     private val prefs by lazy { getSharedPreferences("node", MODE_PRIVATE) }
 
-    /** v1.0 ships DESK only. Mode switching lands with the other modes. */
-    private val mode: Mode = Mode.DESK
+    /** Random per install, persisted, so the address stays put. */
+    private val urlKey by lazy {
+        prefs.getString(KEY_URL_KEY, null) ?: newUrlKey().also {
+            prefs.edit().putString(KEY_URL_KEY, it).apply()
+        }
+    }
 
-    private var receiverRegistered = false
-    private var quietHoursActive = false
-    private var screenPolicyApplied = false
-    private var brightnessBoosted = false
+    private val page by lazy { assets.open("index.html").use { it.readBytes() } }
 
-    /** True only while a touch that began in the bottom edge strip is live. */
-    private var barsRequestedBySwipe = false
+    private val sessions = ClaudeSessions()
+    private val inbox by lazy { Inbox.decode(prefs.getString(KEY_INBOX, null)) }
+    private val tasks by lazy { Tasks.decode(prefs.getString(KEY_TASKS, null)) }
+
+    /** The task list is open over the face until this moment; every touch on it moves it on. */
+    private var tasksUntilMs = 0L
+
+    /** Hand tracking, while that mode is on; and when a hand was last seen, to turn it off when none has been. */
+    private var hands: HandTracker? = null
+    private var handSeenMs = 0L
+
+    /** The corner readouts -- usage, the time, the PC's load -- shown, or swiped away; kept across restarts. */
+    private var detailsShown = true
+
+    /** The page's camera view: [Presence] fills it, only while the server has a viewer on it. */
+    private val camView = Hub(CAM_VIEW_QUEUE)
+
+    /** Webcam mode: the rear camera, recording loop clips and streaming, in place of the face. */
+    private var webcam = false
+    private var camcorder: Camcorder? = null
+    private val webcamPage by lazy { assets.open("webcam.html").use { it.readBytes() } }
+    private val recorder by lazy {
+        LoopRecorder(getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: File(filesDir, "clips"))
+    }
+
+    // A couple of frames, or half a second of sound, per viewer before dropping.
+    private val webcamVideo = Hub(capacity = 2)
+    private val webcamAudio = Hub(capacity = 25)
+
+    private val dpm by lazy { getSystemService(DevicePolicyManager::class.java) }
+    private val admin by lazy { ComponentName(this, NodeAdmin::class.java) }
+
+    /** The PC's load as it last sent it, and when, in elapsedRealtime: shown only while it keeps coming. */
+    private var pc: PcStats? = null
+    private var pcAtMs = NEVER
+
+    /** Claude's 5-hour session usage, last sent by the PC's status line; kept across restarts. */
+    private var usage: SessionUsage? = null
+
+    /** The highest usage mark already spoken, so each is said once per window. */
+    private var usageWarnedAt = 0
+    private val chirp = Chirp()
+    private val chatter = Chatter()
+
+    private var presence: Presence? = null
+    private var senses: Senses? = null
+    private var server: HttpServer? = null
+    private var listener: Listener? = null
+    private var speaker: Speaker? = null
+
+    /** NODE's own model, once loaded; null with no model file on the phone. See [Rephraser]. */
+    private var rephraser: Rephraser? = null
+    private var rephrasing = false
+
+    // The voice assistant.
+    private var listening = false
+
+    /** The sentence being listened to goes to Google to be recognized: shown under the eyes. */
+    private var listeningOnline = false
 
     /**
-     * Fires on every minute boundary, and whenever the clock or time zone is
-     * changed out from under us.
+     * Hands-free: a background session is listening, with no caption and no
+     * beep. [woke] once its name has been heard in it, and the rest of the
+     * sentence is being shown as a command. Without the name, a sentence is
+     * acted on only if it is a command or a greeting and you are facing NODE.
      */
-    private val timeReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) = render()
+    private var wakeSession = false
+    private var woke = false
+
+    /** No background listening before this: after a network failure, or right after NODE spoke. */
+    private var wakeNotBeforeMs = 0L
+    private var heard = ""
+    private var replyText: String? = null
+    private var replyUntilMs = 0L
+    private var voiceAsleep = false
+
+    /** The language NODE listens for first and last answered in. */
+    private var voiceLang = Lang.EN
+
+    /**
+     * Without it the phone's Wi-Fi dozes between packets, and the first
+     * request after a quiet spell took up to three seconds to connect --
+     * longer than a hook waits. The system honours a low-latency lock only
+     * while the app is in front with the screen on, which NODE always is.
+     */
+    private val wifiLock by lazy {
+        applicationContext.getSystemService(WifiManager::class.java)
+            ?.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "node:lan")
+            ?.apply { setReferenceCounted(false) }
     }
+
+    // What NODE knows, in elapsedRealtime milliseconds.
+    private var faceAtMs = 0L
+    private var presentSinceMs = 0L
+    private var lastAbsenceMs = 0L
+    private var faceX = 0f
+    private var faceY = 0f
+    private var faceLogMs = 0L
+    private var dark = false
+
+    /** The phone's own battery, from the sticky broadcast; null until the first one. */
+    private var battery: Battery? = null
+    private var knockAtMs = NEVER
+    private var wincedAtMs = NEVER
+
+    /** A knock in the dark shows the time until this moment. */
+    private var clockUntilMs = 0L
+
+    /** The last finger down or up on the screen, to tell a tap's jolt from a knock on the desk. */
+    private var touchAtMs = NEVER
+    private var petAtMs = NEVER
+    private var undimUntilMs = 0L
+    private var tappedUrl = ""
+    private var shownNote: Inbox.Note? = null
+    private var lastLook: Look? = null
+
+    /** What the status line would say if something were wrong; null if all is well. */
+    private var problem: String? = null
+
+    /** Why the LAN server is not up, until a retry gets it up. Kept apart so the camera recovering does not hide it. */
+    private var serverProblem: String? = null
+
+    /** True only while a touch that began at a screen edge is live. */
+    private var barsRequestedBySwipe = false
+
+    /** How far the live touch has travelled, to tell a stroke from a tap. */
+    private var strokedPx = 0f
+    private var lastX = 0f
+    private var lastY = 0f
+
+    /** Where the live touch began, to tell a swipe's direction. */
+    private var downX = 0f
+    private var downY = 0f
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.node_desk)
-
-        clockView = findViewById(R.id.node_clock)
-        calendarView = findViewById(R.id.node_calendar)
-        powerView = findViewById(R.id.node_power)
-        tempView = findViewById(R.id.node_temp)
-
+        setContentView(R.layout.node_face)
+        face = findViewById(R.id.face)
+        captionView = findViewById(R.id.caption)
+        statusView = findViewById(R.id.status)
+        taskList = findViewById(R.id.tasks)
+        taskRows = findViewById(R.id.task_rows)
+        // A tap beside the list, not on it, closes it.
+        taskList.setOnClickListener { closeTasks() }
         configureWindow()
-        applyMode(mode)
+        kiosk()
+        loadRephraser()
+    }
+
+    /** Loads NODE's own model, if one has been pushed to the phone, off the main thread: it takes seconds. */
+    private fun loadRephraser() {
+        val dir = getExternalFilesDir(null) ?: return
+        thread(name = "node-model", isDaemon = true) {
+            val started = SystemClock.elapsedRealtime()
+            val loaded = Rephraser.open(dir, cacheDir) ?: return@thread
+            Log.d(TAG, "model: loaded in ${SystemClock.elapsedRealtime() - started} ms")
+            val warm = SystemClock.elapsedRealtime()
+            // A fixed sentence, not something said, so its rewrite can be logged.
+            val rewrite = loaded.rephrase(Rephraser.WARM_UP)
+            Log.d(TAG, "model: warm-up \"${Rephraser.WARM_UP}\" -> \"$rewrite\" in ${SystemClock.elapsedRealtime() - warm} ms")
+            mainExecutor.execute { if (isDestroyed) loaded.close() else rephraser = loaded }
+        }
+    }
+
+    override fun onDestroy() {
+        // Waits for a sentence in progress, on its own thread, rather than holding up the main one.
+        rephraser?.let { r -> thread(name = "node-model-close", isDaemon = true) { r.close() } }
+        rephraser = null
+        super.onDestroy()
     }
 
     override fun onStart() {
         super.onStart()
-        if (!receiverRegistered) {
-            val filter = IntentFilter().apply {
-                addAction(Intent.ACTION_TIME_TICK)
-                addAction(Intent.ACTION_TIME_CHANGED)
-                addAction(Intent.ACTION_TIMEZONE_CHANGED)
-            }
-            // These are all protected system broadcasts, so the export flag is
-            // not strictly required -- passing it anyway keeps us correct if a
-            // non-protected action is ever added to the filter above.
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                registerReceiver(timeReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-            } else {
-                registerReceiver(timeReceiver, filter)
-            }
-            receiverRegistered = true
-        }
-        // Draw immediately rather than waiting up to 60s for the first tick.
-        render()
+        registerReceiver(batteryWatch, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        wifiLock?.acquire()
+        startServer()
+        val missing = PERMISSIONS.filterNot(::granted)
+        if (missing.isNotEmpty()) requestPermissions(missing.toTypedArray(), REQUEST_PERMISSIONS)
+        webcam = prefs.getBoolean(KEY_WEBCAM, false)
+        if (webcam) startWebcam() else startFace()
+        heartbeat.run()
     }
 
-    override fun onStop() {
-        if (receiverRegistered) {
-            unregisterReceiver(timeReceiver)
-            receiverRegistered = false
+    override fun onResume() {
+        super.onResume()
+        // Only as device owner: otherwise this would ask to pin the screen.
+        if (dpm.isLockTaskPermitted(packageName)) startLockTask()
+    }
+
+    /** Everything the companion runs that the webcam must not: the front camera, the microphone, sounds. */
+    private fun startFace() {
+        face.visibility = View.VISIBLE
+        val now = SystemClock.elapsedRealtime()
+        // Nobody seen yet: treat the start as the moment you were last here.
+        faceAtMs = now - Mood.FACE_GRACE_MS - 1
+        presentSinceMs = now
+        lastAbsenceMs = 0L
+        lastLook = null
+
+        face.start()
+        chirp.start()
+        startSenses()
+        voiceLang = runCatching { Lang.valueOf(prefs.getString(KEY_VOICE_LANG, null) ?: "") }.getOrDefault(Lang.EN)
+        usage = SessionUsage.decode(prefs.getString(KEY_USAGE, null))
+        detailsShown = prefs.getBoolean(KEY_DETAILS, true)
+        // Where it already stood at startup is not news: note it without saying it.
+        usageWarnedAt = usage?.let { Assistant.usagePassed(it.shownAt(System.currentTimeMillis())) } ?: 0
+        speaker = Speaker(this)
+        listener = Listener(this, voiceEvents)
+        if (granted(Manifest.permission.CAMERA)) {
+            startPresence()
+        } else {
+            problem = getString(R.string.status_no_permission)
         }
+        reevaluate()
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        if (requestCode == REQUEST_PERMISSIONS && webcam) {
+            problem = null
+            startWebcam()
+        } else if (requestCode == REQUEST_PERMISSIONS && granted(Manifest.permission.CAMERA)) {
+            problem = null
+            startPresence()
+        }
+        reevaluate()
+    }
+
+    private fun granted(permission: String) = checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+
+    override fun onStop() {
+        server?.stop()
+        server = null
+        wifiLock?.release()
+        unregisterReceiver(batteryWatch)
+        battery = null
+        // Finalizes the clip in progress, so leaving NODE never costs footage.
+        stopWebcam()
+        stopFace()
         // Do not leave delayed callbacks behind when the screen goes off.
-        powerView.removeCallbacks(restoreDim)
+        statusView.removeCallbacks(heartbeat)
+        statusView.removeCallbacks(retryServer)
+        serverProblem = null
         window.decorView.removeCallbacks(reHideBars)
-        brightnessBoosted = false
         super.onStop()
+    }
+
+    private fun stopFace() {
+        stopHands()
+        stopPresence()
+        senses?.stop()
+        senses = null
+        listener?.destroy()
+        listener = null
+        listening = false
+        wakeSession = false
+        woke = false
+        speaker?.shutdown()
+        speaker = null
+        chirp.stop()
+        face.stop()
+        statusView.removeCallbacks(retryCamera)
+        statusView.removeCallbacks(ringAgain)
+    }
+
+    // -- webcam mode ---------------------------------------------------------
+
+    /**
+     * The phone is the companion or the webcam, never both: Android gives the
+     * microphone to one user at a time, and the rear camera's 1080p encoder
+     * leaves no room for the face. Stopping one before starting the other is
+     * what hands the hardware over. Remembered, so a power cut brings back
+     * whichever it was.
+     */
+    private fun setWebcam(on: Boolean) {
+        if (on == webcam) return
+        webcam = on
+        prefs.edit().putBoolean(KEY_WEBCAM, on).apply()
+        problem = null
+        if (on) {
+            stopFace()
+            startWebcam()
+        } else {
+            stopWebcam()
+            startFace()
+        }
+    }
+
+    private fun startWebcam() {
+        face.visibility = View.INVISIBLE
+        captionView.visibility = View.INVISIBLE
+        closeTasks()
+        if (camcorder == null) {
+            if (PERMISSIONS.all(::granted)) {
+                val cam = Camcorder(this, recorder, webcamVideo, webcamAudio, ::restartWebcam)
+                camcorder = cam
+                try {
+                    cam.start()
+                } catch (e: Exception) {
+                    restartWebcam(e.message ?: e.javaClass.simpleName)
+                }
+            } else {
+                problem = getString(R.string.status_no_permission)
+            }
+        }
+        reevaluate()
+    }
+
+    private fun stopWebcam() {
+        camcorder?.stop()
+        camcorder = null
+        statusView.removeCallbacks(retryWebcam)
+    }
+
+    /** As [restartPresence]: the recognizer may also still be letting go of the microphone. */
+    private fun restartWebcam(reason: String) {
+        Log.e(TAG, reason)
+        stopWebcam()
+        problem = getString(R.string.status_error_fmt, reason)
+        statusView.postDelayed(retryWebcam, RETRY_MS)
+        reevaluate()
+    }
+
+    private val retryWebcam = Runnable {
+        problem = null
+        if (webcam) startWebcam()
+    }
+
+    /** Webcam mode's whole screen: one dim dot, or what is wrong, or the address for a while after a tap. */
+    private fun showWebcam(now: Long) {
+        val undimmed = now < undimUntilMs
+        setBrightness(if (undimmed) WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE else MIN_BRIGHTNESS)
+        val text = problem ?: serverProblem ?: if (undimmed) tappedUrl else "●"
+        if (statusView.text.toString() != text) statusView.text = text
+        statusView.visibility = View.VISIBLE
+    }
+
+    private fun onMode(to: String) {
+        when (to) {
+            "webcam" -> setWebcam(true)
+            "face" -> setWebcam(false)
+            "release" -> release()
+        }
+    }
+
+    // -- kiosk ---------------------------------------------------------------
+
+    /**
+     * Once NODE is the device owner (`adb shell dpm set-device-owner`, on a
+     * phone with no accounts) there is no Android left to see: no lock screen,
+     * no launcher but this, and in [onResume] a locked task with no bars, Home
+     * or Recents. Anywhere else this does nothing.
+     */
+    private fun kiosk() {
+        if (!dpm.isDeviceOwnerApp(packageName)) return
+        dpm.setLockTaskPackages(admin, arrayOf(packageName))
+        dpm.setLockTaskFeatures(admin, DevicePolicyManager.LOCK_TASK_FEATURE_NONE)
+        dpm.setKeyguardDisabled(admin, true)
+        // AC, USB and wireless: the screen never sleeps on the charger, even before NODE is drawn.
+        dpm.setGlobalSetting(admin, Settings.Global.STAY_ON_WHILE_PLUGGED_IN, "7")
+        val home = IntentFilter(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_HOME)
+            addCategory(Intent.CATEGORY_DEFAULT)
+        }
+        dpm.addPersistentPreferredActivity(admin, home, ComponentName(this, NodeActivity::class.java))
+    }
+
+    /** The way out that needs no cable: gives the phone back to Android. */
+    private fun release() {
+        if (!dpm.isDeviceOwnerApp(packageName)) return
+        runCatching { stopLockTask() }
+        dpm.setKeyguardDisabled(admin, false)
+        dpm.clearPackagePersistentPreferredActivities(admin, packageName)
+        @Suppress("DEPRECATION")
+        dpm.clearDeviceOwnerApp(packageName)
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -125,6 +456,947 @@ class NodeActivity : Activity() {
         // A transient swipe, or MIUI restoring its own chrome, can bring the
         // system bars back. Re-hide them whenever we regain focus.
         if (hasFocus) hideSystemBars()
+    }
+
+    // -- what NODE shows ---------------------------------------------------
+
+    /** Time-based moods -- a knock wearing off, sleep coming on -- need a pulse. */
+    private val heartbeat = object : Runnable {
+        override fun run() {
+            reevaluate()
+            statusView.removeCallbacks(this)
+            statusView.postDelayed(this, HEARTBEAT_MS)
+        }
+    }
+
+    private fun reevaluate() {
+        val now = SystemClock.elapsedRealtime()
+        // Notes and alerts wait for the face to come back, rather than sound in a recording.
+        if (webcam) return showWebcam(now)
+        val present = now - faceAtMs <= Mood.FACE_GRACE_MS
+        val presentFor = if (present) now - presentSinceMs else 0L
+        // You are looking: what NODE has been showing you counts as seen.
+        if (present) sessions.acknowledge(now, presentSinceMs)
+
+        var note = inbox.due(System.currentTimeMillis())
+        // A nudge nobody is there for is no nudge: let it come round again,
+        // silently, rather than pile up for whenever you walk back in.
+        if (note != null && note.repeatMs > 0 && !present) {
+            inbox.dismiss(System.currentTimeMillis())
+            saveInbox()
+            note = inbox.due(System.currentTimeMillis())
+        }
+        if (note != null && note != shownNote) announce(note)
+        shownNote = note
+        if (replyText != null && now > replyUntilMs) replyText = null
+
+        val look = Mood.decide(
+            Mood.Inputs(
+                present = present,
+                presentForMs = presentFor,
+                awayForMs = if (present) 0L else now - faceAtMs,
+                lastAbsenceMs = lastAbsenceMs,
+                faceX = faceX,
+                faceY = faceY,
+                dark = dark,
+                knockAgoMs = now - knockAtMs,
+                petAgoMs = now - petAtMs,
+                claude = sessions.summary(now),
+                note = note?.text,
+                listening = listening,
+                heard = heard,
+                thinking = rephrasing,
+                reply = replyText,
+                voiceAsleep = voiceAsleep,
+                battery = battery,
+            ),
+        )
+        if (look != lastLook) {
+            if (look.expression != lastLook?.expression || look.caption != lastLook?.caption) {
+                Log.d(TAG, "look ${look.expression} ${look.light} caption=${look.caption != null}")
+            }
+            lastLook = look
+            face.show(look)
+            showCaption(look)
+        }
+        face.showUsage(usage?.shownAt(System.currentTimeMillis())?.takeIf { detailsShown })
+        face.showTimer(inbox.timerLeft(System.currentTimeMillis())?.let { Inbox.countdown(it) })
+        val nightClock = dark && now < clockUntilMs
+        val time = LocalDateTime.now().format(CLOCK_FORMAT)
+        face.showClock(if (nightClock) time else null)
+        // The corner time steps aside while the large one shows in the dark.
+        face.showTime(if (nightClock || !detailsShown) null else time)
+        // A script that has stopped sending leaves nothing behind on the face.
+        face.showPc(pc?.takeIf { detailsShown && now - pcAtMs <= PC_FRESH_MS })
+        // Nobody's hand for a while: back to the face, and the model unloaded, so the phone stays cool.
+        if (hands != null && now - handSeenMs > HANDS_IDLE_MS) stopHands()
+        if (taskList.visibility == View.VISIBLE && now >= tasksUntilMs) closeTasks()
+        val undimmed = now < undimUntilMs
+        setBrightness(
+            when {
+                undimmed -> WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                look.light == Light.FULL -> WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                // Enough to read by in a dark room, and no more.
+                nightClock -> DOZE_BRIGHTNESS
+                look.light == Light.DOZE -> DOZE_BRIGHTNESS
+                else -> MIN_BRIGHTNESS
+            },
+        )
+        keepWakeListening(now)
+        showStatus(undimmed)
+    }
+
+    /**
+     * Listen again as soon as the recognizer is free, rather than on the next
+     * heartbeat: every moment between sessions is a moment a command is missed.
+     */
+    private fun restartWakeSoon() {
+        statusView.postDelayed({ reevaluate() }, maxOf(0L, wakeNotBeforeMs - SystemClock.elapsedRealtime()) + 20L)
+    }
+
+    /** No background listening for [ms]; one running now stops, unless it has already heard its name. */
+    private fun pauseWake(ms: Long) {
+        wakeNotBeforeMs = maxOf(wakeNotBeforeMs, SystemClock.elapsedRealtime() + ms)
+        if (wakeSession && !woke) {
+            listener?.cancel()
+            wakeSession = false
+        }
+    }
+
+    /**
+     * Listens hands-free while you are at the desk: you were seen in the
+     * last [WAKE_PRESENT_MS], the room is lit, NODE is not asleep, listening for
+     * a command or speaking. Starts a background session when one should run
+     * and none is; stops one that should not. Each session ends by itself after
+     * a sentence or a silence, and the next reevaluate starts another.
+     *
+     * Does nothing while [WAKE] is off, which is how NODE ships: you tap or wave.
+     */
+    private fun keepWakeListening(now: Long) {
+        val sp = speaker
+        if (sp != null && sp.busy) wakeNotBeforeMs = maxOf(wakeNotBeforeMs, now + AFTER_SPEAKING_MS)
+        val wanted = WAKE && canListen() && !dark && !voiceAsleep && !listening &&
+            now - faceAtMs <= WAKE_PRESENT_MS && sp != null && !sp.busy
+        // The recognizer's beep is a notification sound: keep it quiet while hands-free
+        // listening is on, and put the volume back when it is not.
+        if (wanted) listener?.hush() else if (!wakeSession) listener?.unhush()
+        when {
+            wakeSession && !wanted && !woke -> {
+                listener?.cancel()
+                wakeSession = false
+            }
+            !wakeSession && wanted && now >= wakeNotBeforeMs -> {
+                wakeSession = true
+                woke = false
+                listeningOnline = false
+                listener?.listen(voiceLang, quiet = true)
+            }
+        }
+    }
+
+    private fun showCaption(look: Look) {
+        val text = when (val c = look.caption) {
+            null -> null
+            is Caption.Note -> c.text
+            is Caption.NeedsYou -> getString(R.string.caption_needs_you) + more(c.others)
+            is Caption.Done -> getString(R.string.caption_done) + more(c.others)
+            is Caption.Heard -> c.text.ifBlank { Assistant.listening(voiceLang) } + if (listeningOnline) " · online" else ""
+            is Caption.Reply -> c.text
+            is Caption.Working -> getString(R.string.caption_working_fmt, c.minutes)
+            is Caption.BatteryWarning ->
+                getString(if (c.hot) R.string.caption_battery_hot_fmt else R.string.caption_battery_low_fmt, c.number)
+        }
+        captionView.text = text
+        // Amber only for what needs you; what you said and what NODE answers stay grey.
+        val alert = look.caption is Caption.Note || look.caption is Caption.NeedsYou ||
+            look.caption is Caption.BatteryWarning
+        captionView.setTextColor(getColor(if (alert) R.color.node_accent else R.color.node_secondary))
+        captionView.visibility = if (text == null) View.INVISIBLE else View.VISIBLE
+    }
+
+    /**
+     * A note, reminder or timer just came due: chirp, then read it out. Desk
+     * notes stay quiet in a dark room like every other alert; a reminder or
+     * timer you set by voice sounds regardless.
+     */
+    private fun announce(note: Inbox.Note) {
+        if (note.kind == Inbox.Kind.NOTE && dark) return
+        alert(note.text, Assistant.langOf(note.text))
+        // An alarm is the one alert that will not be slept through.
+        if (note.kind == Inbox.Kind.ALARM) statusView.postDelayed(ringAgain, ALARM_REPEAT_MS)
+    }
+
+    /** Keeps an alarm ringing until it is dismissed, which ends this by itself. */
+    private val ringAgain = object : Runnable {
+        override fun run() {
+            if (inbox.due(System.currentTimeMillis())?.kind != Inbox.Kind.ALARM) return
+            chirp.attention()
+            statusView.postDelayed(this, ALARM_REPEAT_MS)
+        }
+    }
+
+    /** One chirp for attention, then [words] once it has finished. */
+    private fun alert(words: String, lang: Lang) {
+        pauseWake(SPEAK_AFTER_CHIRP_MS + SPEECH_START_MS)
+        chirp.attention()
+        statusView.postDelayed({ speaker?.say(words, lang) }, SPEAK_AFTER_CHIRP_MS)
+    }
+
+    private fun more(others: Int) = if (others > 0) getString(R.string.caption_more_fmt, others) else ""
+
+    /**
+     * A problem always; otherwise the address, for a while after a long press;
+     * otherwise, while a hands-free session is listening, a dim line saying so.
+     */
+    private fun showStatus(undimmed: Boolean) {
+        val text = problem ?: serverProblem ?: if (undimmed) tappedUrl else if (wakeSession && !woke) {
+            getString(R.string.status_wake) + if (listeningOnline) getString(R.string.status_online) else ""
+        } else {
+            null
+        }
+        if (statusView.text.toString() != text.orEmpty()) statusView.text = text
+        statusView.visibility = if (text == null) View.INVISIBLE else View.VISIBLE
+    }
+
+    // -- inputs ------------------------------------------------------------
+
+    private fun onFace(x: Float, y: Float) {
+        val now = SystemClock.elapsedRealtime()
+        if (now - faceAtMs > Mood.FACE_GRACE_MS) {
+            // Arrived. Remember how long you were gone, and say hello if it was a while.
+            lastAbsenceMs = now - faceAtMs
+            presentSinceMs = now
+            if (lastAbsenceMs >= Mood.SEARCH_MS) {
+                face.doubleBlink()
+                // "Good morning" once a morning, and then the day's one line;
+                // otherwise a plain hello.
+                val morning = LocalDateTime.now().hour in 4..11
+                if (morning && chat(Moment.MORNING)) brief() else chat(Moment.HELLO)
+            }
+        }
+        faceAtMs = now
+        faceX = x
+        faceY = y
+        // Enough to check the eyes point the right way, not a running log of you.
+        if (now - faceLogMs >= 1_000L) {
+            faceLogMs = now
+            Log.d(TAG, "face %.2f %.2f".format(x, y))
+        }
+        reevaluate()
+    }
+
+    /**
+     * A jolt from the accelerometer. A tap on the screen jolts the phone too, so
+     * wait a moment and drop the knock if a touch came with it -- otherwise
+     * every tap startles the face and says "whoa" over the start of listening.
+     */
+    private fun onKnock() {
+        val at = SystemClock.elapsedRealtime()
+        statusView.postDelayed({
+            if (kotlin.math.abs(touchAtMs - at) > TAP_JOLT_MS && !listening) {
+                knockAtMs = at
+                // A knock in a dark room is asking the time. Answer it in dots,
+                // not out loud: chat() is silent in the dark anyway.
+                if (dark) clockUntilMs = SystemClock.elapsedRealtime() + NIGHT_CLOCK_MS
+                chat(Moment.KNOCK)
+                reevaluate()
+            }
+        }, TAP_JOLT_MS)
+    }
+
+    private fun onShake() {
+        face.play(Act.DIZZY)
+        chat(Moment.SHAKE)
+    }
+
+    /**
+     * A short spoken line for [moment], after any chirp has finished. Silent
+     * when talk is off, the room is dark, NODE is listening, or it spoke too
+     * recently ([Chatter] decides). Small talk is dropped while something is
+     * being said; an urgent line waits its turn. True if it spoke.
+     */
+    private fun chat(moment: Moment): Boolean {
+        val sp = speaker ?: return false
+        if (!TALK || dark || listening) return false
+        if (sp.busy && !moment.urgent) return false
+        // Nepali small talk needs a Nepali voice; English is installed on the phone.
+        val lang = if (sp.canSpeak(voiceLang)) voiceLang else Lang.EN
+        if (!sp.canSpeak(lang)) return false
+        val words = chatter.line(moment, lang, SystemClock.elapsedRealtime()) ?: return false
+        Log.d(TAG, "chat: $moment")
+        pauseWake(SPEAK_AFTER_CHIRP_MS + SPEECH_START_MS)
+        statusView.postDelayed({ speaker?.say(words, lang, after = moment.urgent) }, SPEAK_AFTER_CHIRP_MS)
+        return true
+    }
+
+    /**
+     * The morning's one line, behind "Good morning". The weather is fetched on
+     * a thread of its own with a short timeout, and the briefing is spoken
+     * whether or not it arrives -- a morning hello must never wait on a
+     * network. Dropped entirely if the room went dark or you started talking
+     * in the meantime.
+     */
+    private fun brief() {
+        val waiting = inbox.size
+        thread(name = "node-weather", isDaemon = true) {
+            val weather = Weather.fetch()
+            // Not before the "Good morning" posted with this delay: it would cut the briefing off.
+            statusView.postDelayed({
+                val sp = speaker ?: return@postDelayed
+                if (!TALK || dark || listening) return@postDelayed
+                val lang = if (sp.canSpeak(voiceLang)) voiceLang else Lang.EN
+                val words = Assistant.briefing(LocalDateTime.now(), waiting, lang, weather?.let { Weather.describe(it, lang) })
+                replyText = words
+                replyUntilMs = SystemClock.elapsedRealtime() + REPLY_MS
+                pauseWake(SPEECH_START_MS)
+                // Behind the "Good morning" that is very likely still playing.
+                sp.say(words, lang, after = true)
+                reevaluate()
+            }, SPEAK_AFTER_CHIRP_MS)
+        }
+    }
+
+    /** From the page: an [Act] to play, or an [Expression] to hold for a few seconds. Anything else is ignored. */
+    private fun onFacePlay(name: String) {
+        val key = name.trim().uppercase()
+        Act.entries.firstOrNull { it.name == key }?.let { return face.play(it) }
+        Expression.entries.firstOrNull { it.name == key }?.let { face.preview(it, PREVIEW_MS) }
+    }
+
+    /**
+     * Stroked, rather than tapped: hearts and a pleased line. Nothing else --
+     * a stroke never starts listening, so you can fuss over NODE without
+     * opening the microphone. Ignored while it is already listening.
+     */
+    private fun pet() {
+        if (listening) return
+        petAtMs = SystemClock.elapsedRealtime()
+        face.play(Act.LOVE)
+        chat(Moment.PET)
+        reevaluate()
+    }
+
+    /**
+     * A wave or a tap. In order: dismiss a due note, wake from "go to sleep",
+     * stop listening, or start listening for one sentence -- the only way to
+     * talk to NODE. Without a microphone it just pleases the face.
+     */
+    private fun onPoke() {
+        when {
+            inbox.dismiss(System.currentTimeMillis()) -> {
+                saveInbox()
+                speaker?.stop()
+            }
+            voiceAsleep -> voiceAsleep = false
+            listening -> {
+                listener?.cancel()
+                listening = false
+                // A cancelled session reports nothing more, so end it here, or hands-free never restarts.
+                wakeSession = false
+                woke = false
+            }
+            canListen() -> startListening()
+            else -> {
+                petAtMs = SystemClock.elapsedRealtime()
+                face.play(Act.JOY)
+                chat(Moment.PET)
+            }
+        }
+        reevaluate()
+    }
+
+    // -- voice -------------------------------------------------------------
+
+    private fun canListen() = granted(Manifest.permission.RECORD_AUDIO) && listener?.available == true
+
+    private fun startListening() {
+        // A background session holds the recognizer: end it before starting this one.
+        if (wakeSession) {
+            listener?.cancel()
+            wakeSession = false
+            woke = false
+        }
+        speaker?.stop()
+        replyText = null
+        heard = ""
+        listeningOnline = false
+        listening = true
+        chirp.listen()
+        listener?.listen(voiceLang)
+    }
+
+    private val voiceEvents = object : Listener.Events {
+        override fun onListening(online: Boolean) {
+            listeningOnline = online
+            lastLook = null // the caption's " · online" is not part of the look, so force a redraw
+            reevaluate()
+        }
+
+        override fun onHeard(partial: String) {
+            if (wakeSession && !woke) {
+                // Overheard, not addressed to NODE: never shown.
+                val rest = Assistant.wake(partial) ?: return
+                // Its name: from here on this is a command, shown as you speak.
+                woke = true
+                listening = true
+                heard = rest
+            } else {
+                heard = if (woke) Assistant.wake(partial) ?: partial else partial
+            }
+            reevaluate()
+        }
+
+        override fun onFinal(text: String) {
+            val background = wakeSession
+            val wasWoken = woke
+            listening = false
+            wakeSession = false
+            woke = false
+            if (!background) {
+                if (text.isBlank()) reevaluate() else answer(text)
+                return
+            }
+            // Starting the next session inside this callback finds the recognizer busy.
+            pauseWake(WAKE_GAP_MS)
+            // No name needed while you face it: a command or a greeting is answered as it is.
+            val facing = SystemClock.elapsedRealtime() - faceAtMs <= FACING_MS
+            val said = Assistant.handsFree(text, facing)
+            when {
+                said != null -> answer(said)
+                // Its name was heard as you spoke, then lost from the final text: listen for the command.
+                wasWoken -> {
+                    pauseWake(AFTER_SPEAKING_MS)
+                    statusView.postDelayed({
+                        startListening()
+                        reevaluate()
+                    }, WAKE_GAP_MS)
+                }
+                // Not for NODE. Listen again as soon as the recognizer is free.
+                else -> restartWakeSoon()
+            }
+        }
+
+        override fun onFailed(reason: String, silence: Boolean, busy: Boolean) {
+            val background = wakeSession && !woke
+            listening = false
+            wakeSession = false
+            woke = false
+            if (background) {
+                // Silence is the usual end of a background session. Anything else --
+                // no network, say -- waits a while rather than retrying in a loop.
+                pauseWake(
+                    when {
+                        silence -> WAKE_GAP_MS
+                        busy -> WAKE_BUSY_MS
+                        else -> WAKE_BACKOFF_MS
+                    },
+                )
+                if (!silence) Log.d(TAG, "wake: $reason, pausing")
+                if (silence || busy) restartWakeSoon()
+            } else if (!silence) {
+                // Saying nothing is not an error worth reporting; anything else is shown.
+                say(reason.uppercase(), voiceLang, speak = false)
+            }
+            reevaluate()
+        }
+    }
+
+    /**
+     * Acts on a spoken sentence, then answers it on screen and aloud. An English
+     * sentence the keywords miss goes once to NODE's own model, if it has one,
+     * with the thinking face up meanwhile. Its rewrite comes back here
+     * [rephrased]; a question it is answered from Wikipedia instead.
+     */
+    private fun answer(text: String, rephrased: Boolean = false) {
+        val command = Assistant.parse(text)
+        var lang = Assistant.langOf(text)
+        val model = rephraser
+        if (command == Command.Unknown && !rephrased && lang == Lang.EN && model != null && !rephrasing) {
+            rephrasing = true
+            reevaluate()
+            thread(name = "node-rephrase", isDaemon = true) {
+                val started = SystemClock.elapsedRealtime()
+                val rewrite = model.rephrase(text)
+                // A question is searched as it was said: having the model repeat it would cost seconds.
+                // A rewrite that is no command is taken as one too: the model sometimes rewords a question.
+                val question = if (rewrite != null && (Rephraser.asks(rewrite) || Assistant.parse(rewrite) == Command.Unknown)) text else null
+                val rewritten = SystemClock.elapsedRealtime()
+                // Only a question goes online, and only as a search: the answer is written here, on the phone.
+                val notes = question?.let { Lookup.notes(it) }
+                val searched = SystemClock.elapsedRealtime()
+                val reply = if (question != null && notes != null) model.answer(question, notes) else null
+                val outcome = when {
+                    question == null -> if (rewrite == null) "no rewrite" else "rewrite"
+                    reply != null -> "answer"
+                    notes != null -> "notes without an answer"
+                    else -> "nothing found"
+                }
+                val tookMs = SystemClock.elapsedRealtime() - started
+                // Logcat gets how long; what was said and made of it goes to the week-long asked.log.
+                Log.d(TAG, "model: $outcome in $tookMs ms " +
+                    "(rewrite ${rewritten - started}, search ${searched - rewritten}, answer ${SystemClock.elapsedRealtime() - searched})")
+                val made = when {
+                    question == null -> rewrite?.let { "\"$it\"" } ?: "UNKNOWN"
+                    reply != null -> "ASK -> \"$reply\""
+                    else -> "ASK -> $outcome"
+                }
+                getExternalFilesDir(null)?.let { AskedLog.add(it, LocalDateTime.now(), "\"$text\" -> $made (${tookMs / 100 / 10.0} s)") }
+                mainExecutor.execute {
+                    rephrasing = false
+                    if (isDestroyed) return@execute
+                    if (question == null) return@execute answer(rewrite ?: text, rephrased = true)
+                    if (reply != null) face.play(Act.NOD)
+                    say(reply ?: Assistant.NOT_FOUND, Lang.EN, speak = true)
+                    reevaluate()
+                }
+            }
+            return
+        }
+        val wall = System.currentTimeMillis()
+        val now = SystemClock.elapsedRealtime()
+        val facts = Assistant.Facts(
+            now = LocalDateTime.now(),
+            claude = sessions.summary(now),
+            timerRunning = inbox.cancellable(wall),
+            noteDue = inbox.due(wall) != null,
+            address = wifiAddress()?.let { urlText() },
+            usagePercent = usage?.shownAt(wall),
+            usageResetsInMs = usage?.resetsAtMs?.minus(wall)?.takeIf { it > 0 },
+            stopwatchMs = prefs.getLong(KEY_STOPWATCH, 0L).takeIf { it > 0 }?.let { wall - it }?.takeIf { it >= 0 },
+        )
+        when (command) {
+            is Command.Timer -> command.ms?.let { inbox.add(Assistant.timeUp(lang), it, wall, Inbox.Kind.TIMER) }
+            is Command.Focus -> inbox.add(Assistant.focusDone(lang), command.ms, wall, Inbox.Kind.TIMER)
+            Command.CancelTimer -> inbox.cancelTimers(wall)
+            is Command.Remind -> inbox.add(command.text, command.ms, wall, Inbox.Kind.REMINDER)
+            is Command.RemindAt -> {
+                val due = Assistant.dueAt(facts.now, command.hour, command.minute, command.exact)
+                inbox.add(command.text, Duration.between(facts.now, due).toMillis(), wall, Inbox.Kind.REMINDER)
+            }
+            is Command.Alarm -> {
+                val due = Assistant.dueAt(facts.now, command.hour, command.minute, command.exact)
+                inbox.add(Assistant.wakeUp(lang), Duration.between(facts.now, due).toMillis(), wall, Inbox.Kind.ALARM)
+            }
+            // Wall-clock, and in prefs, so it keeps counting through a screen off.
+            Command.StopwatchStart -> prefs.edit().putLong(KEY_STOPWATCH, wall).apply()
+            is Command.Volume -> adjustVolume(command.up)
+            Command.Sing -> {
+                face.play(Act.JOY)
+                chirp.sing()
+            }
+            is Command.RemindEvery ->
+                inbox.add(command.text, command.everyMs, wall, Inbox.Kind.REMINDER, repeatMs = command.everyMs)
+            is Command.Note -> inbox.add(command.text, 0L, wall, Inbox.Kind.NOTE)?.let {
+                // Shown at once; the spoken "noted" is announcement enough.
+                shownNote = inbox.due(wall)
+            }
+            Command.Dismiss -> inbox.dismiss(wall)
+            Command.Sleep -> voiceAsleep = true
+            Command.Wake -> voiceAsleep = false
+            Command.Thanks -> {
+                petAtMs = now
+                face.play(Act.LOVE)
+            }
+            is Command.Greet -> face.play(
+                when (command.kind) {
+                    Greeting.HOW_ARE_YOU, Greeting.FINE, Greeting.NICE, Greeting.BACK -> Act.JOY
+                    else -> Act.WINK
+                },
+            )
+            Command.Address -> {
+                tappedUrl = urlText()
+                undimUntilMs = now + UNDIM_MS
+            }
+            is Command.Language -> lang = command.lang
+            else -> Unit
+        }
+        saveInbox()
+        Log.d(TAG, "voice: ${command.javaClass.simpleName} ($lang)")
+        // Only the sentences it could not place, so the keywords can be tuned
+        // against what the recognizer really returns. What it understood -- a
+        // note, a reminder -- is never written down.
+        if (command == Command.Unknown) Log.d(TAG, "voice: no match for \"$text\"")
+        say(Assistant.reply(command, lang, facts), lang, speak = true)
+        voiceLang = lang
+        prefs.edit().putString(KEY_VOICE_LANG, lang.name).apply()
+        reevaluate()
+    }
+
+    /**
+     * One step of the phone's own media volume, which is what the speech
+     * engine plays through. Nothing to store: the phone remembers it.
+     */
+    private fun adjustVolume(up: Boolean) {
+        val audio = getSystemService(AudioManager::class.java) ?: return
+        val direction = if (up) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER
+        runCatching { audio.adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, 0) }
+            .onFailure { Log.w(TAG, "volume: ${it.message}") }
+    }
+
+    /** Shows [words] under the eyes for a while, and speaks them if a voice for [lang] is installed. */
+    private fun say(words: String, lang: Lang, speak: Boolean) {
+        replyText = words
+        replyUntilMs = SystemClock.elapsedRealtime() + REPLY_MS
+        if (speak) {
+            pauseWake(SPEECH_START_MS)
+            speaker?.say(words, lang)
+        }
+    }
+
+    private fun onDark(value: Boolean) {
+        // Lights off while you are here: say good night, then go quiet with the room.
+        val present = SystemClock.elapsedRealtime() - faceAtMs <= Mood.FACE_GRACE_MS
+        if (value && !dark && present) chat(Moment.GOODNIGHT)
+        dark = value
+        reevaluate()
+    }
+
+    /** On the main thread. Only a handful of fields of the hook's JSON ever arrive here. */
+    private fun onClaude(fields: Map<String, String>) {
+        val now = SystemClock.elapsedRealtime()
+        val entered = sessions.onEvent(fields, now)
+        Log.d(TAG, "claude ${fields[ClaudeSessions.EVENT]} -> ${entered ?: "no change"}")
+        if (!dark) {
+            if (fields[ClaudeSessions.EVENT] == "PostToolUseFailure") winced(fields, now)
+            when (entered) {
+                ClaudeSessions.State.NEEDS_YOU -> {
+                    chirp.attention()
+                    chat(Moment.NEEDS_YOU)
+                }
+                ClaudeSessions.State.DONE -> {
+                    chirp.done()
+                    face.play(Act.JOY)
+                    chat(Moment.DONE)
+                }
+                else -> Unit
+            }
+        }
+        reevaluate()
+    }
+
+    /**
+     * A tool call failed: a brief sad face, and nothing more. Failures are
+     * ordinary work -- a grep that finds nothing, a test that is meant to fail
+     * -- so this never chirps or speaks, and says nothing at all more than once
+     * every [WINCE_GAP_MS]. Stopping a tool yourself is not a failure.
+     */
+    private fun winced(fields: Map<String, String>, now: Long) {
+        if (fields[ClaudeSessions.IS_INTERRUPT] == "true") return
+        if (now - wincedAtMs < WINCE_GAP_MS) return
+        wincedAtMs = now
+        face.preview(Expression.SAD, WINCE_MS)
+    }
+
+    private fun onNote(text: String, inMinutes: Int) {
+        if (inbox.add(text, inMinutes * 60_000L, System.currentTimeMillis(), Inbox.Kind.NOTE) != null) saveInbox()
+        reevaluate()
+    }
+
+    /**
+     * From the PC: one line to read out and show under the eyes. Unlike a desk
+     * note it waits for nothing and leaves nothing behind -- no amber, nothing
+     * to dismiss. Quiet in a dark room, and never over a sentence being heard.
+     */
+    private fun onSay(text: String) {
+        val words = Inbox.clean(text) ?: return
+        replyText = words
+        replyUntilMs = SystemClock.elapsedRealtime() + REPLY_MS
+        if (TALK && !dark && !listening) alert(words, Assistant.langOf(words))
+        reevaluate()
+    }
+
+    private fun saveInbox() {
+        prefs.edit().putString(KEY_INBOX, inbox.encode()).apply()
+    }
+
+    /**
+     * From the page: kept until you mark it done. One chirp so you know it
+     * arrived, and nothing more -- no words, no amber; a task waits for you to
+     * ask for it. Quiet in a dark room and over a sentence being heard.
+     */
+    private fun onTask(title: String, description: String) {
+        tasks.add(title, description, System.currentTimeMillis()) ?: return
+        saveTasks()
+        if (!dark && !listening) chirp.attention()
+        if (taskList.visibility == View.VISIBLE) fillTasks()
+    }
+
+    private fun saveTasks() {
+        prefs.edit().putString(KEY_TASKS, tasks.encode()).apply()
+    }
+
+    /**
+     * A sideways swipe: hand tracking on or off. On, your hand shows in white
+     * dots in place of the eyes whenever the camera sees it; with no hand in
+     * view the face carries on. The model loads only now, and is closed again
+     * when the mode goes off.
+     */
+    private fun toggleHands() {
+        if (hands != null) return stopHands()
+        val tracker = try {
+            HandTracker(this, ::onHands)
+        } catch (e: Exception) {
+            Log.e(TAG, "hands: ${e.message}")
+            return say(getString(R.string.mode_hands_failed), voiceLang, speak = false)
+        }
+        hands = tracker
+        presence?.hands = tracker
+        handSeenMs = SystemClock.elapsedRealtime()
+        // A moment of text, so turning it on is visible before any hand is.
+        replyText = getString(R.string.mode_hands)
+        replyUntilMs = handSeenMs + MODE_CAPTION_MS
+        reevaluate()
+    }
+
+    private fun stopHands() {
+        presence?.hands = null
+        hands?.close()
+        hands = null
+        face.showHands(null, 1f)
+    }
+
+    private fun onHands(points: FloatArray, aspect: Float) {
+        if (hands == null) return
+        if (points.isNotEmpty()) handSeenMs = SystemClock.elapsedRealtime()
+        face.showHands(points, aspect)
+    }
+
+    /** An up or down swipe: the corner readouts shown, or hidden for a bare face. */
+    private fun toggleDetails() {
+        detailsShown = !detailsShown
+        prefs.edit().putBoolean(KEY_DETAILS, detailsShown).apply()
+        reevaluate()
+    }
+
+    /** From the PC, every few seconds: shown by the next heartbeat. */
+    private fun onPc(stats: PcStats) {
+        pc = stats
+        pcAtMs = SystemClock.elapsedRealtime()
+    }
+
+    /** Your tasks over the face, title by title, with the address below as before. */
+    private fun openTasks() {
+        fillTasks()
+        taskList.visibility = View.VISIBLE
+        tasksUntilMs = SystemClock.elapsedRealtime() + UNDIM_MS
+    }
+
+    private fun closeTasks() {
+        taskList.visibility = View.GONE
+        taskRows.removeAllViews()
+    }
+
+    /** A title per task; tapping one shows what it says about itself and a way to mark it done. */
+    private fun fillTasks() {
+        taskRows.removeAllViews()
+        val heading = if (tasks.size == 0) R.string.tasks_none else R.string.tasks_heading
+        taskRows.addView(taskText(getString(heading), R.color.node_dim, R.dimen.status))
+        for (task in tasks.all) {
+            val details = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                visibility = View.GONE
+            }
+            if (task.description.isNotEmpty()) details.addView(taskText(task.description, R.color.node_dim, R.dimen.status))
+            details.addView(
+                taskText(getString(R.string.task_done), R.color.node_secondary, R.dimen.status).apply {
+                    setOnClickListener {
+                        tasks.complete(task.id)
+                        saveTasks()
+                        chirp.done()
+                        fillTasks()
+                    }
+                },
+            )
+            taskRows.addView(
+                taskText(task.title, R.color.node_secondary, R.dimen.caption).apply {
+                    setOnClickListener {
+                        details.visibility = if (details.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+                    }
+                },
+            )
+            taskRows.addView(details)
+        }
+    }
+
+    /** A line of the task list, styled like the caption and status under the eyes. */
+    private fun taskText(words: String, colour: Int, size: Int) = TextView(this).apply {
+        text = words
+        setTextColor(getColor(colour))
+        setTextSize(TypedValue.COMPLEX_UNIT_PX, resources.getDimension(size))
+        typeface = Typeface.MONOSPACE
+        letterSpacing = 0.04f
+        includeFontPadding = false
+        val gap = resources.getDimensionPixelSize(R.dimen.text_gap) / 2
+        setPadding(0, gap, 0, gap)
+    }
+
+    /** From the PC's status line: only the percentage and when it resets. */
+    private fun onUsage(next: SessionUsage) {
+        if (next == usage) return
+        usage = next
+        prefs.edit().putString(KEY_USAGE, next.encode()).apply()
+        warnUsage(next.shownAt(System.currentTimeMillis()))
+        reevaluate()
+    }
+
+    /**
+     * Speaks up once as the session window passes each of
+     * [Assistant.USAGE_WARN_AT]. A drop means the window reset, so the next one
+     * is worth saying again. Quiet in a dark room, and never over a sentence
+     * being heard.
+     */
+    private fun warnUsage(percent: Int) {
+        val passed = Assistant.usagePassed(percent)
+        if (passed <= usageWarnedAt) {
+            usageWarnedAt = passed
+            return
+        }
+        usageWarnedAt = passed
+        if (dark || listening) return
+        val words = Assistant.usageWarning(passed, voiceLang)
+        replyText = words
+        replyUntilMs = SystemClock.elapsedRealtime() + REPLY_MS
+        if (TALK) alert(words, voiceLang) else chirp.attention()
+    }
+
+    // -- camera, sensors, server ---------------------------------------------
+
+    private fun startPresence() {
+        if (presence != null) return
+        val p = Presence(this, displayDegrees(), ::onFace, ::reevaluate, ::restartPresence, camView)
+        p.hands = hands
+        presence = p
+        try {
+            p.start()
+        } catch (e: Exception) {
+            restartPresence(e.message ?: e.javaClass.simpleName)
+        }
+    }
+
+    private fun stopPresence() {
+        presence?.stop()
+        presence = null
+    }
+
+    /**
+     * The camera failed: another app took it, a media service restarted. An
+     * appliance does not sit on an error, so tear down and try again shortly.
+     * Until then NODE cannot see you, and says so.
+     */
+    private fun restartPresence(reason: String) {
+        Log.e(TAG, reason)
+        problem = getString(R.string.status_error_fmt, reason)
+        stopPresence()
+        statusView.removeCallbacks(retryCamera)
+        statusView.postDelayed(retryCamera, RETRY_MS)
+        reevaluate()
+    }
+
+    private val retryCamera = Runnable {
+        problem = null
+        startPresence()
+        reevaluate()
+    }
+
+    private fun startSenses() {
+        if (senses != null) return
+        senses = Senses(this, ::onKnock, ::onPoke, ::onDark, ::onShake).also { it.start() }
+    }
+
+    /**
+     * The battery broadcast is sticky, so registering it reports the current
+     * state at once. A phone that lives on a charger can cook quietly for
+     * months; this is the one thing NODE says about its own health.
+     */
+    private val batteryWatch = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val next = Battery.of(
+                tenthsC = intent.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0),
+                level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1),
+                scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1),
+                plugged = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0,
+                wasHot = battery?.hot == true,
+            )
+            if (next == battery) return
+            val wasWrong = battery?.wrong == true
+            battery = next
+            // One chirp as it goes wrong, not one per degree.
+            if (next.wrong && !wasWrong && !dark) chirp.attention()
+            reevaluate()
+        }
+    }
+
+    /** Independent of the camera: a busy port must not blind the face. */
+    private fun startServer() {
+        if (server != null) return
+        // Requests arrive on the server's threads. Each is handed to the main
+        // thread, and dropped there if this server has since been stopped.
+        lateinit var http: HttpServer
+        http = HttpServer(
+            urlKey,
+            page,
+            onClaude = { fields -> mainExecutor.execute { if (server === http) onClaude(fields) } },
+            onNote = { text, minutes -> mainExecutor.execute { if (server === http) onNote(text, minutes) } },
+            onFace = { play -> mainExecutor.execute { if (server === http) onFacePlay(play) } },
+            onSay = { text -> mainExecutor.execute { if (server === http) onSay(text) } },
+            onUsage = { u -> mainExecutor.execute { if (server === http) onUsage(u) } },
+            onTask = { title, desc -> mainExecutor.execute { if (server === http) onTask(title, desc) } },
+            onPc = { stats -> mainExecutor.execute { if (server === http) onPc(stats) } },
+            cam = camView,
+            webcamPage = webcamPage,
+            recorder = recorder,
+            video = webcamVideo,
+            audio = webcamAudio,
+            onMode = { to -> mainExecutor.execute { if (server === http) onMode(to) } },
+        )
+        server = http
+        try {
+            http.start()
+            serverProblem = null
+        } catch (e: Exception) {
+            // The port is still held -- by a server that has not quite let go, or
+            // by something else. Do not give up: an appliance retries until it is up.
+            server = null
+            val reason = "port ${HttpServer.PORT}: ${e.message}"
+            Log.e(TAG, reason)
+            serverProblem = getString(R.string.status_error_fmt, reason)
+            statusView.removeCallbacks(retryServer)
+            statusView.postDelayed(retryServer, SERVER_RETRY_MS)
+        }
+    }
+
+    private val retryServer = Runnable {
+        startServer()
+        reevaluate()
+    }
+
+    private fun displayDegrees(): Int = when (display?.rotation) {
+        Surface.ROTATION_90 -> 90
+        Surface.ROTATION_180 -> 180
+        Surface.ROTATION_270 -> 270
+        else -> 0
+    }
+
+    private fun urlText(): String {
+        val address = wifiAddress() ?: return getString(R.string.url_no_wifi)
+        return getString(R.string.url_fmt, address, HttpServer.PORT, urlKey)
+    }
+
+    /**
+     * java.net needs no permission, unlike WifiManager or ConnectivityManager.
+     * Interfaces can vanish mid-query, which throws; that reads as no Wi-Fi.
+     */
+    private fun wifiAddress(): String? = runCatching {
+        NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
+            .filter { it.isUp && it.name.startsWith("wlan") }
+            .flatMap { it.inetAddresses.toList() }
+            .firstOrNull { it is Inet4Address }
+            ?.hostAddress
+    }.getOrNull()
+
+    private fun newUrlKey(): String {
+        val random = SecureRandom()
+        return String(CharArray(URL_KEY_LENGTH) { URL_KEY_ALPHABET[random.nextInt(URL_KEY_ALPHABET.length)] })
     }
 
     // -- window ------------------------------------------------------------
@@ -138,20 +1410,20 @@ class NodeActivity : Activity() {
                 WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
         }
 
-        // A tap can surface the transient bars, and that is not a focus change,
-        // so onWindowFocusChanged never fires and they simply stay up. Watch the
-        // insets instead and put them away again shortly after they appear --
-        // long enough that a deliberate swipe can still reach Home or Recents.
+        // Hold the screen for as long as NODE is in front: the camera stops the
+        // moment it is not.
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        // A tap, or a brightness change, can surface the transient bars, and
+        // that is not a focus change, so onWindowFocusChanged never fires and
+        // they simply stay up. Watch the insets instead and put them away again
+        // -- after a delay only if a deliberate edge swipe asked for them.
         window.decorView.setOnApplyWindowInsetsListener { v, insets ->
             if (insets.isVisible(WindowInsets.Type.systemBars())) {
                 v.removeCallbacks(reHideBars)
                 if (barsRequestedBySwipe) {
-                    // Deliberate swipe from the bottom edge: leave them up long
-                    // enough to actually press Home or Recents.
                     v.postDelayed(reHideBars, BARS_REHIDE_MS)
                 } else {
-                    // Nobody asked for these -- a window relayout surfaced them.
-                    // Put them straight back.
                     v.post(reHideBars)
                 }
             }
@@ -171,286 +1443,228 @@ class NodeActivity : Activity() {
         }
     }
 
-    private fun applyMode(mode: Mode) {
-        applyScreenPolicy(LocalDateTime.now().hour)
-        Log.i(TAG, "mode=$mode brightness=${mode.brightness} keepOn=${mode.keepScreenOn}")
+    /**
+     * Window-scoped backlight override. Needs no permission and is reverted by
+     * the system the moment NODE loses the foreground.
+     *
+     * Only written when the value actually changes: assigning window.attributes
+     * forces a relayout, and a relayout surfaces the system bars on this device.
+     */
+    private fun setBrightness(value: Float) {
+        if (window.attributes.screenBrightness != value) {
+            window.attributes = window.attributes.apply { screenBrightness = value }
+        }
     }
 
     /**
-     * Quiet hours. Outside them NODE holds the screen at the panel minimum;
-     * inside them it releases the screen entirely so Android can deep-sleep.
-     *
-     * This is re-evaluated on every minute tick, so the transition happens on
-     * its own without a timer or an alarm. Once the screen does go off the
-     * activity is stopped, the tick receiver is dropped, and NODE costs nothing
-     * until the device is woken again.
+     * True near any edge the system claims for its own gestures. In landscape
+     * this device puts the navigation bar on the *right* edge, not the bottom.
      */
-    private fun applyScreenPolicy(hour: Int) {
-        val quiet = isQuietHour(hour)
-        if (quiet != quietHoursActive || !screenPolicyApplied) {
-            quietHoursActive = quiet
-            screenPolicyApplied = true
-            Log.i(TAG, "screen policy: quiet=$quiet hour=$hour")
-        }
-
-        if (quiet) {
-            // Releasing the flag lets the system screen timeout take over.
-            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        } else {
-            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        }
-
-        // A tap owns the backlight until it expires; do not stomp it here.
-        if (brightnessBoosted) return
-
-        // Window-scoped backlight override. Needs no permission and is reverted
-        // by the system the moment NODE loses the foreground.
-        window.attributes = window.attributes.apply {
-            screenBrightness = if (quiet) 0f else mode.brightness
-        }
+    private fun isEdgeTouch(x: Float, y: Float): Boolean {
+        val w = window.decorView.width
+        val h = window.decorView.height
+        if (w == 0 || h == 0) return false
+        return x <= w * EDGE_ZONE ||
+            x >= w * (1f - EDGE_ZONE) ||
+            y >= h * (1f - EDGE_ZONE) ||
+            y <= h * EDGE_ZONE
     }
 
     // -- touch -------------------------------------------------------------
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
-        if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
-            // Only a touch starting in the bottom edge strip can be the start of
-            // a swipe-up for the navigation bar. Anything else -- tapping the
-            // dial or the calendar -- must never surface it.
-            barsRequestedBySwipe =
-                ev.y >= window.decorView.height * (1f - BARS_SWIPE_ZONE)
-            undimTemporarily()
-            if (!barsRequestedBySwipe) hideSystemBars()
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                touchAtMs = SystemClock.elapsedRealtime()
+                strokedPx = 0f
+                lastX = ev.x
+                lastY = ev.y
+                downX = ev.x
+                downY = ev.y
+                // Only a touch starting at a system edge may be reaching for the
+                // navigation bar. Anything starting in the middle must never
+                // surface it.
+                barsRequestedBySwipe = isEdgeTouch(ev.x, ev.y)
+                if (!barsRequestedBySwipe) hideSystemBars()
+                // Reading the list keeps it open, and lit.
+                if (taskList.visibility == View.VISIBLE) {
+                    tasksUntilMs = touchAtMs + UNDIM_MS
+                    undimUntilMs = tasksUntilMs
+                }
+            }
+            MotionEvent.ACTION_MOVE -> {
+                strokedPx += kotlin.math.hypot(ev.x - lastX, ev.y - lastY)
+                lastX = ev.x
+                lastY = ev.y
+            }
+            // In the middle: a tap talks to NODE, a straight swipe changes mode
+            // -- sideways for hand tracking, up or down for the corner readouts --
+            // rubbing back and forth pets it, and a long press shows your tasks
+            // and its address.
+            MotionEvent.ACTION_UP -> if (!barsRequestedBySwipe) {
+                touchAtMs = SystemClock.elapsedRealtime()
+                val density = resources.displayMetrics.density
+                val strokeDots = strokedPx / density
+                val dx = (ev.x - downX) / density
+                val dy = (ev.y - downY) / density
+                val swipeDots = kotlin.math.hypot(dx, dy)
+                when {
+                    // The way back that needs no Wi-Fi: hold to be the face again; a tap shows the address.
+                    webcam -> if (ev.eventTime - ev.downTime >= LONG_PRESS_MS) {
+                        setWebcam(false)
+                    } else {
+                        tappedUrl = urlText()
+                        undimUntilMs = SystemClock.elapsedRealtime() + UNDIM_MS
+                        reevaluate()
+                    }
+                    // The open list takes its own taps and scrolls.
+                    taskList.visibility == View.VISIBLE -> Unit
+                    swipeDots >= SWIPE_DP && strokeDots <= swipeDots * SWIPE_STRAIGHT ->
+                        if (kotlin.math.abs(dx) > kotlin.math.abs(dy)) toggleHands() else toggleDetails()
+                    strokeDots >= STROKE_DP -> pet()
+                    // Re-read every time: after a reboot NODE can start before Wi-Fi does.
+                    ev.eventTime - ev.downTime >= LONG_PRESS_MS -> {
+                        tappedUrl = urlText()
+                        undimUntilMs = SystemClock.elapsedRealtime() + UNDIM_MS
+                        openTasks()
+                        reevaluate()
+                    }
+                    else -> onPoke()
+                }
+            }
         }
         return super.dispatchTouchEvent(ev)
-    }
-
-    /**
-     * Tap to read. Rather than picking an arbitrary brighter value, NODE drops
-     * its brightness override entirely so the phone's own brightness applies,
-     * then restores the dim after [UNDIM_MS].
-     *
-     * This is the one delayed callback in the app. It is user-initiated,
-     * one-shot, cancelled on re-tap and torn down in [onStop] -- not a poll.
-     */
-    private fun undimTemporarily() {
-        // Reassigning window attributes forces a relayout, and on this device a
-        // relayout is what surfaces the system bars. Only touch them when the
-        // brightness actually needs to change -- a second tap while already
-        // undimmed just restarts the timer.
-        if (!brightnessBoosted) {
-            brightnessBoosted = true
-            window.attributes = window.attributes.apply {
-                screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
-            }
-        }
-        powerView.removeCallbacks(restoreDim)
-        powerView.postDelayed(restoreDim, UNDIM_MS)
-    }
-
-    private val restoreDim = Runnable {
-        brightnessBoosted = false
-        applyScreenPolicy(LocalDateTime.now().hour)
-    }
-
-    /** Quiet window wraps midnight, so this is an OR rather than a range. */
-    private fun isQuietHour(hour: Int): Boolean =
-        if (QUIET_START_HOUR > QUIET_END_HOUR) {
-            hour >= QUIET_START_HOUR || hour < QUIET_END_HOUR
-        } else {
-            hour in QUIET_START_HOUR until QUIET_END_HOUR
-        }
-
-    // -- render ------------------------------------------------------------
-
-    /** One pass. Called on entry and once per minute thereafter. */
-    private fun render() {
-        val now = LocalDateTime.now()
-        // Both views no-op unless their own value actually changed, so the
-        // calendar only really redraws at midnight.
-        clockView.setTime(now.hour, now.minute)
-        calendarView.setDate(now.toLocalDate())
-
-        // Re-checked every tick so the quiet-hours boundary needs no alarm.
-        applyScreenPolicy(now.hour)
-
-        val battery = readBattery()
-        powerView.text = renderPower(battery)
-
-        maybeFetchWeather()
-        renderTemperature()
-    }
-
-    /**
-     * Piggybacks on the minute tick rather than owning a scheduler: once an
-     * hour, and never while a request is already in flight.
-     */
-    private fun maybeFetchWeather() {
-        val now = SystemClock.elapsedRealtime()
-        if (tempFetchedAt != 0L && now - tempFetchedAt < WEATHER_INTERVAL_MS) return
-
-        weather.fetch { celsius ->
-            if (celsius == null) return@fetch
-            // Back to the main thread; drop the result if we are on the way out.
-            tempView.post {
-                if (isDestroyed) return@post
-                tempC = celsius
-                tempFetchedAt = SystemClock.elapsedRealtime()
-                renderTemperature()
-            }
-        }
-        // Mark the attempt so a hard-down network retries hourly, not every minute.
-        if (tempFetchedAt == 0L) tempFetchedAt = now
-    }
-
-    /**
-     * A confident-looking number from hours ago is worse than no number, so a
-     * stale reading is dimmed rather than left indistinguishable from a fresh one.
-     */
-    private fun renderTemperature() {
-        val c = tempC
-        if (c == null) {
-            tempView.setText(R.string.temp_unknown)
-            tempView.setTextColor(getColor(R.color.node_dim))
-            return
-        }
-        tempView.text = getString(R.string.temp_fmt, Bs.neDigits(c.roundToInt()))
-        val stale = SystemClock.elapsedRealtime() - tempFetchedAt > WEATHER_STALE_MS
-        tempView.setTextColor(
-            getColor(if (stale) R.color.node_dim else R.color.node_secondary)
-        )
-    }
-
-    /**
-     * Runtime remaining, from observed drain rather than the fuel gauge.
-     *
-     * The instantaneous CURRENT_NOW reading is useless here: sampled during
-     * launch it showed ~1.17A against a true steady draw nearer 220mA, because
-     * the CPU, GPU and the weather fetch were all active. Measuring the actual
-     * percentage drop over wall-clock time captures what DESK mode really
-     * costs, screen included.
-     *
-     * Returns minutes remaining, or null until the measurement is trustworthy
-     * -- NODE shows a plain percentage rather than a number it cannot stand
-     * behind.
-     */
-    private fun estimateMinutesLeft(percent: Int): Int? {
-        val now = System.currentTimeMillis()
-        val anchorMs = prefs.getLong(KEY_ANCHOR_MS, 0L)
-        val anchorPct = prefs.getInt(KEY_ANCHOR_PCT, -1)
-
-        // Re-anchor when there is nothing stored, the clock moved backwards,
-        // the window is too old to describe current conditions, or the battery
-        // went up (charged or re-seated).
-        val unusable = anchorMs == 0L ||
-            anchorPct < 0 ||
-            now < anchorMs ||
-            now - anchorMs > DRAIN_ANCHOR_MAX_AGE_MS
-        if (unusable || percent > anchorPct) {
-            anchorDrain(now, percent)
-            return null
-        }
-
-        val elapsedMs = now - anchorMs
-        val dropped = anchorPct - percent
-        // Need both a real drop and enough time for it to mean anything.
-        if (dropped < 1 || elapsedMs < DRAIN_MIN_SAMPLE_MS) return null
-
-        val percentPerMs = dropped.toDouble() / elapsedMs
-        if (percentPerMs <= 0.0) return null
-
-        val minutes = (percent / percentPerMs / 60_000.0).roundToInt()
-        return if (minutes in 1..(100 * 60)) minutes else null
-    }
-
-    private fun anchorDrain(atMs: Long, percent: Int) {
-        prefs.edit()
-            .putLong(KEY_ANCHOR_MS, atMs)
-            .putInt(KEY_ANCHOR_PCT, percent)
-            .apply()
-    }
-
-    private fun renderPower(battery: BatteryState): String {
-        if (battery.percent < 0) return getString(R.string.power_unknown)
-        val pct = Bs.neDigits(battery.percent)
-
-        if (battery.charging) {
-            // Discharge history is meaningless once the cable is in.
-            prefs.edit().remove(KEY_ANCHOR_MS).remove(KEY_ANCHOR_PCT).apply()
-
-            val bm = getSystemService(BatteryManager::class.java)
-            val toFullMs = bm?.computeChargeTimeRemaining() ?: -1L
-            if (toFullMs > 0L) {
-                val m = (toFullMs / 60_000L).toInt()
-                return getString(
-                    R.string.power_to_full_fmt,
-                    pct, Bs.neDigits(m / 60), Bs.neDigits2(m % 60),
-                )
-            }
-            return getString(R.string.power_charging_fmt, pct)
-        }
-
-        val left = estimateMinutesLeft(battery.percent)
-            ?: return getString(R.string.power_fmt, pct)
-
-        // "४५मि बाँकी" reads better than "०घ ४५मि बाँकी".
-        return if (left >= 60) {
-            getString(
-                R.string.power_left_fmt,
-                pct, Bs.neDigits(left / 60), Bs.neDigits2(left % 60),
-            )
-        } else {
-            getString(R.string.power_left_min_fmt, pct, Bs.neDigits(left))
-        }
-    }
-
-    private data class BatteryState(val percent: Int, val charging: Boolean)
-
-    /**
-     * Reads the sticky battery broadcast. Passing a null receiver returns the
-     * last broadcast Intent immediately without registering anything.
-     */
-    private fun readBattery(): BatteryState {
-        val intent = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-            ?: return BatteryState(percent = -1, charging = false)
-
-        val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
-        val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
-        val percent = if (level >= 0 && scale > 0) level * 100 / scale else -1
-        val charging = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0
-
-        return BatteryState(percent, charging)
     }
 
     private companion object {
         const val TAG = "NODE"
 
-        /** One network request per hour. Air temperature does not move faster. */
-        const val WEATHER_INTERVAL_MS = 60L * 60L * 1000L
+        val PERMISSIONS = listOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
+        const val REQUEST_PERMISSIONS = 1
 
-        /** Past this with no successful fetch, the reading is shown as stale. */
-        const val WEATHER_STALE_MS = 3L * 60L * 60L * 1000L
+        const val KEY_URL_KEY = "url_key"
+        const val KEY_WEBCAM = "webcam"
+        const val KEY_INBOX = "inbox"
+        const val KEY_TASKS = "tasks"
+        const val KEY_DETAILS = "details_shown"
+        const val KEY_VOICE_LANG = "voice_lang"
+        const val KEY_USAGE = "session_usage"
+        const val KEY_STOPWATCH = "stopwatch_started"
+
+        /** How long a spoken answer stays under the eyes. */
+        const val REPLY_MS = 8_000L
+
+        /** How long an expression asked for from the page is held. */
+        const val PREVIEW_MS = 3_000L
+
+        /** How long the sad face lasts after a tool call failed. */
+        const val WINCE_MS = 1_200L
+
+        /** At most one sad face this often: a run of failures is one wince, not a sulk. */
+        const val WINCE_GAP_MS = 30_000L
+
+        /** Let the chirp finish before reading a due note aloud. */
+        const val SPEAK_AFTER_CHIRP_MS = 450L
+
+        /** How often an alarm chirps again until it is tapped off. */
+        const val ALARM_REPEAT_MS = 10_000L
 
         /**
-         * Minimum observation window before a runtime estimate is shown. At
-         * DESK mode's measured ~10%/hour a single percent takes ~6 minutes, so
-         * this is about the earliest a figure means anything.
+         * Listen hands-free while you are at the desk, with or without "Hey Buddy".
+         * Off: NODE listens only after a tap or a wave, for one sentence.
          */
-        const val DRAIN_MIN_SAMPLE_MS = 5L * 60L * 1000L
-
-        /** Past this the window no longer describes current conditions. */
-        const val DRAIN_ANCHOR_MAX_AGE_MS = 24L * 60L * 60L * 1000L
-
-        const val KEY_ANCHOR_MS = "drain_anchor_ms"
-        const val KEY_ANCHOR_PCT = "drain_anchor_pct"
+        const val WAKE = false
 
         /**
-         * Quiet hours: screen released so the device deep-sleeps. Change these
-         * two values to reshape the appliance's day. The window may wrap
-         * midnight (start > end).
+         * Seen this recently counts as at the desk, for listening. The camera only
+         * sees a face turned toward the phone, and you mostly look at the monitor.
          */
-        /** How long a tap releases the dim for. */
+        const val WAKE_PRESENT_MS = 2 * 60_000L
+
+        /** Seen this recently as a sentence ends, you were facing NODE: no name needed. */
+        const val FACING_MS = 5_000L
+
+        /** After a background session fails for a reason other than silence. */
+        const val WAKE_BACKOFF_MS = 30_000L
+
+        /** So the microphone does not catch the tail of NODE's own voice. */
+        const val AFTER_SPEAKING_MS = 700L
+
+        /** Between one background session and the next. */
+        const val WAKE_GAP_MS = 300L
+
+        /** After the recognizer said it was still busy. */
+        const val WAKE_BUSY_MS = 1_000L
+
+        /** Time for speech to start, so "is it speaking" is true by the time it is checked. */
+        const val SPEECH_START_MS = 1_500L
+
+        /** A knock this close to a touch is the tap itself jolting the phone. */
+        const val TAP_JOLT_MS = 350L
+
+        /** How long a knock in the dark shows the time. Long enough to read, short enough to sleep through. */
+        const val NIGHT_CLOCK_MS = 6_000L
+
+        /** The night clock: 12-hour, no am/pm, since you can see out of the window. */
+        val CLOCK_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("h:mm", Locale.US)
+
+        /** Held this long, a touch shows the address instead of listening. */
+        const val LONG_PRESS_MS = 600L
+
+        /**
+         * A touch that travels this far, in dp, was a stroke and not a tap.
+         * Well past the slop a finger wanders while tapping.
+         */
+        const val STROKE_DP = 150f
+
+        /**
+         * A touch that ends this far, in dp, from where it began, by a path no
+         * more than [SWIPE_STRAIGHT] times that long, was a swipe: rubbing back
+         * and forth travels far but ends near where it started.
+         */
+        const val SWIPE_DP = 120f
+        const val SWIPE_STRAIGHT = 1.4f
+
+        /** No hand seen for this long and hand tracking turns itself off. */
+        const val HANDS_IDLE_MS = 60_000L
+
+        /** How long turning hand tracking on says so under the eyes. */
+        const val MODE_CAPTION_MS = 1_500L
+
+        /** Small talk -- "hi", "whoa", "Claude needs you". False keeps NODE to chirps and answers. */
+        const val TALK = true
+
+        /**
+         * 32 symbols, without the easily confused 0/o and 1/l since the key is
+         * typed from the phone's screen. Ten of them is 50 bits.
+         */
+        const val URL_KEY_ALPHABET = "abcdefghijkmnpqrstuvwxyz23456789"
+        const val URL_KEY_LENGTH = 10
+
+        const val NEVER = -1_000_000_000L
+
+        /** Away a while: dim. On an IPS panel the backlight is the whole power cost. */
+        const val DOZE_BRIGHTNESS = 0.05f
+
+        /** Asleep: the panel minimum. The closed eyes are still just visible. */
+        const val MIN_BRIGHTNESS = 0.01f
+
+        /** How long a long press shows your tasks and the address, and lifts the dim. */
         const val UNDIM_MS = 30_000L
+
+        /** The PC sends its load every 5 seconds: three missed and the readout goes. */
+        const val PC_FRESH_MS = 15_000L
+
+        /** Camera view frames a slow viewer may fall behind by before frames are dropped for it. */
+        const val CAM_VIEW_QUEUE = 2
+
+        const val HEARTBEAT_MS = 500L
+
+        /** Wait before reopening a failed camera; long enough not to thrash. */
+        const val RETRY_MS = 5_000L
+
+        /** Wait before trying the LAN port again: it is usually free within moments. */
+        const val SERVER_RETRY_MS = 2_000L
 
         /**
          * Grace period before the system bars are hidden again after they
@@ -459,11 +1673,11 @@ class NodeActivity : Activity() {
          */
         const val BARS_REHIDE_MS = 3_000L
 
-        /** Fraction of screen height at the bottom that can start a bar swipe. */
-        const val BARS_SWIPE_ZONE = 0.12f
-
-        const val QUIET_START_HOUR = 23
-        const val QUIET_END_HOUR = 7
-
+        /**
+         * Fraction of each edge reserved for system gestures. In landscape this
+         * device places the navigation bar on the right edge, so all four are
+         * guarded rather than just the bottom.
+         */
+        const val EDGE_ZONE = 0.10f
     }
 }

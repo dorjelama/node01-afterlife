@@ -1,24 +1,37 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">NODE</string>
+    <string name="app_name">NODE Companion</string>
 
-    <!-- Every string here reports real state. Decorative labels were removed.
-         Numbers are substituted as strings (%s, not %d) because they are
-         rendered with Devanagari digits by Bs.neDigits before formatting. -->
+    <!-- Every string here reports real state. -->
+    <string name="status_no_permission">NEEDS CAMERA PERMISSION · it cannot see you</string>
+    <!-- %1$s is a short reason from the camera or the server. -->
+    <string name="status_error_fmt">ERROR  %1$s</string>
 
-    <!-- %1$s is the battery percentage. One element reports power, not two. -->
-    <string name="power_fmt">ब्याट्री %1$s%%</string>
-    <string name="power_charging_fmt">ब्याट्री %1$s%%  चार्ज हुँदै</string>
-    <string name="power_unknown">ब्याट्री --</string>
+    <!-- %1$s address, %2$d port, %3$s the random URL key. -->
+    <string name="url_fmt">http://%1$s:%2$d/%3$s/</string>
+    <string name="url_no_wifi">NO WI-FI</string>
 
-    <!-- Runtime estimate. %2$s hours, %3$s minutes. Only shown once the
-         estimate is plausible; NODE says nothing rather than guessing.
-         घ = घण्टा (hours), मि = मिनेट (minutes), बाँकी = remaining. -->
-    <string name="power_left_fmt">ब्याट्री %1$s%%  %2$sघ %3$sमि बाँकी</string>
-    <string name="power_left_min_fmt">ब्याट्री %1$s%%  %2$sमि बाँकी</string>
-    <string name="power_to_full_fmt">ब्याट्री %1$s%%  चार्ज %2$sघ %3$sमि</string>
+    <!-- Shown, dim, whenever the microphone is open hands-free: just speak, no name needed. -->
+    <string name="status_wake">● LISTENING</string>
+    <string name="status_online">" · ONLINE"</string>
 
-    <!-- से = सेल्सियस (Celsius). -->
-    <string name="temp_fmt">%1$s°से</string>
-    <string name="temp_unknown">--°से</string>
+    <!-- Never the project folder: project names stay off the screen. -->
+    <string name="caption_needs_you">NEEDS YOU</string>
+    <string name="caption_done">DONE</string>
+    <!-- Appended when more sessions are in the same state. %1$d is how many. -->
+    <string name="caption_more_fmt">" +%1$d"</string>
+    <!-- Claude has been working a long time. %1$d is whole minutes. -->
+    <string name="caption_working_fmt">STILL WORKING · %1$dm</string>
+    <!-- The phone's own battery. %1$d is degrees Celsius, and percent left. -->
+    <string name="caption_battery_hot_fmt">BATTERY HOT · %1$d°C</string>
+    <string name="caption_battery_low_fmt">UNPLUGGED · %1$d%%</string>
+
+    <!-- A sideways swipe turned hand tracking on, or could not. -->
+    <string name="mode_hands">HAND TRACKING</string>
+    <string name="mode_hands_failed">HAND TRACKING UNAVAILABLE</string>
+
+    <!-- The task list, after a long press. -->
+    <string name="tasks_heading">TASKS · TAP ONE FOR MORE</string>
+    <string name="tasks_none">NO TASKS · ADD THEM FROM THE PAGE</string>
+    <string name="task_done">✓ MARK DONE</string>
 </resources>
