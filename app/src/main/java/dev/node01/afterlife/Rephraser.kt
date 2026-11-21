@@ -33,9 +33,11 @@ class Rephraser private constructor(
     // and nothing said is seen by the next call.
 
     @Synchronized
-    fun rephrase(heard: String): String? = runCatching {
-        rewriting.clone().use { chat -> clean(chat.sendMessage(heard).text()) }
-    }.getOrNull()
+    fun rephrase(heard: String): String? {
+        // One of its examples gets the answer it was shown, without asking: the model does not always copy them.
+        known(heard)?.let { return clean(it) }
+        return runCatching { rewriting.clone().use { chat -> clean(chat.sendMessage(heard).text()) } }.getOrNull()
+    }
 
     /** One short sentence answering [question] from [notes], to be spoken; null when the notes do not answer it. */
     @Synchronized
@@ -84,6 +86,10 @@ class Rephraser private constructor(
             "how tall is mount everest" to "ASK",
             "sorry i was talking to my brother" to "UNKNOWN",
             "pass me the remote" to "UNKNOWN",
+            // Ones it got wrong on the phone: "cancel the timer", "what's the date", and a lookup.
+            "count down three minutes" to "set a timer for 3 minutes",
+            "my coffee is cold" to "UNKNOWN",
+            "the dog ate it" to "UNKNOWN",
         )
 
         // A question is answered "ASK" alone, not repeated: every word the model writes costs half a second here.
@@ -143,6 +149,13 @@ class Rephraser private constructor(
             if (line.equals("UNKNOWN", ignoreCase = true)) return null
             return line.take(MAX_CHARS)
         }
+
+        /** The answer [EXAMPLES] gives for [heard], capitals and punctuation aside, or null if it is not one of them. */
+        fun known(heard: String): String? = KNOWN[plain(heard)]
+
+        private fun plain(s: String) = s.lowercase().filter { it.isLetterOrDigit() || it == ' ' }.trim().replace(SPACES, " ")
+        private val SPACES = Regex(" +")
+        private val KNOWN by lazy { EXAMPLES.associate { (said, heard) -> plain(said) to heard } }
 
         /** Whether a rewrite says what was said is a question about the world: `ASK`, or `ASK: ...` if it says more. */
         fun asks(rewrite: String): Boolean = rewrite.equals("ASK", ignoreCase = true) || rewrite.startsWith("ASK:", ignoreCase = true)

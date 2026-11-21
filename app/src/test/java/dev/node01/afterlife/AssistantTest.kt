@@ -43,6 +43,7 @@ class AssistantTest {
             "remember to water the plants" to Command.Note("water the plants"),
             "what is Claude doing" to Command.ClaudeStatus,
             "what's cloud doing" to Command.ClaudeStatus,
+            "how much do i have left on claude" to Command.SessionUsage,
             "go to sleep" to Command.Sleep,
             "good night" to Command.Sleep,
             "wake up" to Command.Wake,

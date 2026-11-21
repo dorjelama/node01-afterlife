@@ -202,8 +202,10 @@ flowchart TD
 What the model is told is `COMMANDS` and `EXAMPLES` in `Rephraser.kt`. It reads them once,
 when it loads; each sentence then gets a fresh copy of that conversation, so nothing said
 carries over to the next one. `RephraserTest` checks that the model is only ever shown
-phrases NODE understands. When it keeps getting a kind of sentence wrong, add one like it to
-`EXAMPLES`, with the phrase it should have been.
+phrases NODE understands. When it gets a sentence wrong, add it to `EXAMPLES` with the phrase
+it should have been. That exact sentence, capitals and punctuation aside, is then answered
+straight from `EXAMPLES` without asking the model, which does not always copy what it is shown;
+sentences worded like it are left to the model, which the example helps along.
 
 ### Put one on the phone
 
@@ -211,14 +213,15 @@ Any instruction-tuned model in the `.litertlm` format works. Tried on the Redmi 
 
 | Model | Size | Right | Each sentence | Verdict |
 |---|---|---|---|---|
-| [Qwen2.5 1.5B Instruct](https://huggingface.co/litert-community/Qwen2.5-1.5B-Instruct/tree/main), `…_q8_ekv4096.litertlm` | 1.6 GB | about 8 in 10 | 2–9 s | Use this. No account needed |
-| [Qwen3 0.6B](https://huggingface.co/litert-community/Qwen3-0.6B-int4/tree/main) | 347 MB | 3 in 10 | 1.5–5 s | Too often the wrong command |
+| [Qwen2.5 1.5B Instruct](https://huggingface.co/litert-community/Qwen2.5-1.5B-Instruct/tree/main), `…_q8_ekv4096.litertlm` | 1.6 GB | 14 of 16 | 2–9 s | Use this. No account needed |
+| [Gemma 3 1B](https://huggingface.co/litert-community/Gemma3-1B-IT/tree/main), `gemma3-1b-it-int4.litertlm` | 584 MB | 8 of 16 | 3–4 s | Quicker and lighter, but often answers with a command from its list. Needs a Hugging Face account and the Gemma licence |
+| [Qwen3 0.6B](https://huggingface.co/litert-community/Qwen3-0.6B-int4/tree/main) | 347 MB | 3 of 10 | 1.5–5 s | Too often the wrong command |
 
-With Qwen2.5 1.5B, NODE takes about a minute after it starts to load the model, and uses about
-2.7 GB of memory. Until it has loaded, sentences go by keywords only. Its mistakes are real
-commands: "can you speak up" once came out as `quieter`, so it is worth listening to what NODE
-says back. [Gemma 3 1B](https://huggingface.co/litert-community/Gemma3-1B-IT/tree/main)
-(584 MB, a Hugging Face account and the Gemma licence) is untried.
+"Right" counts the sentences the keywords missed, in one test of loosely worded commands,
+questions and noise (Qwen3 0.6B's in an earlier, rougher one). With Qwen2.5 1.5B, NODE takes
+about a minute after it starts to load the model, and uses about 2.7 GB of memory. Until it has
+loaded, sentences go by keywords only. Its mistakes are real commands -- "my coffee is cold" once
+came out as `what's the date` -- so it is worth listening to what NODE says back.
 
 Download the file on the laptop, then, with the phone plugged in:
 

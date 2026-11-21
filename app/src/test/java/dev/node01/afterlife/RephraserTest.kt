@@ -32,6 +32,13 @@ class RephraserTest {
     }
 
     @Test
+    fun anExampleSaidAgainGetsItsAnswerWithoutTheModel() {
+        assertEquals("UNKNOWN", Rephraser.known("My coffee is cold."))
+        assertEquals("set a timer for 3 minutes", Rephraser.known("count  down three minutes"))
+        assertNull("worded differently: the model's to answer", Rephraser.known("my tea is cold"))
+    }
+
+    @Test
     fun capsALongRambling() {
         assertEquals(200, Rephraser.clean("x".repeat(500))!!.length)
     }

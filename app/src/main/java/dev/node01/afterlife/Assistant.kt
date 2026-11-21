@@ -245,8 +245,10 @@ object Assistant {
             Regex("""^(take a note|note|write down|remember)\b""").containsMatchIn(t) || has("नोट") ->
                 Command.Note(noteText(t))
 
-            // Before Claude's own state: "when does my Claude session reset" asks about the window.
-            has("session", "usage", "quota", "सेसन", "कोटा") -> Command.SessionUsage
+            // Before Claude's own state: "when does my Claude session reset" asks about the window,
+            // and so does "how much do I have left on Claude".
+            has("session", "usage", "quota", "सेसन", "कोटा") ||
+                (has("claude", "cloud", "clod") && has("left", "remaining", "limit")) -> Command.SessionUsage
 
             has("claude", "cloud", "clod", "क्लड", "क्लाउड", "क्लोड") -> Command.ClaudeStatus
 
