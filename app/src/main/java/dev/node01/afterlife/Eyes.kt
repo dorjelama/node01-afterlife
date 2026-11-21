@@ -153,112 +153,202 @@ enum class Act(val ms: Long) {
 }
 
 /**
- * The cat NODE becomes while it thinks, as plain dots: each of [FRAMES] is a
- * pose's lit (col, row) offsets from its top-left, [W] by [H], facing right.
- * 0 to 3 are its walk. [CROUCH] and [SIT] are poses, each followed by the same
- * with the tail's tip moved, to flick it.
+ * The cat NODE becomes while it thinks, seen from the side: small and low,
+ * round head, perky ears, tail up. Each of [FRAMES] is a pose's lit (col, row)
+ * offsets from its top-left, [W] by [H], facing right. 0 to 3 are its walk;
+ * [CROUCH], [SIT] and [LOAF] are poses, each followed by the same with the
+ * tail's tip moved, to flick it; [JUMP], [LEAP] and [SPRAWL] are single poses.
+ *
+ * Walking, crouching, sitting and lying are stamped together from layers --
+ * tail, body, legs, then the head -- so the face is the same in all of them:
+ * '#' lights a dot, 'o' keeps one dark (the eye), '.' leaves it as it is.
  */
 object CatShape {
-    const val W = 22
-    const val H = 14
+    const val W = 24
+    const val H = 16
     const val CROUCH = 4
     const val SIT = 6
+    const val LOAF = 8
+    const val JUMP = 10
+    const val LEAP = 11
+    const val SPRAWL = 12
 
-    /** Walking: head and ears, body, and a tail curling up behind. Legs are added per step. */
-    private val BODY = listOf(
-        "...............#...#..",
-        "....##.........##.##..",
-        "...#..#........#####..",
-        "...#..........#######.",
-        "..##..........####.##.",
-        "..##..........#######.",
-        "..##.###############..",
-        "...###############....",
-        "....##############....",
-        ".....############.....",
+    /** The head in profile: two ears, a round crown, the eye, and a little muzzle. */
+    private val HEAD = listOf(
+        ".#....#...",
+        ".##..###..",
+        ".########.",
+        "##########",
+        "######o###",
+        "######o###",
+        ".#########",
+        "..######..",
     )
 
-    /** Rows 1 and 2 with the tail's tip leant a dot forward, for every other pair of steps. */
-    private val SWAY = listOf(".....##........##.##..", "...#...#.......#####..")
+    /** Walking: a round body, and a tail curling up behind with its tip flicked forward. */
+    private val BODY = listOf(
+        "..#######..",
+        ".#########.",
+        "###########",
+        "###########",
+        ".#########.",
+    )
+    private val TAIL_UP = listOf(".##.", "#..#", "#...", "#...", "##..", ".##.", "..##")
+    private val TAIL_UP_FLICK = listOf("..##", ".#..", "#...", "#...", "##..", ".##.", "..##")
 
-    /** Where each leg meets the body: back near, back far, front far, front near. */
-    private val HIPS = intArrayOf(5, 7, 14, 16)
-    private val LEG_BACK = intArrayOf(0, 0, -1, -1)
-    private val LEG_DOWN = intArrayOf(0, 0, 0, 0)
-    private val LEG_FORWARD = intArrayOf(0, 0, 1, 1)
-    private const val LEG_ROWS = 4
+    /** Each leg is two dots wide and three tall; its lower two rows reach back, stay under, or reach forward. */
+    private val HIPS = intArrayOf(5, 8, 11, 13)
+    private val BACK = intArrayOf(0, -1, -1)
+    private val DOWN = intArrayOf(0, 0, 0)
+    private val FORWARD = intArrayOf(0, 1, 1)
+    private val STEPS = listOf(
+        listOf(BACK, FORWARD, BACK, FORWARD),
+        List(4) { DOWN },
+        listOf(FORWARD, BACK, FORWARD, BACK),
+        List(4) { DOWN },
+    )
 
     /** Low to the ground, tail straight out behind: about to pounce. */
-    private val CROUCHING = listOf(
-        "......................",
-        "......................",
-        "...............#...#..",
-        "...............##.##..",
-        "...............#####..",
-        "..............#######.",
-        "..............####.##.",
-        "..............#######.",
-        ".....###############..",
-        "#..###############....",
-        ".###.#############....",
-        ".....############.....",
-        ".....#.#.......#.#....",
-        "....##.##......##.##..",
-    )
-    private val CROUCHING_FLICK = mapOf(9 to "...###############....", 10 to "####.#############....")
+    private val CROUCH_BODY = listOf("..#########..", "#############", ".###########.")
+    private val TAIL_LOW = listOf(".....", "#####")
+    private val TAIL_LOW_FLICK = listOf("#....", ".####")
 
-    /** Sitting up, tail curled along the ground. */
-    private val SITTING = listOf(
-        "...............#...#..",
-        "...............##.##..",
-        "...............#####..",
-        "..............#######.",
-        "..............####.##.",
-        "..............#######.",
-        "..............######..",
-        "............#######...",
-        "...........########...",
-        "..........#########...",
-        ".........##########...",
-        "...#.....#######.##...",
-        "...#.....#######.##...",
-        "....############.###..",
+    /** Sitting up, front paws down, tail curled along the ground. */
+    private val SIT_BODY = listOf(
+        "....####..",
+        "...######.",
+        "..#######.",
+        ".########.",
+        "#########.",
+        "#########.",
+        ".########.",
     )
-    private val SITTING_FLICK = mapOf(
-        11 to "..#......#######.##...",
-        12 to "..#......#######.##...",
-        13 to "...#############.###..",
+    private val SIT_PAWS = listOf("#.#", "#.#")
+    private val TAIL_CURL = listOf("#......", "#......", "#######")
+    private val TAIL_CURL_FLICK = listOf(".#.....", "#......", "#######")
+
+    /** Lying down, paws tucked under, tail wrapped round. */
+    private val LOAF_BODY = listOf(
+        "..#########.",
+        ".###########",
+        "############",
+        ".##########.",
+    )
+    private val TAIL_WRAP = listOf("#.....", "######")
+    private val TAIL_WRAP_FLICK = listOf(".#....", "######")
+
+    /** Springing up, front first. */
+    private val JUMPING = listOf(
+        "....................#..#",
+        "...................##.##",
+        "...................#####",
+        "..................######",
+        ".................###o###",
+        "................####o###",
+        "...............########.",
+        "..............########..",
+        ".............#######....",
+        "............#######.....",
+        "..##.......#######......",
+        ".#..#.....#######.......",
+        ".#.......######.##......",
+        "..##....#####..##.......",
+        "....####.##.............",
+        ".........##.............",
     )
 
-    val FRAMES: List<IntArray> = listOf(
-        listOf(LEG_BACK, LEG_FORWARD, LEG_BACK, LEG_FORWARD),
-        List(4) { LEG_DOWN },
-        listOf(LEG_FORWARD, LEG_BACK, LEG_FORWARD, LEG_BACK),
-        List(4) { LEG_DOWN },
-    ).mapIndexed { step, legs ->
-        // The walk: legs reach, pass under, reach the other way, pass under.
-        val rows = BODY.mapIndexed { r, body -> if (step >= 2 && r in 1..2) SWAY[r - 1] else body } +
-            List(LEG_ROWS) { ".".repeat(W) }
-        val grid = rows.map { StringBuilder(it) }
-        for (leg in legs.indices) {
-            val reach = legs[leg]
-            for (r in 0 until LEG_ROWS) grid[BODY.size + r][HIPS[leg] + reach[r]] = '#'
-            // The paw, pointing the way it walks.
-            grid[BODY.size + LEG_ROWS - 1][HIPS[leg] + reach[LEG_ROWS - 1] + 1] = '#'
+    /** In the air, stretched out from nose to tail. */
+    private val LEAPING = listOf(
+        "........................",
+        "........................",
+        "........................",
+        "................#....#..",
+        "................##..###.",
+        "................########",
+        "...............#########",
+        "..............######o###",
+        "###.....############o###",
+        "...#####################",
+        "........##############..",
+        ".......##.#########.###.",
+        "......##...........#..##",
+        ".....##.................",
+        "........................",
+        "........................",
+    )
+
+    /** Lying flat out, legs stretched. */
+    private val SPRAWLING = listOf(
+        "........................",
+        "........................",
+        "........................",
+        "........................",
+        "........................",
+        "........................",
+        "........................",
+        "........................",
+        "...............#....#...",
+        "...............##..###..",
+        "...............########.",
+        "..............##########",
+        "#.....##############o###",
+        "##..################o###",
+        ".###################.###",
+        "##..##...........####...",
+    )
+
+    val FRAMES: List<IntArray> = List(STEPS.size) { step ->
+        pose {
+            stamp(if (step >= 2) TAIL_UP_FLICK else TAIL_UP, 1, 1)
+            stamp(BODY, 4, 8)
+            STEPS[step].forEachIndexed { leg, reach ->
+                reach.forEachIndexed { r, dx -> stamp(listOf("##"), HIPS[leg] + dx, 13 + r) }
+            }
+            stamp(HEAD, 13, 2)
         }
-        dots(grid.map { it.toString() })
-    } + listOf(
-        dots(CROUCHING), dots(flicked(CROUCHING, CROUCHING_FLICK)),
-        dots(SITTING), dots(flicked(SITTING, SITTING_FLICK)),
-    )
+    } + listOf(false, true).map { flick ->
+        pose {
+            stamp(if (flick) TAIL_LOW_FLICK else TAIL_LOW, 0, 10)
+            stamp(CROUCH_BODY, 3, 11)
+            for (hip in HIPS) {
+                stamp(listOf("##"), hip, 14)
+                stamp(listOf("###"), hip, 15)
+            }
+            stamp(HEAD, 13, 5)
+        }
+    } + listOf(false, true).map { flick ->
+        pose {
+            stamp(if (flick) TAIL_CURL_FLICK else TAIL_CURL, 3, 13)
+            stamp(SIT_BODY, 9, 8)
+            stamp(SIT_PAWS, 15, 14)
+            stamp(HEAD, 12, 1)
+        }
+    } + listOf(false, true).map { flick ->
+        pose {
+            stamp(if (flick) TAIL_WRAP_FLICK else TAIL_WRAP, 0, 14)
+            stamp(LOAF_BODY, 4, 12)
+            stamp(HEAD, 13, 6)
+        }
+    } + listOf(JUMPING, LEAPING, SPRAWLING).map { whole -> pose { stamp(whole, 0, 0) } }
 
-    private fun flicked(rows: List<String>, changes: Map<Int, String>) = rows.mapIndexed { r, row -> changes[r] ?: row }
+    private class Canvas {
+        val grid = Array(H) { BooleanArray(W) }
 
-    private fun dots(rows: List<String>): IntArray {
+        fun stamp(layer: List<String>, x: Int, y: Int) {
+            layer.forEachIndexed { r, row ->
+                row.forEachIndexed { c, ch ->
+                    if (y + r in 0 until H && x + c in 0 until W && ch != '.') grid[y + r][x + c] = ch == '#'
+                }
+            }
+        }
+    }
+
+    private fun pose(draw: Canvas.() -> Unit): IntArray {
+        val canvas = Canvas().apply(draw)
         val out = ArrayList<Int>()
-        rows.forEachIndexed { r, row ->
-            row.forEachIndexed { c, ch ->
-                if (ch == '#') {
+        for (r in 0 until H) {
+            for (c in 0 until W) {
+                if (canvas.grid[r][c]) {
                     out += c
                     out += r
                 }
@@ -271,8 +361,9 @@ object CatShape {
 /**
  * The cat at play, a step at a time, its left column kept between [lo] and
  * [hi]: it walks to and fro, stopping and turning at the edges, and now and
- * then pauses to flick its tail, sits a while, crouches and pounces, or turns
- * back for no reason. [random] makes every time different.
+ * then pauses to flick its tail, sits a while, lies down, stretches out flat,
+ * hops, crouches and pounces, or turns back for no reason. [random] makes
+ * every time different.
  */
 class CatPlay(private val lo: Int, private val hi: Int, start: Int, private val random: Random) {
     /** Its left column. */
@@ -283,7 +374,7 @@ class CatPlay(private val lo: Int, private val hi: Int, start: Int, private val 
     var facing = 1
         private set
 
-    /** Rows off the ground, mid-pounce. */
+    /** Rows off the ground, mid-jump. */
     var lift = 0
         private set
 
@@ -291,19 +382,25 @@ class CatPlay(private val lo: Int, private val hi: Int, start: Int, private val 
     var frame = STANDING[0]
         private set
 
-    private enum class Doing { WALK, STAND, SIT, CROUCH, LEAP }
+    private enum class Doing { WALK, STAND, SIT, LOAF, SPRAWL, CROUCH, MOVES }
+
+    /** One step of a set move: the pose, how high off the ground, and how far along. */
+    private class Move(val frame: Int, val lift: Int, val forward: Int)
 
     // Just formed: a moment standing, then off.
     private var doing = Doing.STAND
     private var left = 3
     private var held = 0
+    private var moves = POUNCE
 
     fun step() {
         when (doing) {
             Doing.WALK -> walk()
-            Doing.LEAP -> leap()
+            Doing.MOVES -> move()
             Doing.STAND -> hold(STANDING)
             Doing.SIT -> hold(SITTING)
+            Doing.LOAF -> hold(LOAFING)
+            Doing.SPRAWL -> hold(SPRAWLING)
             Doing.CROUCH -> hold(CROUCHING)
         }
     }
@@ -324,32 +421,40 @@ class CatPlay(private val lo: Int, private val hi: Int, start: Int, private val 
     private fun hold(pose: IntArray) {
         frame = pose[(held++ / FLICK_STEPS) % 2]
         if (--left > 0) return
-        if (doing == Doing.CROUCH) return start(Doing.LEAP, LEAP_FRAME.size)
-        // Up and off again, after a sit now and then the other way.
-        if (doing == Doing.SIT && random.nextInt(3) == 0) facing = -facing
+        if (doing == Doing.CROUCH) return play(POUNCE)
+        // Up and off again, after a rest now and then the other way.
+        if (doing != Doing.STAND && random.nextInt(3) == 0) facing = -facing
         start(Doing.WALK, 6 + random.nextInt(10))
     }
 
-    private fun leap() {
-        val k = LEAP_FRAME.size - left
-        frame = LEAP_FRAME[k]
-        lift = LEAP_LIFT[k]
-        x = (x + LEAP_FORWARD[k] * facing).coerceIn(lo, hi)
+    private fun move() {
+        val m = moves[moves.size - left]
+        frame = m.frame
+        lift = m.lift
+        x = (x + m.forward * facing).coerceIn(lo, hi)
         if (--left <= 0) start(Doing.WALK, 4 + random.nextInt(8))
     }
 
     private fun choose() {
         when (random.nextInt(12)) {
             0, 1 -> start(Doing.STAND, 4 + random.nextInt(5))
-            2, 3, 4 -> start(Doing.SIT, 10 + random.nextInt(12))
-            5, 6 -> start(Doing.CROUCH, 3 + random.nextInt(3))
-            7 -> {
+            2, 3 -> start(Doing.SIT, 10 + random.nextInt(12))
+            4 -> start(Doing.LOAF, 14 + random.nextInt(14))
+            5 -> start(Doing.SPRAWL, 8 + random.nextInt(8))
+            6, 7 -> start(Doing.CROUCH, 3 + random.nextInt(3))
+            8 -> play(HOP)
+            9 -> {
                 // Changes its mind.
                 facing = -facing
                 start(Doing.STAND, 1)
             }
             else -> left = 6 + random.nextInt(10)
         }
+    }
+
+    private fun play(next: List<Move>) {
+        moves = next
+        start(Doing.MOVES, next.size)
     }
 
     private fun start(next: Doing, steps: Int) {
@@ -363,11 +468,25 @@ class CatPlay(private val lo: Int, private val hi: Int, start: Int, private val 
         val STANDING = intArrayOf(1, 3)
         val SITTING = intArrayOf(CatShape.SIT, CatShape.SIT + 1)
         val CROUCHING = intArrayOf(CatShape.CROUCH, CatShape.CROUCH + 1)
+        val LOAFING = intArrayOf(CatShape.LOAF, CatShape.LOAF + 1)
+        val SPRAWLING = intArrayOf(CatShape.SPRAWL, CatShape.SPRAWL)
         const val FLICK_STEPS = 2
 
-        // The pounce, step by step: legs stretch to spring, tuck in the air, stretch to land.
-        val LEAP_FRAME = intArrayOf(0, 1, 3, 2)
-        val LEAP_LIFT = intArrayOf(1, 3, 2, 0)
-        val LEAP_FORWARD = intArrayOf(1, 2, 2, 1)
+        /** Springs off, flies stretched out, lands walking. */
+        val POUNCE = listOf(
+            Move(CatShape.JUMP, 1, 1),
+            Move(CatShape.LEAP, 3, 2),
+            Move(CatShape.LEAP, 2, 2),
+            Move(2, 0, 1),
+        )
+
+        /** A hop straight up on the spot, for the fun of it. */
+        val HOP = listOf(
+            Move(CatShape.CROUCH, 0, 0),
+            Move(CatShape.JUMP, 2, 0),
+            Move(CatShape.JUMP, 3, 0),
+            Move(CatShape.JUMP, 1, 0),
+            Move(1, 0, 0),
+        )
     }
 }

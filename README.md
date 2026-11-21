@@ -153,8 +153,8 @@ have put one there. The model rewrites it into one of the phrases above, so "pin
 stretch" works like "remind me in 10 minutes to stretch", and [answers a question about the
 world](#questions) from Wikipedia. Meanwhile the eyes' dots stream off in a swarm and
 rebuild themselves as a small cat, which plays until the answer is ready -- walking to and fro,
-turning at the edges, sitting a while with its tail flicking, crouching and pouncing -- and then
-streams back into eyes: a few seconds for a command, 15 to 25 for a question. Anything it
+turning at the edges, sitting or lying down a while with its tail flicking, stretching out flat,
+hopping, crouching and pouncing -- and then streams back into eyes: a few seconds for a command, 15 to 25 for a question. Anything it
 can't place, and every unmatched Nepali sentence, gets "Sorry, I didn't catch that".
 
 **Offline first, online if need be.** NODE asks the phone's speech recognizer to work offline,

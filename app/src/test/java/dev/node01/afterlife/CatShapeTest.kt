@@ -11,8 +11,9 @@ class CatShapeTest {
     @Test
     fun everyPoseStaysInItsBox() {
         val frames = CatShape.FRAMES
-        assertEquals("four steps, then a crouch and a sit, each with a flick", 8, frames.size)
+        assertEquals("four steps, a crouch, a sit and a loaf with flicks, then a jump, a leap and a sprawl", 13, frames.size)
         for (f in frames) {
+            assertTrue("a pose with dots", f.isNotEmpty())
             for (k in f.indices step 2) {
                 assertTrue("column ${f[k]}", f[k] in 0 until CatShape.W)
                 assertTrue("row ${f[k + 1]}", f[k + 1] in 0 until CatShape.H)
@@ -21,6 +22,7 @@ class CatShapeTest {
         // Legs that reach differ from legs that pass under; a flicked tail differs from a still one.
         assertNotEquals(frames[0].toList(), frames[1].toList())
         assertNotEquals(frames[CatShape.SIT].toList(), frames[CatShape.SIT + 1].toList())
+        assertNotEquals(frames[CatShape.LOAF].toList(), frames[CatShape.LOAF + 1].toList())
     }
 
     @Test
@@ -30,7 +32,7 @@ class CatShapeTest {
         var facing = play.facing
         var leftmost = Int.MAX_VALUE
         var rightmost = Int.MIN_VALUE
-        var pounced = false
+        var jumped = false
         val poses = HashSet<Int>()
         repeat(20_000) {
             play.step()
@@ -42,13 +44,15 @@ class CatShapeTest {
             }
             leftmost = minOf(leftmost, play.x)
             rightmost = maxOf(rightmost, play.x)
-            if (play.lift > 0) pounced = true
+            if (play.lift > 0) jumped = true
             poses += play.frame
         }
         assertTrue("turns back, $turns times", turns > 20)
         assertEquals("reaches the left edge", 3, leftmost)
         assertEquals("and the right", 57, rightmost)
-        assertTrue("pounces", pounced)
-        assertTrue("sits and crouches", CatShape.SIT in poses && CatShape.CROUCH in poses)
+        assertTrue("leaves the ground", jumped)
+        for (pose in listOf(CatShape.SIT, CatShape.CROUCH, CatShape.LOAF, CatShape.SPRAWL, CatShape.JUMP, CatShape.LEAP)) {
+            assertTrue("does pose $pose", pose in poses)
+        }
     }
 }
