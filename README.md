@@ -34,14 +34,15 @@ the page's **WEBCAM** buttons turn the phone into one or the other (see
 | **Sees you** | The front camera's own face detection, done by the camera hardware. The eyes follow you, say hello with a double blink when you come back after a while, and look around the room when you have just left |
 | **Sleeps** | Away 2 minutes: sleepy and dim. Away 10 minutes, or the room dark: eyes closed, backlight at the panel minimum |
 | **Feels the desk** | Knock on the desk and it startles. Shake the phone and it goes woozy: its eyes loll round, one up as the other drops, until it shakes it off |
-| **Briefs you in the morning** | The first time it sees you each morning, after "Good morning!": the time, the Bikram Sambat date, the weather, and how many things are waiting. One sentence, and each part is dropped when there is nothing to say |
+| **Briefs you in the morning** | The first time it sees you each morning, after "Good morning!": with [the AI model](#on-phone-ai) on the phone, one friendly sentence made from the weather, what is due today and your open tasks; without it, or in Nepali, the time, the Bikram Sambat date, the weather, and how many things are waiting, each part dropped when there is nothing to say |
+| **Notices what you do** | Only what you tick on the page: a drink (a cup or bottle raised to your face), a phone in your hand, a book. When one happens it reacts and chirps, and the page lists it: `10:42  a drink (3 today)`. It runs on the phone with MediaPipe's object detector, about one frame a second while you are there; see [Privacy](#privacy) |
 | **Is pettable** | Rub a finger back and forth across the screen and its eyes turn to beating hearts: "Hehe." Petting never opens the microphone, so you can fuss over it without talking to it |
 | **Swipes** | A straight swipe changes mode. **Sideways:** hand tracking on or off. **Up or down:** the corner readouts — usage, the time, the PC's load — hidden for a bare face, or shown again; a running timer always shows. Swipes that start at a screen edge are left to the system |
 | **Sees your hands** | With hand tracking on, whenever the front camera sees a hand, it takes the eyes' place in white dots: every bone as a line of dots, every fingertip a small cross, up to two hands, mirrored like a mirror. With no hand in view the face carries on, and after a minute without one the mode turns itself off. It runs on the phone with Google's MediaPipe; see [Design principles](#design-principles) |
 | **Plays** | Say hi and it winks; say "thank you" and its eyes turn to beating hearts. While you sit there it now and then winks, tilts its head or squints; with nobody there it looks around the room; asleep, Z's float up. Listening, it tilts its head. Every animation and expression can also be played from the page |
 | **Listens** | Tap the screen or wave over its top edge, wait for the blip, and speak — English or Nepali. Nothing listens until you do. See [Voice](#voice) |
 | **Talks** | A few short words of its own: "Welcome back!" ("Good morning!" once a morning), "Hey! Claude needs you.", "All done!", "Whoa!" at a knock, "Good night." when the lights go off. At most one unprompted line every 20 seconds, never in a dark room; `TALK` in `NodeActivity.kt` turns it off |
-| **Claude Code** | Through Claude Code hooks on your PC. While Claude works the eyes narrow and look toward the PC, and now and then read along a line or two, look up to think, or narrow harder for a moment, so the stare never sets. When Claude needs approval or has a question: amber, wide, an amber **!!** beside them, `NEEDS YOU`, one chirp. When it finishes: a happy bounce, then **^ ^** eyes, `DONE`, a softer chirp — held until you have actually looked |
+| **Claude Code** | Through Claude Code hooks on your PC. While Claude works the eyes narrow and look toward the PC, and now and then read along a line or two, look up to think, or narrow harder for a moment, so the stare never sets. When Claude needs approval or has a question: amber, wide, an amber **!!** beside them, `NEEDS YOU`, one chirp, and it says what Claude is asking to do — "Claude wants to delete the build folder." — from Claude's own description of the command, a file's name or a site. When it finishes: a happy bounce, then **^ ^** eyes, `DONE`, a softer chirp — held until you have actually looked |
 | **Desk notes** | Send a short note from any browser, now or in a few minutes — or say "remind me in 10 minutes to stretch". It shows in amber and is read out; tap or wave to dismiss it |
 | **Keeps your tasks** | Add a task with a few lines of detail from the page. NODE chirps once and keeps it out of sight — no amber, no words. Hold a finger on the screen to see the list; tap a task for its details and **✓ MARK DONE**. Up to 30 at a time, kept across restarts |
 | **Shows its view** | The page's **CAMERA** section shows what the front camera sees, small and live (320×240), only while you have it showing in a tab that is in view. Nothing is recorded. See [Privacy](#privacy) |
@@ -138,6 +139,9 @@ with or without "Hey Buddy", is still in the code, switched off: `WAKE` in `Node
 | "Start a stopwatch" / "How long?" | "स्टपवाच" / "कति समय भयो" | Counts up, and keeps counting through a screen off |
 | "Louder" / "Quieter" | "ठूलो स्वर" / "बिस्तारै" | One step of the phone's media volume |
 | "Sing" | "गीत गाऊ" | Seven notes and a bounce, which is as much singing as a dot-matrix face can manage |
+| "What's the news?" / "News about cricket" | "समाचार" | The top three headlines from Google News, in English |
+| "Will it rain tomorrow?" / "What's the weather?" | "भोलि मौसम कस्तो छ?" | Now and the rest of today, or tomorrow: the sky, low and high, and the chance of rain |
+| "Set a timer for 10 minutes and remind me at 5 to call mum" | | Both, answered together. Only where each half is a request on its own, so "remind me to call dad and wish him good night" stays one reminder |
 | "Help" | "मद्दत" | Lists these |
 | "Hi" / "Hello" | "नमस्ते" | Says hi back, with a wink |
 | "Good morning" / "Good afternoon" / "Good evening" | "शुभ प्रभात" / "शुभ दिन" / "शुभ साँझ" | Says it back: "Good morning!" |
@@ -150,12 +154,15 @@ with or without "Hey Buddy", is still in the code, switched off: `WAKE` in `Node
 It answers in the language you spoke. These are matched by keyword, which is instant. An
 English sentence the keywords miss goes to [the AI model on the phone](#on-phone-ai), if you
 have put one there. The model rewrites it into one of the phrases above, so "ping me in ten to
-stretch" works like "remind me in 10 minutes to stretch", and [answers a question about the
-world](#questions) from Wikipedia. Meanwhile the eyes' dots stream off in a swarm and
+stretch" works like "remind me in 10 minutes to stretch", [answers a question about the
+world](#questions) from Wikipedia or the news, and has a word back for anything else you say to
+it: "I'm so bored" gets a short, friendly reply. A follow-up within two minutes carries on the
+conversation: "who wrote Harry Potter?", then "when was she born?". Meanwhile the eyes' dots stream off in a swarm and
 rebuild themselves as a small cat, which plays until the answer is ready -- walking to and fro,
 turning at the edges, sitting or lying down a while with its tail flicking, stretching out flat,
-hopping, crouching and pouncing -- and then streams back into eyes: a few seconds for a command, 15 to 25 for a question. Anything it
-can't place, and every unmatched Nepali sentence, gets "Sorry, I didn't catch that".
+hopping, crouching and pouncing -- and then streams back into eyes: a few seconds for a command,
+10 to 15 for a reply, 15 to 30 for a question, and up to 40 for a follow-up. Every unmatched Nepali sentence gets "Sorry, I
+didn't catch that".
 
 **Offline first, online if need be.** NODE asks the phone's speech recognizer to work offline,
 which needs the Google app's offline model for the language (Google app → profile picture →
@@ -180,7 +187,8 @@ no model on the phone, NODE behaves as before.
 | "nudge me after lunch to call mum" | `remind me at 1 pm to call mum` | Sets it for 1 pm |
 | "how late is it" | `what time is it` | Tells you |
 | "who wrote harry potter" | `ASK` | Looks it up: "J. K. Rowling wrote Harry Potter." |
-| "um the thing yeah" | `UNKNOWN` | "Didn't catch that" |
+| "what tournament is on right now" | `ASK` | Looks it up in the news |
+| "i'm so bored" | `UNKNOWN` | Talks back, in one short sentence |
 
 ```mermaid
 flowchart TD
@@ -192,16 +200,18 @@ flowchart TD
     M -- "rewrite" --> KW2{"Keyword parser<br/>once more"}
     KW2 -- "match" --> ACT
     KW2 -- "no match" --> NO
-    M -- "UNKNOWN" --> NO
-    M -- "ASK" --> W["Wikipedia search<br/>the question's subject only"]
-    W -- "2 best sentences" --> A["AI model<br/>writes a one-line answer"]
+    M -- "UNKNOWN" --> C["AI model<br/>a short reply"]
+    C --> SAY
+    M -- "ASK" --> W["Search the question's subject:<br/>the news if it is about now,<br/>else Wikipedia, then the news"]
+    W -- "a few sentences" --> A["AI model<br/>writes a one-line answer"]
     A --> SAY["Says it"]
     W -- "nothing found" --> NF["Couldn't find that"]
 ```
 
 What the model is told is `COMMANDS` and `EXAMPLES` in `Rephraser.kt`. It reads them once,
 when it loads; each sentence then gets a fresh copy of that conversation, so nothing said
-carries over to the next one. `RephraserTest` checks that the model is only ever shown
+carries over to the next one. Answers and replies have a conversation of their own, carried on
+for two minutes after NODE last spoke (`TALK_MS`), so a follow-up knows what came before. `RephraserTest` checks that the model is only ever shown
 phrases NODE understands. When it gets a sentence wrong, add it to `EXAMPLES` with the phrase
 it should have been. That exact sentence, capitals and punctuation aside, is then answered
 straight from `EXAMPLES` without asking the model, which does not always copy what it is shown;
@@ -247,18 +257,25 @@ A question about the world ("who wrote harry potter", "how tall is mount everest
 from the model, and then:
 
 1. **Search.** NODE searches Wikipedia for the question's subject, with the question words
-   taken out ("harry potter"). That search, under a generic client name, is the only thing
-   that leaves the phone. No key or account, and no AI company sees it.
+   taken out ("harry potter"). A question about now ("today", "latest", "right now", "score")
+   searches Google News instead, and so does one Wikipedia has nothing for. That search, under
+   a generic client name, is the only thing that leaves the phone. No key or account, and no AI
+   company sees it. A follow-up that leans on the last question ("how old is he?") is first said
+   again in full by the model ("when was J. K. Rowling born"), so the search has a subject. A sentence
+   worded as a question about the world ("who…", "where…", "how far…", but not about you or NODE)
+   is looked up even when the model takes it for small talk.
 2. **Notes.** From the top two articles' opening paragraphs it keeps two sentences: the first
    one, which says what the subject is, and the one that shares most words with the question
-   (rarer words count for more, and "tall" counts as "height"). The model reads about 8 words
+   (rarer words count for more, and "tall" counts as "height"). From the news, the top five
+   headlines. The model reads about 8 words
    a second on this phone, so fewer words mean a sooner answer.
 3. **Answer.** The same model on the phone writes one short sentence from those notes, and NODE
    says it, with a little nod. If the notes don't answer it: "Sorry, I couldn't find that."
 
-On the Redmi it takes 15 to 25 seconds in all, most of it the model reading. It knows only what
-Wikipedia's opening paragraphs say: no news, scores, prices or weather (the morning briefing has
-the weather), and an answer can be wrong. `Lookup.kt` does the search and picks the notes.
+On the Redmi it takes 15 to 30 seconds in all, most of it the model reading. It knows only what
+Wikipedia's opening paragraphs and the day's headlines say, and an answer can be wrong. Ask the
+weather by keyword instead ("will it rain tomorrow?"): that goes to the forecast. `Lookup.kt`
+does the searches and picks the notes.
 
 ## Webcam mode
 
@@ -280,6 +297,11 @@ stops the face, the front camera and the voice assistant, and starts the rear ca
 - **In webcam mode the rear camera and the microphone are on, streamed and recorded.** Only in
   that mode, only while NODE is in front, and only to the phone and to whoever opens the
   webcam page with the key. The clips stay on the phone until they are overwritten.
+- **Camera activities are off until you tick them on the page.** Then about one frame a second
+  goes to MediaPipe's object detector on the phone, while you are at the desk; only the names
+  of what it found (cup, bottle, phone, book) and where, high or low, come out of it. No frame
+  is kept or sent. What it noticed goes to `activity.log` on the phone, kept for a week, and to
+  the page.
 - **Hand tracking reads the camera on the phone and nowhere else.** While the mode is on, frames
   go to the MediaPipe model on the phone; only the points of each hand come out of it, drawn on
   the screen and then forgotten.
@@ -301,14 +323,16 @@ stops the face, the front camera and the voice assistant, and starts the rear ca
 - **No cloud AI.** The voice assistant is a fixed set of commands. If you put
   [an AI model on the phone](#on-phone-ai), it runs there, offline, and writes every answer
   there. What it was asked and answered stays on the phone, in `asked.log`, for a week.
-  Three things leave your LAN and nothing else does: online speech when the offline
+  Four things leave your LAN and nothing else does: online speech when the offline
   model is missing; a [question](#questions) the model sorts as one for the web, whose subject
-  goes to Wikipedia's search under a generic client name; and the morning briefing's weather — a fixed pair of coordinates (`LAT`/`LON` in `Weather.kt`, yours
-  to change) sent to Open-Meteo, with no key, no account and nothing about you or the phone.
-  It times out after 3 seconds and the briefing goes on without it.
+  goes to Wikipedia's or Google News's search under a generic client name; asking for the news,
+  which fetches Google News's headlines (with a topic, if you name one); and the weather — a
+  fixed pair of coordinates (`LAT`/`LON` in `Weather.kt`, yours to change) sent to Open-Meteo,
+  with no key, no account and nothing about you or the phone.
 - A hook event contains your prompt and the tools' input and output. NODE keeps only the event
-  name, session id, project folder and notification type, reads past the rest without keeping
-  it, and never logs it — but the whole event still crosses your Wi-Fi as **plain HTTP**.
+  name, session id, project folder and notification type, and for a permission request the
+  tool's name and the few fields of its input it says aloud (a command's description, a file
+  name, a site, a search). It reads past the rest without keeping it, and never logs it — but the whole event still crosses your Wi-Fi as **plain HTTP**.
   Use it on a network you trust.
 - Tasks, desk notes and the PC's load cross the Wi-Fi as plain HTTP too. The PC's load is three
   numbers and nothing else; tasks are kept on the phone until you mark them done.
@@ -459,14 +483,17 @@ app/src/main/java/dev/node01/afterlife/
 ├── Presence.kt        front camera face detection → gaze, and the page's camera view while it is open
 ├── Hub.kt             hands camera view frames to whoever is watching, dropping them for a slow viewer
 ├── HandTracker.kt     hand tracking: MediaPipe's hand landmarker on the phone, 21 points per hand
+├── ObjectWatcher.kt   camera activities: MediaPipe's object detector on the phone, a frame a second
+├── Activities.kt      what it may notice — a drink, a phone, a book — and when one has happened
 ├── Senses.kt          knock, shake, wave, dark room
 ├── ClaudeSessions.kt  Claude Code sessions from hook events
 ├── JsonFields.kt      reads a few fields from a hook event, tolerating truncation
+├── Approval.kt        a permission request → "Claude wants to delete the build folder"
 ├── Battery.kt         the phone's own health: hot, or unplugged and draining
-├── Weather.kt         the morning briefing's one line, and the only thing that leaves the LAN
+├── Weather.kt         the weather now and the forecast, for the briefing and weather questions
 ├── Assistant.kt       voice commands: what was said → what to do → what to say, EN + NE
-├── Rephraser.kt       the on-phone AI model: a loose English sentence → a phrase Assistant knows, or an answer
-├── Lookup.kt          a question's subject → Wikipedia → the two sentences the answer is written from
+├── Rephraser.kt       the on-phone AI model: a loose English sentence → a phrase Assistant knows, an answer or a reply
+├── Lookup.kt          a question's subject → Wikipedia or Google News → the notes the answer is written from
 ├── Listener.kt        one sentence through the phone's speech recognizer, offline preferred
 ├── Speaker.kt         spoken answers, with installed voices only
 ├── Chatter.kt         its small talk, and the rules that keep it from chattering
@@ -480,8 +507,9 @@ app/src/main/java/dev/node01/afterlife/
 ├── NodeAdmin.kt       lets adb make NODE the device owner, for the kiosk
 └── HttpServer.kt      LAN server: page, hook events, notes, tasks, spoken lines, PC load, camera view, webcam
 app/src/main/assets/
+├── efficientdet_lite0.tflite  the object detector for camera activities (MediaPipe, COCO)
 ├── webcam.html        the webcam's page: live view, sound, recordings
-└── index.html         the page: desk notes, tasks, camera view, lines to say, Claude Code and PC load setup, test buttons
+└── index.html         the page: desk notes, tasks, camera view and activities, lines to say, Claude Code and PC load setup, test buttons
 ```
 
 ## Notes

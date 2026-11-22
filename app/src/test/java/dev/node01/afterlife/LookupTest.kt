@@ -1,6 +1,7 @@
 package dev.node01.afterlife
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -55,5 +56,54 @@ class LookupTest {
         assertNull(Lookup.pick("how tall is mount everest", listOf(kathmandu)))
         assertNull(Lookup.pick("what is it", listOf(nepal)))
         assertNull(Lookup.pick("capital of Nepal", emptyList()))
+    }
+
+    @Test
+    fun farIsADistance() {
+        val moon = "The Moon is Earth's only natural satellite. It orbits at an average distance of 384,400 km, " +
+            "about 30 times Earth's diameter. The Moon is tidally locked to Earth."
+        assertEquals("moon", Lookup.topic("how far away is the moon"))
+        assertEquals(
+            "The Moon is Earth's only natural satellite. It orbits at an average distance of 384,400 km, about 30 times Earth's diameter.",
+            Lookup.pick("how far away is the moon", listOf(moon)),
+        )
+    }
+
+    @Test
+    fun readsHeadlinesFromAFeed() {
+        val rss = """<rss><channel><title>Top stories - Google News</title>""" +
+            """<item><title>Nepal win the T20 series &amp; top the table - The Kathmandu Post</title><link>x</link></item>""" +
+            """<item><title><![CDATA[Rain due in the valley &#8216;by Friday&#8217;]]></title></item>""" +
+            """<item><title>A - B - Reuters</title></item></channel></rss>"""
+        assertEquals(
+            listOf("Nepal win the T20 series & top the table", "Rain due in the valley ‘by Friday’", "A - B"),
+            Lookup.titles(rss),
+        )
+        assertEquals(emptyList<String>(), Lookup.titles("<html>not a feed</html>"))
+    }
+
+    @Test
+    fun whatIsHappeningNowIsForTheNews() {
+        assertTrue(Lookup.wantsNews("what tournament is on right now"))
+        assertTrue(Lookup.wantsNews("who won the match yesterday"))
+        assertFalse("a settled fact", Lookup.wantsNews("who is the current president of france"))
+        assertFalse(Lookup.wantsNews("how tall is mount everest"))
+        assertEquals("tournament", Lookup.newsTopic("what tournament is on right now"))
+        assertEquals("cricket score", Lookup.newsTopic("what's the cricket score today"))
+    }
+
+    @Test
+    fun aQuestionAboutTheWorldIsLookedUp() {
+        for (q in listOf("who wrote harry potter", "where was she born", "how far away is the moon", "what does it mean",
+            "and what's its population", "Why is the sky blue?")) assertTrue(q, Lookup.isQuestion(q))
+        for (q in listOf("what's your favourite colour", "where's my phone", "how are you", "how does it work",
+            "i'm so bored", "tell me a joke", "")) assertFalse(q, Lookup.isQuestion(q))
+    }
+
+    @Test
+    fun aFollowUpLeansOnTheQuestionBefore() {
+        assertTrue(Lookup.refersBack("how old is he"))
+        assertTrue(Lookup.refersBack("what's its population"))
+        assertFalse(Lookup.refersBack("who is the president of france"))
     }
 }

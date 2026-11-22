@@ -33,10 +33,16 @@ import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.security.SecureRandom
 import java.time.Duration
+import java.time.Instant
+import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.time.format.TextStyle
 import java.util.Locale
 import kotlin.concurrent.thread
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * The whole of NODE Companion: a face on the desk that notices you, tells you
@@ -82,6 +88,10 @@ class NodeActivity : Activity() {
     private var hands: HandTracker? = null
     private var handSeenMs = 0L
 
+    /** The camera activities allowed on the page, and the object detector that looks for them while any are. */
+    private val activities by lazy { Activities().apply { watched = Activities.decode(prefs.getString(KEY_WATCH, null)) } }
+    private var objects: ObjectWatcher? = null
+
     /** The corner readouts -- usage, the time, the PC's load -- shown, or swiped away; kept across restarts. */
     private var detailsShown = true
 
@@ -123,7 +133,8 @@ class NodeActivity : Activity() {
 
     /** NODE's own model, once loaded; null with no model file on the phone. See [Rephraser]. */
     private var rephraser: Rephraser? = null
-    private var rephrasing = false
+    /** The model or a lookup is at work: the thinking face is up, and the model takes no new sentence. */
+    private var thinking = false
 
     // The voice assistant.
     private var listening = false
@@ -508,7 +519,7 @@ class NodeActivity : Activity() {
                 note = note?.text,
                 listening = listening,
                 heard = heard,
-                thinking = rephrasing,
+                thinking = thinking,
                 reply = replyText,
                 voiceAsleep = voiceAsleep,
                 battery = battery,
@@ -716,17 +727,19 @@ class NodeActivity : Activity() {
      * A short spoken line for [moment], after any chirp has finished. Silent
      * when talk is off, the room is dark, NODE is listening, or it spoke too
      * recently ([Chatter] decides). Small talk is dropped while something is
-     * being said; an urgent line waits its turn. True if it spoke.
+     * being said; an urgent line waits its turn. [instead], when given, is said
+     * in place of the moment's own line, in English. True if it spoke.
      */
-    private fun chat(moment: Moment): Boolean {
+    private fun chat(moment: Moment, instead: String? = null): Boolean {
         val sp = speaker ?: return false
         if (!TALK || dark || listening) return false
         if (sp.busy && !moment.urgent) return false
         // Nepali small talk needs a Nepali voice; English is installed on the phone.
-        val lang = if (sp.canSpeak(voiceLang)) voiceLang else Lang.EN
+        val lang = if (instead == null && sp.canSpeak(voiceLang)) voiceLang else Lang.EN
         if (!sp.canSpeak(lang)) return false
-        val words = chatter.line(moment, lang, SystemClock.elapsedRealtime()) ?: return false
-        Log.d(TAG, "chat: $moment")
+        val line = chatter.line(moment, lang, SystemClock.elapsedRealtime()) ?: return false
+        val words = instead ?: line
+        Log.d(TAG, "chat: $moment${if (instead != null) ", in its own words" else ""}")
         pauseWake(SPEAK_AFTER_CHIRP_MS + SPEECH_START_MS)
         statusView.postDelayed({ speaker?.say(words, lang, after = moment.urgent) }, SPEAK_AFTER_CHIRP_MS)
         return true
@@ -736,19 +749,28 @@ class NodeActivity : Activity() {
      * The morning's one line, behind "Good morning". The weather is fetched on
      * a thread of its own with a short timeout, and the briefing is spoken
      * whether or not it arrives -- a morning hello must never wait on a
-     * network. Dropped entirely if the room went dark or you started talking
-     * in the meantime.
+     * network. With the model, in English, the weather, what is due today and
+     * the open tasks become one friendly sentence, with the thinking face up
+     * while it is written. Dropped entirely if the room went dark or you
+     * started talking in the meantime.
      */
     private fun brief() {
         val waiting = inbox.size
+        val model = rephraser?.takeIf { voiceLang == Lang.EN && !thinking }
+        // Gathered here: the inbox and the tasks are main-thread only.
+        val day = if (model != null) dayNotes() else null
+        if (model != null) thinking = true
         thread(name = "node-weather", isDaemon = true) {
             val weather = Weather.fetch()
+            val friendly = model?.brief(listOfNotNull(day, weather?.let { "Weather: " + Weather.describe(it, false, Lang.EN) }).joinToString(" "))
             // Not before the "Good morning" posted with this delay: it would cut the briefing off.
             statusView.postDelayed({
+                if (model != null) thinking = false
                 val sp = speaker ?: return@postDelayed
-                if (!TALK || dark || listening) return@postDelayed
+                if (!TALK || dark || listening) return@postDelayed reevaluate()
                 val lang = if (sp.canSpeak(voiceLang)) voiceLang else Lang.EN
-                val words = Assistant.briefing(LocalDateTime.now(), waiting, lang, weather?.let { Weather.describe(it, lang) })
+                val words = friendly?.takeIf { lang == Lang.EN }
+                    ?: Assistant.briefing(LocalDateTime.now(), waiting, lang, weather?.let { Weather.describe(it.now, lang) })
                 replyText = words
                 replyUntilMs = SystemClock.elapsedRealtime() + REPLY_MS
                 pauseWake(SPEECH_START_MS)
@@ -757,6 +779,23 @@ class NodeActivity : Activity() {
                 reevaluate()
             }, SPEAK_AFTER_CHIRP_MS)
         }
+    }
+
+    /** Today, for the model's morning greeting: the time, what is due before midnight, and the open tasks. */
+    private fun dayNotes(): String {
+        val now = LocalDateTime.now()
+        val clock = DateTimeFormatter.ofPattern("h:mm a", Locale.US)
+        val due = inbox.all.filter { it.kind != Inbox.Kind.TIMER }
+            .map { it to LocalDateTime.ofInstant(Instant.ofEpochMilli(it.dueMs), ZoneId.systemDefault()) }
+            .filter { (_, at) -> at.toLocalDate() == now.toLocalDate() }
+            .joinToString("; ") { (note, at) -> "${note.text} at ${at.format(clock)}" }
+        val open = tasks.all.map { it.title }
+        return listOfNotNull(
+            "It is ${now.format(clock)} on ${now.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.US)}.",
+            due.ifEmpty { null }?.let { "You have today: $it." },
+            open.takeIf { it.isNotEmpty() }?.let { "Your open tasks: ${it.take(BRIEF_TASKS).joinToString(", ")}" +
+                (if (it.size > BRIEF_TASKS) " and ${it.size - BRIEF_TASKS} more." else ".") },
+        ).joinToString(" ")
     }
 
     /** From the page: an [Act] to play, or an [Expression] to hold for a few seconds. Anything else is ignored. */
@@ -905,56 +944,22 @@ class NodeActivity : Activity() {
     }
 
     /**
-     * Acts on a spoken sentence, then answers it on screen and aloud. An English
-     * sentence the keywords miss goes once to NODE's own model, if it has one,
-     * with the thinking face up meanwhile. Its rewrite comes back here
-     * [rephrased]; a question it is answered from Wikipedia instead.
+     * Acts on a spoken sentence, then answers it on screen and aloud. Two
+     * requests in one sentence are both done and answered together. The news
+     * and the weather are looked up first. An English sentence the keywords
+     * miss goes once to NODE's own model, if it has one: see [think].
      */
     private fun answer(text: String, rephrased: Boolean = false) {
-        val command = Assistant.parse(text)
+        // "Set a timer for 10 minutes and remind me at 5 to call mum": both, answered as one.
+        val said = (if (rephrased) null else Assistant.split(text)) ?: listOf(text)
+        val commands = said.map { Assistant.parse(it) }
+        val command = commands.first()
         var lang = Assistant.langOf(text)
         val model = rephraser
-        if (command == Command.Unknown && !rephrased && lang == Lang.EN && model != null && !rephrasing) {
-            rephrasing = true
-            reevaluate()
-            thread(name = "node-rephrase", isDaemon = true) {
-                val started = SystemClock.elapsedRealtime()
-                val rewrite = model.rephrase(text)
-                // A question is searched as it was said: having the model repeat it would cost seconds.
-                // A rewrite that is no command is taken as one too: the model sometimes rewords a question.
-                val question = if (rewrite != null && (Rephraser.asks(rewrite) || Assistant.parse(rewrite) == Command.Unknown)) text else null
-                val rewritten = SystemClock.elapsedRealtime()
-                // Only a question goes online, and only as a search: the answer is written here, on the phone.
-                val notes = question?.let { Lookup.notes(it) }
-                val searched = SystemClock.elapsedRealtime()
-                val reply = if (question != null && notes != null) model.answer(question, notes) else null
-                val outcome = when {
-                    question == null -> if (rewrite == null) "no rewrite" else "rewrite"
-                    reply != null -> "answer"
-                    notes != null -> "notes without an answer"
-                    else -> "nothing found"
-                }
-                val tookMs = SystemClock.elapsedRealtime() - started
-                // Logcat gets how long; what was said and made of it goes to the week-long asked.log.
-                Log.d(TAG, "model: $outcome in $tookMs ms " +
-                    "(rewrite ${rewritten - started}, search ${searched - rewritten}, answer ${SystemClock.elapsedRealtime() - searched})")
-                val made = when {
-                    question == null -> rewrite?.let { "\"$it\"" } ?: "UNKNOWN"
-                    reply != null -> "ASK -> \"$reply\""
-                    else -> "ASK -> $outcome"
-                }
-                getExternalFilesDir(null)?.let { AskedLog.add(it, LocalDateTime.now(), "\"$text\" -> $made (${tookMs / 100 / 10.0} s)") }
-                mainExecutor.execute {
-                    rephrasing = false
-                    if (isDestroyed) return@execute
-                    if (question == null) return@execute answer(rewrite ?: text, rephrased = true)
-                    if (reply != null) face.play(Act.NOD)
-                    say(reply ?: Assistant.NOT_FOUND, Lang.EN, speak = true)
-                    reevaluate()
-                }
-            }
-            return
+        if (said.size == 1 && command == Command.Unknown && !rephrased && lang == Lang.EN && model != null && !thinking) {
+            return think(text, model)
         }
+        if (command is Command.News || command is Command.Weather) return lookUp(command, lang)
         val wall = System.currentTimeMillis()
         val now = SystemClock.elapsedRealtime()
         val facts = Assistant.Facts(
@@ -967,62 +972,156 @@ class NodeActivity : Activity() {
             usageResetsInMs = usage?.resetsAtMs?.minus(wall)?.takeIf { it > 0 },
             stopwatchMs = prefs.getLong(KEY_STOPWATCH, 0L).takeIf { it > 0 }?.let { wall - it }?.takeIf { it >= 0 },
         )
-        when (command) {
-            is Command.Timer -> command.ms?.let { inbox.add(Assistant.timeUp(lang), it, wall, Inbox.Kind.TIMER) }
-            is Command.Focus -> inbox.add(Assistant.focusDone(lang), command.ms, wall, Inbox.Kind.TIMER)
-            Command.CancelTimer -> inbox.cancelTimers(wall)
-            is Command.Remind -> inbox.add(command.text, command.ms, wall, Inbox.Kind.REMINDER)
-            is Command.RemindAt -> {
-                val due = Assistant.dueAt(facts.now, command.hour, command.minute, command.exact)
-                inbox.add(command.text, Duration.between(facts.now, due).toMillis(), wall, Inbox.Kind.REMINDER)
+        val replies = commands.map { c ->
+            when (c) {
+                is Command.Timer -> c.ms?.let { inbox.add(Assistant.timeUp(lang), it, wall, Inbox.Kind.TIMER) }
+                is Command.Focus -> inbox.add(Assistant.focusDone(lang), c.ms, wall, Inbox.Kind.TIMER)
+                Command.CancelTimer -> inbox.cancelTimers(wall)
+                is Command.Remind -> inbox.add(c.text, c.ms, wall, Inbox.Kind.REMINDER)
+                is Command.RemindAt -> {
+                    val due = Assistant.dueAt(facts.now, c.hour, c.minute, c.exact)
+                    inbox.add(c.text, Duration.between(facts.now, due).toMillis(), wall, Inbox.Kind.REMINDER)
+                }
+                is Command.Alarm -> {
+                    val due = Assistant.dueAt(facts.now, c.hour, c.minute, c.exact)
+                    inbox.add(Assistant.wakeUp(lang), Duration.between(facts.now, due).toMillis(), wall, Inbox.Kind.ALARM)
+                }
+                // Wall-clock, and in prefs, so it keeps counting through a screen off.
+                Command.StopwatchStart -> prefs.edit().putLong(KEY_STOPWATCH, wall).apply()
+                is Command.Volume -> adjustVolume(c.up)
+                Command.Sing -> {
+                    face.play(Act.JOY)
+                    chirp.sing()
+                }
+                is Command.RemindEvery ->
+                    inbox.add(c.text, c.everyMs, wall, Inbox.Kind.REMINDER, repeatMs = c.everyMs)
+                is Command.Note -> inbox.add(c.text, 0L, wall, Inbox.Kind.NOTE)?.let {
+                    // Shown at once; the spoken "noted" is announcement enough.
+                    shownNote = inbox.due(wall)
+                }
+                Command.Dismiss -> inbox.dismiss(wall)
+                Command.Sleep -> voiceAsleep = true
+                Command.Wake -> voiceAsleep = false
+                Command.Thanks -> {
+                    petAtMs = now
+                    face.play(Act.LOVE)
+                }
+                is Command.Greet -> face.play(
+                    when (c.kind) {
+                        Greeting.HOW_ARE_YOU, Greeting.FINE, Greeting.NICE, Greeting.BACK -> Act.JOY
+                        else -> Act.WINK
+                    },
+                )
+                Command.Address -> {
+                    tappedUrl = urlText()
+                    undimUntilMs = now + UNDIM_MS
+                }
+                is Command.Language -> lang = c.lang
+                else -> Unit
             }
-            is Command.Alarm -> {
-                val due = Assistant.dueAt(facts.now, command.hour, command.minute, command.exact)
-                inbox.add(Assistant.wakeUp(lang), Duration.between(facts.now, due).toMillis(), wall, Inbox.Kind.ALARM)
-            }
-            // Wall-clock, and in prefs, so it keeps counting through a screen off.
-            Command.StopwatchStart -> prefs.edit().putLong(KEY_STOPWATCH, wall).apply()
-            is Command.Volume -> adjustVolume(command.up)
-            Command.Sing -> {
-                face.play(Act.JOY)
-                chirp.sing()
-            }
-            is Command.RemindEvery ->
-                inbox.add(command.text, command.everyMs, wall, Inbox.Kind.REMINDER, repeatMs = command.everyMs)
-            is Command.Note -> inbox.add(command.text, 0L, wall, Inbox.Kind.NOTE)?.let {
-                // Shown at once; the spoken "noted" is announcement enough.
-                shownNote = inbox.due(wall)
-            }
-            Command.Dismiss -> inbox.dismiss(wall)
-            Command.Sleep -> voiceAsleep = true
-            Command.Wake -> voiceAsleep = false
-            Command.Thanks -> {
-                petAtMs = now
-                face.play(Act.LOVE)
-            }
-            is Command.Greet -> face.play(
-                when (command.kind) {
-                    Greeting.HOW_ARE_YOU, Greeting.FINE, Greeting.NICE, Greeting.BACK -> Act.JOY
-                    else -> Act.WINK
-                },
-            )
-            Command.Address -> {
-                tappedUrl = urlText()
-                undimUntilMs = now + UNDIM_MS
-            }
-            is Command.Language -> lang = command.lang
-            else -> Unit
+            Assistant.reply(c, lang, facts)
         }
         saveInbox()
-        Log.d(TAG, "voice: ${command.javaClass.simpleName} ($lang)")
+        Log.d(TAG, "voice: ${commands.joinToString { it.javaClass.simpleName }} ($lang)")
         // Only the sentences it could not place, so the keywords can be tuned
         // against what the recognizer really returns. What it understood -- a
         // note, a reminder -- is never written down.
         if (command == Command.Unknown) Log.d(TAG, "voice: no match for \"$text\"")
-        say(Assistant.reply(command, lang, facts), lang, speak = true)
+        say(replies.joinToString(" "), lang, speak = true)
         voiceLang = lang
         prefs.edit().putString(KEY_VOICE_LANG, lang.name).apply()
         reevaluate()
+    }
+
+    /**
+     * A sentence the keywords missed, on the model's thread with the thinking
+     * face up. Rewritten into a command NODE knows, it comes back to [answer];
+     * a question is looked up -- the news for what is happening now, Wikipedia
+     * otherwise -- and answered from what was found; anything else said to
+     * NODE gets a short reply. A question that leans on the one before, "how
+     * old is he?", is first said again in full, for the search.
+     */
+    private fun think(text: String, model: Rephraser) {
+        thinking = true
+        reevaluate()
+        thread(name = "node-rephrase", isDaemon = true) {
+            val started = SystemClock.elapsedRealtime()
+            val leans = model.inConversation && Lookup.refersBack(text)
+            // "When was she born?" just after an answer is a question, whatever the model would make of it:
+            // it once made it the date. Skipping it saves seconds too.
+            val rewrite = if (leans && Lookup.isQuestion(text)) "ASK" else model.rephrase(text)
+            val command = rewrite != null && !Rephraser.asks(rewrite) && Assistant.parse(rewrite) != Command.Unknown
+            // A rewrite that is no command is taken as a question: the model sometimes rewords one. And one it
+            // calls small talk is looked up anyway if it is worded as a question: "who wrote harry potter".
+            val asks = !command && (rewrite != null || Lookup.isQuestion(text))
+            val rewritten = SystemClock.elapsedRealtime()
+            var search: String? = null
+            var notes: String? = null
+            val reply = when {
+                command -> null
+                // Not a command, not a question: small talk.
+                !asks -> model.chat(text)
+                else -> {
+                    // A question is searched as it was said: having the model repeat it would cost seconds.
+                    val q = (if (leans) model.standalone(text) else null) ?: text
+                    search = q
+                    // Only the search goes online: the answer is written here, on the phone.
+                    notes = if (Lookup.wantsNews(q)) Lookup.newsNotes(q) else Lookup.notes(q) ?: Lookup.newsNotes(q)
+                    notes?.let { model.answer(text, it, leans) }
+                }
+            }
+            val outcome = when {
+                command -> "rewrite"
+                !asks -> if (reply != null) "chat" else "no reply"
+                reply != null -> "answer"
+                notes != null -> "notes without an answer"
+                else -> "nothing found"
+            }
+            val tookMs = SystemClock.elapsedRealtime() - started
+            // Logcat gets how long; what was said and made of it goes to the week-long asked.log.
+            Log.d(TAG, "model: $outcome in $tookMs ms (rewrite ${rewritten - started}, rest ${SystemClock.elapsedRealtime() - rewritten})")
+            val asked = if (search != null && search != text) "ASK \"$search\"" else "ASK"
+            val made = when {
+                command -> "\"$rewrite\""
+                !asks -> "CHAT -> " + (reply?.let { "\"$it\"" } ?: "nothing")
+                reply != null -> "$asked -> \"$reply\""
+                else -> "$asked -> $outcome"
+            }
+            getExternalFilesDir(null)?.let { AskedLog.add(it, LocalDateTime.now(), "\"$text\" -> $made (${tookMs / 100 / 10.0} s)") }
+            mainExecutor.execute {
+                thinking = false
+                if (isDestroyed) return@execute
+                if (command) return@execute answer(rewrite!!, rephrased = true)
+                // Small talk the model had nothing for: "didn't catch that", as before.
+                if (!asks && reply == null) return@execute answer(text, rephrased = true)
+                if (reply != null) face.play(Act.NOD)
+                say(reply ?: Assistant.NOT_FOUND, Lang.EN, speak = true)
+                reevaluate()
+            }
+        }
+    }
+
+    /** The news or the weather, fetched on a thread of its own with the thinking face up, then read out. */
+    private fun lookUp(command: Command, lang: Lang) {
+        thinking = true
+        reevaluate()
+        thread(name = "node-lookup", isDaemon = true) {
+            val found = when (command) {
+                is Command.News -> Lookup.headlines(command.topic)?.let { Assistant.headlines(it) }
+                is Command.Weather -> Weather.fetch()?.let { Weather.describe(it, command.tomorrow, lang) }
+                else -> null
+            }
+            Log.d(TAG, "voice: ${command.javaClass.simpleName} ${if (found != null) "found" else "not found"} ($lang)")
+            mainExecutor.execute {
+                thinking = false
+                if (isDestroyed) return@execute
+                // What a failed lookup says needs no facts.
+                val words = found ?: Assistant.reply(command, lang, Assistant.Facts(LocalDateTime.now(), null, false, false, null))
+                // Headlines are English whatever was asked in.
+                say(words, if (command is Command.News) Lang.EN else lang, speak = true)
+                reevaluate()
+            }
+        }
     }
 
     /**
@@ -1064,7 +1163,13 @@ class NodeActivity : Activity() {
             when (entered) {
                 ClaudeSessions.State.NEEDS_YOU -> {
                     chirp.attention()
-                    chat(Moment.NEEDS_YOU)
+                    // A permission request says what it is for: "Claude wants to delete the build folder."
+                    val asks = if (fields[ClaudeSessions.EVENT] != "PermissionRequest") null else Approval.describe(
+                        fields[ClaudeSessions.TOOL_NAME],
+                        fields[ClaudeSessions.TOOL_INPUT],
+                        fields[ClaudeSessions.CWD]?.let { ClaudeSessions.projectOf(it) }.orEmpty(),
+                    )
+                    chat(Moment.NEEDS_YOU, asks)
                 }
                 ClaudeSessions.State.DONE -> {
                     chirp.done()
@@ -1162,6 +1267,62 @@ class NodeActivity : Activity() {
         if (hands == null) return
         if (points.isNotEmpty()) handSeenMs = SystemClock.elapsedRealtime()
         face.showHands(points, aspect)
+    }
+
+    /** From the page: the camera activities NODE may notice, by name. Kept across restarts. */
+    private fun onWatch(watch: String) {
+        activities.watched = Activities.decode(watch)
+        prefs.edit().putString(KEY_WATCH, Activities.encode(activities.watched)).apply()
+        Log.d(TAG, "activity: watching ${activities.watched.ifEmpty { null } ?: "nothing"}")
+        watchObjects()
+    }
+
+    /** The object detector runs, on a frame a second, only while the camera does and some activity is allowed. */
+    private fun watchObjects() {
+        val want = presence != null && activities.watched.isNotEmpty()
+        if (want == (objects != null)) return
+        if (want) {
+            objects = runCatching { ObjectWatcher(this, ::onSeen) }.onFailure { Log.e(TAG, "objects: ${it.message}") }.getOrNull()
+        } else {
+            presence?.objects = null
+            objects?.close()
+            objects = null
+        }
+        presence?.objects = objects
+    }
+
+    /** What a frame held: an allowed activity that has just happened gets a reaction and a line in the log. */
+    private fun onSeen(found: List<Activities.Seen>) {
+        if (objects == null) return
+        val now = SystemClock.elapsedRealtime()
+        // Only while you are there: a phone left lying in view is nobody on it. A cup at your mouth can hide your face.
+        if (now - faceAtMs > ACTIVITY_PRESENT_MS) return
+        val (activity, count) = activities.see(found, now, LocalDate.now()) ?: return
+        Log.d(TAG, "activity: ${activity.name}, $count today")
+        if (!dark) {
+            face.play(
+                when (activity) {
+                    Doing.DRINK -> Act.JOY
+                    Doing.PHONE -> Act.WINK
+                    Doing.READING -> Act.LOVE
+                },
+            )
+            chirp.done()
+        }
+        val line = "${activity.title} ($count today)"
+        getExternalFilesDir(null)?.let { dir ->
+            thread(name = "node-activity", isDaemon = true) { AskedLog.add(dir, LocalDateTime.now(), line, ACTIVITY_LOG) }
+        }
+    }
+
+    /** For the page, on a server thread: the activities allowed, and today's lines of the log. */
+    private fun activityJson(): String {
+        val today = LocalDate.now().toString()
+        val log = getExternalFilesDir(null)?.let { File(it, ACTIVITY_LOG) }?.takeIf { it.isFile }
+            ?.let { runCatching { it.readLines() }.getOrNull() }.orEmpty()
+            .filter { it.startsWith(today) }.takeLast(MAX_ACTIVITY_LINES)
+        val watched = Activities.decode(prefs.getString(KEY_WATCH, null)).map { it.name }
+        return JSONObject().put("watch", JSONArray(watched)).put("log", JSONArray(log)).toString()
     }
 
     /** An up or down swipe: the corner readouts shown, or hidden for a bare face. */
@@ -1270,6 +1431,7 @@ class NodeActivity : Activity() {
         val p = Presence(this, presenceDegrees, ::onFace, ::reevaluate, ::restartPresence, camView)
         p.hands = hands
         presence = p
+        watchObjects()
         try {
             p.start()
         } catch (e: Exception) {
@@ -1280,6 +1442,7 @@ class NodeActivity : Activity() {
     private fun stopPresence() {
         presence?.stop()
         presence = null
+        watchObjects()
     }
 
     /** The display rotation [presence] was started with, to turn its frames upright. */
@@ -1371,6 +1534,8 @@ class NodeActivity : Activity() {
             video = webcamVideo,
             audio = webcamAudio,
             onMode = { to -> mainExecutor.execute { if (server === http) onMode(to) } },
+            activity = ::activityJson,
+            onWatch = { watch -> mainExecutor.execute { if (server === http) onWatch(watch) } },
         )
         server = http
         try {
@@ -1573,6 +1738,17 @@ class NodeActivity : Activity() {
         const val KEY_VOICE_LANG = "voice_lang"
         const val KEY_USAGE = "session_usage"
         const val KEY_STOPWATCH = "stopwatch_started"
+        const val KEY_WATCH = "watch"
+
+        /** The camera activities noticed, a week of them, beside asked.log; the page shows today's. */
+        const val ACTIVITY_LOG = "activity.log"
+        const val MAX_ACTIVITY_LINES = 50
+
+        /** An activity counts while your face was seen this recently: a cup at your mouth can hide it. */
+        const val ACTIVITY_PRESENT_MS = 10_000L
+
+        /** Open tasks named in the morning greeting; the rest are counted. */
+        const val BRIEF_TASKS = 3
 
         /** How long a spoken answer stays under the eyes. */
         const val REPLY_MS = 8_000L

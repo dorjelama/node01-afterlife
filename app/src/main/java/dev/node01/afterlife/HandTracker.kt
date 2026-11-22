@@ -1,6 +1,7 @@
 package dev.node01.afterlife
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
 import android.graphics.Rect
@@ -61,10 +62,7 @@ class HandTracker(private val context: Context, private val onHands: (FloatArray
         busy = true
         aspect = w.toFloat() / h
         try {
-            val jpeg = ByteArrayOutputStream(JPEG_BUFFER_BYTES)
-            YuvImage(nv21, ImageFormat.NV21, w, h, null).compressToJpeg(Rect(0, 0, w, h), JPEG_QUALITY, jpeg)
-            val bitmap = BitmapFactory.decodeByteArray(jpeg.toByteArray(), 0, jpeg.size())
-            landmarker.detectAsync(BitmapImageBuilder(bitmap).build(), timeMs)
+            landmarker.detectAsync(BitmapImageBuilder(bitmap(nv21, w, h)).build(), timeMs)
         } catch (e: RuntimeException) {
             // Closed under us, or a bad frame: it costs that frame only.
             busy = false
@@ -96,6 +94,13 @@ class HandTracker(private val context: Context, private val onHands: (FloatArray
         private const val MODEL = "hand_landmarker.task"
         private const val JPEG_QUALITY = 90
         private const val JPEG_BUFFER_BYTES = 48 * 1024
+
+        /** An upright NV21 camera frame as a bitmap, for MediaPipe. */
+        internal fun bitmap(nv21: ByteArray, w: Int, h: Int): Bitmap {
+            val jpeg = ByteArrayOutputStream(JPEG_BUFFER_BYTES)
+            YuvImage(nv21, ImageFormat.NV21, w, h, null).compressToJpeg(Rect(0, 0, w, h), JPEG_QUALITY, jpeg)
+            return BitmapFactory.decodeByteArray(jpeg.toByteArray(), 0, jpeg.size())
+        }
 
         /** The wrist, then four joints up each finger from the thumb out: MediaPipe's own numbering. */
         const val POINTS = 21

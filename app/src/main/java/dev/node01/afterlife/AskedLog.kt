@@ -15,10 +15,10 @@ object AskedLog {
     const val FILE_NAME = "asked.log"
     const val KEEP_DAYS = 7L
 
-    /** Blocking file work: call it off the main thread. */
-    fun add(dir: File, now: LocalDateTime, line: String) {
+    /** Blocking file work: call it off the main thread. [fileName] keeps another week-long log the same way. */
+    fun add(dir: File, now: LocalDateTime, line: String, fileName: String = FILE_NAME) {
         runCatching {
-            val file = File(dir, FILE_NAME)
+            val file = File(dir, fileName)
             val old = if (file.isFile) file.readLines() else emptyList()
             file.writeText((pruned(old, now) + "${now.format(STAMP)}  $line").joinToString("\n", postfix = "\n"))
         }

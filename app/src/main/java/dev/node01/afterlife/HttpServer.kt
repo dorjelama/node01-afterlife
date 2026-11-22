@@ -28,6 +28,8 @@ import kotlin.concurrent.thread
  * - `GET  /<key>/cam`     the front camera's small live view, as MJPEG, for as long as it is held open
  * - `POST /<key>/mode`    what the phone is, as a form: `to` = `webcam`, `face`, or `release` to leave kiosk
  * - `GET  /<key>/webcam`  the webcam's page: `video` (MJPEG), `audio` (PCM) and `rec/` (clips) beside it
+ * - `GET  /<key>/activity` the camera activities allowed, and today's log of them, as JSON
+ * - `POST /<key>/activity` which camera activities NODE may notice, as a form: `watch` (comma-separated)
  *
  * Every path sits under a random key shown on the phone's screen; anything
  * else is a 404. It is plain HTTP, so anyone able to sniff the Wi-Fi can read
@@ -36,7 +38,8 @@ import kotlin.concurrent.thread
  * live. The rear camera and the microphone run, and record clips to the phone,
  * only in webcam mode; in face mode `video` and `audio` stay open but silent.
  *
- * [onClaude], [onNote], [onFace], [onSay], [onUsage], [onTask], [onPc] and [onMode] are called on the connection's thread.
+ * [onClaude], [onNote], [onFace], [onSay], [onUsage], [onTask], [onPc], [onMode], [activity] and [onWatch] are
+ * called on the connection's thread.
  *
  * One instance per session: [start], then [stop], then discard.
  */
@@ -57,6 +60,9 @@ class HttpServer(
     private val video: Hub,
     private val audio: Hub,
     private val onMode: (to: String) -> Unit,
+    /** The camera activities allowed and today's log of them, as JSON; on the connection's thread. */
+    private val activity: () -> String,
+    private val onWatch: (watch: String) -> Unit,
 ) {
     @Volatile
     private var socket: ServerSocket? = null
@@ -149,6 +155,12 @@ class HttpServer(
                             out.write(pcm)
                             out.flush()
                         }
+                    }
+                    Route.Activity -> send(out, 200, "application/json", activity().toByteArray())
+                    Route.Watch -> readBody(head, input, out)?.let { body ->
+                        val form = parseForm(String(body, Charsets.UTF_8))
+                        respond(out, 204)
+                        onWatch(form["watch"].orEmpty())
                     }
                     Route.Clips -> send(out, 200, "text/html; charset=utf-8", clipList())
                     is Route.Clip -> sendClip(out, r.name)
@@ -282,6 +294,8 @@ class HttpServer(
         data object Webcam : Route
         data object Video : Route
         data object Audio : Route
+        data object Activity : Route
+        data object Watch : Route
         data object Clips : Route
         data class Clip(val name: String) : Route
         data object NotFound : Route
@@ -343,6 +357,8 @@ class HttpServer(
                 method == "GET" && rest == "webcam" -> Route.Webcam
                 method == "GET" && rest == "video" -> Route.Video
                 method == "GET" && rest == "audio" -> Route.Audio
+                method == "GET" && rest == "activity" -> Route.Activity
+                method == "POST" && rest == "activity" -> Route.Watch
                 method == "GET" && rest == "rec/" -> Route.Clips
                 // The fixed name pattern is the path-traversal guard.
                 method == "GET" && rest.startsWith("rec/") && LoopRecorder.CLIP_NAME.matches(clip) -> Route.Clip(clip)

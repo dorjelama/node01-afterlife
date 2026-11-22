@@ -87,6 +87,12 @@ sealed interface Command {
     data class Greet(val kind: Greeting) : Command
     data object Address : Command
     data class Language(val lang: Lang) : Command
+
+    /** "What's the news", "news about cricket": headlines, looked up online. */
+    data class News(val topic: String?) : Command
+
+    /** "Will it rain tomorrow", "what's the weather": the forecast, looked up online. */
+    data class Weather(val tomorrow: Boolean) : Command
     data object Unknown : Command
 }
 
@@ -189,6 +195,39 @@ object Assistant {
         return if (facing && parse(heard) != Command.Unknown) heard else null
     }
 
+    /**
+     * Two requests in one breath -- "set a timer for 10 minutes and remind me
+     * at 5 to call mum" -- as the two sentences, or null. Split only where both
+     * halves are requests on their own and the second starts like one, so
+     * "remind me to call dad and wish him good night" stays one reminder.
+     */
+    fun split(heard: String): List<String>? {
+        for (m in JOINED.findAll(heard)) {
+            val first = heard.substring(0, m.range.first).trim()
+            val second = heard.substring(m.range.last + 1).trim()
+            if (normalise(second).substringBefore(' ') !in OPENERS) continue
+            if (splittable(parse(first)) && splittable(parse(second))) return listOf(first, second)
+        }
+        return null
+    }
+
+    /** Requests NODE answers at once. Not small talk, which "and tell him good night" would turn into bedtime. */
+    private fun splittable(c: Command) = when (c) {
+        Command.Time, Command.Date, is Command.Timer, is Command.Focus, Command.CancelTimer, is Command.Remind,
+        is Command.RemindAt, is Command.Alarm, is Command.RemindEvery, is Command.Note, Command.ClaudeStatus,
+        Command.SessionUsage, is Command.Calc, is Command.Convert, Command.StopwatchStart, Command.StopwatchRead,
+        is Command.Volume, Command.Sing, Command.Coin, is Command.Dice, is Command.Pick -> true
+        else -> false
+    }
+
+    private val JOINED = Regex("""[\s,]+(and then|and also|and|then|also)\s+""", RegexOption.IGNORE_CASE)
+    private val OPENERS = setOf(
+        "set", "start", "remind", "cancel", "stop", "take", "note", "write", "what", "what's", "whats", "how",
+        "tell", "give", "flip", "toss", "roll", "pick", "choose", "focus", "wake", "turn", "make", "add", "sing",
+        "convert", "put",
+    )
+    private val NEWS_ABOUT = Regex("""\bnews (about|on|from|of|in) (.+)""")
+
     // "a node" is how "hey node" is sometimes heard; "a note" is not, as in "take a note".
     private val WAKE_EN =
         Regex(
@@ -251,6 +290,8 @@ object Assistant {
                 (has("claude", "cloud", "clod") && has("left", "remaining", "limit")) -> Command.SessionUsage
 
             has("claude", "cloud", "clod", "क्लड", "क्लाउड", "क्लोड") -> Command.ClaudeStatus
+            // After Claude: "any news from Claude" is about Claude.
+            has("news", "headlines", "समाचार") -> Command.News(NEWS_ABOUT.find(t)?.groupValues?.get(2))
 
             // Before the time: "17 times 23" has "time" in it.
             sum != null -> Command.Calc(sum!!)
@@ -270,6 +311,11 @@ object Assistant {
             has("dice", "पासा") || word("die", "roll") -> Command.Dice(numbersIn(t).firstOrNull()?.toInt() ?: 6)
             has("pick a number", "random number", "choose a number", "संख्या छान", "नम्बर छान") ->
                 numbersIn(t).let { Command.Pick(it.getOrElse(0) { 1 }.toInt(), it.getOrElse(1) { 10 }.toInt()) }
+
+            // Before the date: "what's the weather today" is the weather. Not "cold" alone: "my coffee is cold".
+            has("weather", "forecast", "umbrella", "temperature", "how hot", "how cold", "मौसम", "पानी पर्छ") ||
+                word("rain", "raining", "rainy", "snow", "snowing", "sunny", "windy") ->
+                Command.Weather(tomorrow = has("tomorrow", "भोलि"))
 
             has("time", "o'clock", "समय", "बज्यो", "बजे", "टाइम", "bajyo", "baje", "kati baj") ||
                 word("samay", "samaya") -> Command.Time
@@ -389,6 +435,12 @@ object Assistant {
 
     /** A question, looked up, that found no answer. English only, as questions are. */
     const val NOT_FOUND = "Sorry, I couldn't find that."
+
+    /** The first few of [headlines], read out. */
+    fun headlines(headlines: List<String>): String =
+        "Here's the news. " + headlines.take(SPOKEN_HEADLINES).joinToString(" ") { if (it.last() in ".!?") it else "$it." }
+
+    private const val SPOKEN_HEADLINES = 3
 
     /** Said once as the session window passes [percent]: the number, not advice. */
     fun usageWarning(percent: Int, lang: Lang): String =
@@ -768,7 +820,7 @@ object Assistant {
         Command.Thanks -> "You're welcome!"
         Command.Help -> "Ask me the time or the date, set a timer, a focus session or an alarm, " +
             "ask me to remind you at five or every hour, take a note, or ask what Claude is doing " +
-            "and how much of your session is left. I can do sums, convert units, flip a coin, " +
+            "and how much of your session is left. I can read the news, tell you the weather, do sums, convert units, flip a coin, " +
             "spell a word, and tell you my address. Say go to sleep to close my eyes, " +
             "or speak Nepali to switch. Or just say hi."
         Command.Address -> f.address?.let { "My address is $it" } ?: "I'm not on Wi-Fi."
@@ -786,6 +838,9 @@ object Assistant {
             Greeting.NAME -> "I'm NODE, your desk buddy."
             Greeting.BYE -> "Bye! See you soon."
         }
+        // Said only when the lookup failed: what it found is read out instead.
+        is Command.News -> "I couldn't get the news right now."
+        is Command.Weather -> "I couldn't get the forecast right now."
         Command.Unknown -> "Sorry, I didn't catch that. Say help to hear what I can do."
     }
 
@@ -853,6 +908,8 @@ object Assistant {
             Greeting.NAME -> "म NODE, तपाईंको डेस्क साथी।"
             Greeting.BYE -> "बाइ! फेरि भेटौंला।"
         }
+        is Command.News -> "अहिले समाचार ल्याउन सकिनँ।"
+        is Command.Weather -> "अहिले मौसमको जानकारी ल्याउन सकिनँ।"
         Command.Unknown -> "माफ गर्नुहोस्, बुझिनँ। मद्दत भन्नुहोस्।"
     }
 

@@ -7,7 +7,8 @@ package dev.node01.afterlife
  * Hook events carry whole prompts and tool outputs, and NODE keeps only the
  * first part of a large body, so this has to cope with input cut off at any
  * point. It walks the top level only: a key of the same name nested inside
- * `tool_input` is skipped over, never matched. On anything it does not
+ * `tool_input` is skipped over, never matched -- unless `tool_input` itself is
+ * wanted, when it comes back whole, as JSON. On anything it does not
  * understand it stops and returns what it has found so far.
  *
  * Hand-rolled because org.json is a stub in local unit tests, and this is the
@@ -32,12 +33,17 @@ object JsonFields {
                     if (key in wanted) found[key] = value
                 } else {
                     // true, false, null or a number, kept as written: a wanted
-                    // flag reads back as "true" without a JSON parser. Objects
-                    // and arrays are skipped whole, as before.
-                    val plain = peek() != '{' && peek() != '['
+                    // flag reads back as "true" without a JSON parser. A wanted
+                    // object comes back as its JSON, for another extract to read;
+                    // arrays are skipped whole.
+                    val keep = key in wanted && peek() != '['
                     val from = at
-                    if (!skipValue()) return found
-                    if (plain && key in wanted) found[key] = textSince(from)
+                    if (!skipValue()) {
+                        // An object cut off by the size limit keeps its start: its first fields may be whole.
+                        if (keep && json.getOrNull(from) == '{') found[key] = textSince(from)
+                        return found
+                    }
+                    if (keep) found[key] = textSince(from)
                 }
                 skipSpace()
                 if (!take(',')) return found

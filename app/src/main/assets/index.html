@@ -27,6 +27,10 @@
   .said { min-height: 1.5em; color: #ffb000; }
   #cam { display: block; width: 480px; max-width: 100%; margin-top: 8px; background: #0b0b0b; }
   code { color: #e8e8e8; }
+  #watch { flex-direction: column; align-items: flex-start; }
+  #watch label { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+  #watch input { flex: none; width: 18px; height: 18px; margin: 0; accent-color: #ffb000; }
+  #activity-log { margin: 8px 0; padding-left: 20px; color: #9a9a9a; }
 </style>
 </head>
 <body>
@@ -84,6 +88,18 @@ wait until it is the face again. Holding a finger on the phone's screen also bri
 switching away turns it off. Nothing is recorded, on the phone or anywhere else. It crosses
 your Wi-Fi as plain HTTP, like everything on this page, and the phone's screen does not show
 that anyone is watching.</p>
+
+<h2>CAMERA ACTIVITIES</h2>
+<div class="row" id="watch">
+  <label><input type="checkbox" value="DRINK"> A drink: a cup or bottle raised to your face</label>
+  <label><input type="checkbox" value="PHONE"> On the phone: a phone in view for 20 seconds</label>
+  <label><input type="checkbox" value="READING"> Reading: a book in view for a minute</label>
+</div>
+<p class="said" id="watch-said" role="status"></p>
+<ul id="activity-log" aria-label="Today's activities"></ul>
+<p>Off until you tick one. Then NODE looks at about one camera frame a second, on the phone, only
+for these, and only while you are at the desk; no frame is kept or sent. When one happens it
+reacts, chirps and adds a line here. The log stays on the phone for a week.</p>
 
 <h2>SAY IT</h2>
 <form id="say">
@@ -284,6 +300,39 @@ cam.onerror = () => {
   showCam(false);
   camSaid.textContent = 'No picture: is NODE Companion open on the phone?';
 };
+
+// -- camera activities ----------------------------------------------------
+const watchSaid = document.getElementById('watch-said');
+const watchBoxes = [...document.querySelectorAll('#watch input')];
+const activityLog = document.getElementById('activity-log');
+const logLine = (text) => Object.assign(document.createElement('li'), { textContent: text });
+const loadActivity = async () => {
+  try {
+    const res = await fetch('activity');
+    if (!res.ok) throw new Error(res.status);
+    const a = await res.json();
+    for (const b of watchBoxes) b.checked = a.watch.includes(b.value);
+    // "2026-11-22 10:42:05  a drink (1 today)": the date is today's, so the time onward. Newest first.
+    const lines = a.log.slice().reverse().map((l) => logLine(l.slice(11, 16) + '  ' + l.slice(21)));
+    activityLog.replaceChildren(...(lines.length ? lines : [logLine('Nothing yet today.')]));
+  } catch (err) {
+    watchSaid.textContent = 'Not loaded: is NODE Companion open on the phone?';
+  }
+};
+for (const b of watchBoxes) {
+  b.onchange = async () => {
+    const watch = watchBoxes.filter((x) => x.checked).map((x) => x.value).join(',');
+    try {
+      const res = await fetch('activity', { method: 'POST', body: new URLSearchParams({ watch }) });
+      if (!res.ok) throw new Error(res.status);
+      watchSaid.textContent = watch ? 'Watching for these.' : 'Not watching.';
+    } catch (err) {
+      watchSaid.textContent = 'Not sent: is NODE Companion open on the phone?';
+    }
+  };
+}
+loadActivity();
+setInterval(() => { if (!document.hidden) loadActivity(); }, 30000);
 
 // -- say it ---------------------------------------------------------------
 const saySaid = document.getElementById('say-said');

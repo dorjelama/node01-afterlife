@@ -606,6 +606,41 @@ class AssistantTest {
         assertEquals(null, Assistant.duration("a timer please"))
     }
 
+    @Test
+    fun newsAndWeatherAreLookedUp() {
+        assertEquals(Command.News(null), Assistant.parse("what's the news"))
+        assertEquals(Command.News(null), Assistant.parse("read me the headlines"))
+        assertEquals(Command.News("cricket"), Assistant.parse("any news about cricket?"))
+        assertEquals(Command.ClaudeStatus, Assistant.parse("any news from claude"))
+        assertEquals(Command.Weather(tomorrow = true), Assistant.parse("will it rain tomorrow"))
+        assertEquals(Command.Weather(tomorrow = false), Assistant.parse("what's the weather today"))
+        assertEquals(Command.Weather(tomorrow = false), Assistant.parse("do I need an umbrella"))
+        assertEquals(Command.Weather(tomorrow = true), Assistant.parse("भोलि मौसम कस्तो छ"))
+        assertEquals("not the weather", Command.Unknown, Assistant.parse("my coffee is cold"))
+        assertEquals("rain inside a word", Command.Unknown, Assistant.parse("I missed the train"))
+        assertEquals(Command.Convert(68.0, Measure.F), Assistant.parse("20 celsius in fahrenheit"))
+        assertEquals(
+            "Here's the news. Nepal win the series. Is it over? Rain due.",
+            Assistant.headlines(listOf("Nepal win the series", "Is it over?", "Rain due", "A fourth")),
+        )
+    }
+
+    @Test
+    fun twoRequestsInOneSentence() {
+        assertEquals(
+            listOf("Set a timer for 10 minutes", "remind me at 5 pm to call mum"),
+            Assistant.split("Set a timer for 10 minutes and remind me at 5 pm to call mum"),
+        )
+        assertEquals(listOf("what time is it", "what's the date?"), Assistant.split("what time is it, and what's the date?"))
+        assertEquals(listOf("take a note buy milk", "tell me the time"), Assistant.split("take a note buy milk and then tell me the time"))
+        // One request with "and" inside it stays whole.
+        assertNull(Assistant.split("remind me to call dad and wish him good night"))
+        assertNull(Assistant.split("remind me in an hour to call dad and tell him good night"))
+        assertNull(Assistant.split("take a note buy eggs and milk"))
+        assertNull(Assistant.split("what time is it"))
+        assertNull("the news is looked up, one at a time", Assistant.split("what time is it and what's the news"))
+    }
+
     private fun facts(now: LocalDateTime) =
         Assistant.Facts(now = now, claude = null, timerRunning = false, noteDue = false, address = null)
 }

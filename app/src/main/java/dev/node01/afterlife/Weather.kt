@@ -2,17 +2,20 @@ package dev.node01.afterlife
 
 import java.net.HttpURLConnection
 import java.net.URL
+import kotlin.math.roundToInt
 
 /**
- * This morning's weather, for the one line NODE says when it first sees you.
+ * The weather now and the forecast for today and tomorrow: the line NODE says
+ * when it first sees you in the morning, and the answer to "will it rain
+ * tomorrow?".
  *
- * The only thing in NODE that talks to the internet. It sends a fixed pair of
- * coordinates -- [LAT] and [LON] below, yours to change -- and nothing else:
- * no identifier, no account, no phone. Open-Meteo needs no key. If it fails,
- * or is slow, or there is no Wi-Fi, the briefing simply goes without it.
+ * It sends a fixed pair of coordinates -- [LAT] and [LON] below, yours to
+ * change -- and nothing else: no identifier, no account, no phone. Open-Meteo
+ * needs no key. If it fails, or is slow, or there is no Wi-Fi, the briefing
+ * simply goes without it.
  *
- * [parse] and [describe] are pure and tested; [fetch] blocks and must be
- * called off the main thread.
+ * [parse], [days] and [describe] are pure and tested; [fetch] blocks and must
+ * be called off the main thread.
  */
 object Weather {
 
@@ -22,11 +25,19 @@ object Weather {
 
     data class Now(val tempC: Int, val code: Int)
 
+    /** A day's forecast: its weather, low and high, and the chance of rain at its likeliest, in percent. */
+    data class Day(val code: Int, val minC: Int, val maxC: Int, val rainPct: Int)
+
+    /** The weather now, and [days] from today on. */
+    data class Forecast(val now: Now, val days: List<Day>)
+
     /** Blocking, and never throws: null for anything that did not work. */
-    fun fetch(): Now? = runCatching {
+    fun fetch(): Forecast? = runCatching {
         val url = URL(
             "https://api.open-meteo.com/v1/forecast" +
-                "?latitude=$LAT&longitude=$LON&current=temperature_2m,weather_code",
+                "?latitude=$LAT&longitude=$LON&current=temperature_2m,weather_code" +
+                "&daily=weather_code,temperature_2m_min,temperature_2m_max,precipitation_probability_max" +
+                "&forecast_days=2&timezone=auto",
         )
         val connection = (url.openConnection() as HttpURLConnection).apply {
             connectTimeout = TIMEOUT_MS
@@ -36,7 +47,8 @@ object Weather {
         }
         try {
             if (connection.responseCode != 200) return null
-            parse(connection.inputStream.bufferedReader().use { it.readText() }.take(MAX_BYTES))
+            val json = connection.inputStream.bufferedReader().use { it.readText() }.take(MAX_BYTES)
+            parse(json)?.let { Forecast(it, days(json)) }
         } finally {
             connection.disconnect()
         }
@@ -55,11 +67,45 @@ object Weather {
         return Now(Math.round(temp).toInt(), code)
     }
 
+    /** The "daily" arrays, one [Day] per day they all cover; a missing chance of rain counts as none. */
+    internal fun days(json: String): List<Day> {
+        fun list(key: String) = Regex(""""$key"\s*:\s*\[([^\]]*)]""").find(json)?.groupValues?.get(1)
+            ?.split(',')?.map { it.trim().toDoubleOrNull() }.orEmpty()
+        val codes = list("weather_code")
+        val lows = list("temperature_2m_min")
+        val highs = list("temperature_2m_max")
+        val rain = list("precipitation_probability_max")
+        return codes.indices.map { i ->
+            Day(
+                codes[i]?.toInt() ?: return@map null,
+                lows.getOrNull(i)?.roundToInt() ?: return@map null,
+                highs.getOrNull(i)?.roundToInt() ?: return@map null,
+                rain.getOrNull(i)?.roundToInt() ?: 0,
+            )
+        }.takeWhile { it != null }.filterNotNull()
+    }
+
     /** "18 degrees, light rain." */
     fun describe(now: Now, lang: Lang): String = if (lang == Lang.NE) {
         "${Bs.neDigits(now.tempC)} डिग्री, ${conditionNe(now.code)}"
     } else {
         "${now.tempC} degrees, ${conditionEn(now.code)}"
+    }
+
+    /**
+     * The answer to a weather question: now and the rest of today, or
+     * [tomorrow]'s forecast. Null when the forecast for that day did not come.
+     */
+    fun describe(f: Forecast, tomorrow: Boolean, lang: Lang): String? {
+        val day = f.days.getOrNull(if (tomorrow) 1 else 0)
+        if (day == null) return if (tomorrow) null else describe(f.now, lang) + if (lang == Lang.NE) "।" else "."
+        return if (lang == Lang.NE) {
+            val range = "${Bs.neDigits(day.minC)} देखि ${Bs.neDigits(day.maxC)} डिग्री, पानी पर्ने सम्भावना ${Bs.neDigits(day.rainPct)}%"
+            if (tomorrow) "भोलि ${conditionNe(day.code)}, $range।" else "अहिले ${describe(f.now, lang)}। आज $range।"
+        } else {
+            val range = "${day.minC} to ${day.maxC} degrees, chance of rain ${day.rainPct}%"
+            if (tomorrow) "Tomorrow: ${conditionEn(day.code)}, $range." else "Now ${describe(f.now, lang)}. Today $range."
+        }
     }
 
     /** WMO weather codes, in the handful of bands worth telling apart out loud. */

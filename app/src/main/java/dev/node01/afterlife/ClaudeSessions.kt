@@ -4,9 +4,10 @@ package dev.node01.afterlife
  * What every Claude Code session on the PC is doing, rebuilt from the events
  * its hooks POST to NODE. Main thread only.
  *
- * Only four fields of a hook event are ever looked at -- the event name, the
- * session id, the working folder and the notification type. Prompts and tool
- * data never reach this class.
+ * Only four fields of a hook event are looked at here -- the event name, the
+ * session id, the working folder and the notification type. Prompts never
+ * reach NODE; of tool data, only what a permission request asks for is read,
+ * by [Approval], to be said aloud.
  *
  * Hooks are best-effort: an event can be lost, and a killed terminal sends no
  * SessionEnd. So every state expires rather than being claimed forever.
@@ -132,8 +133,12 @@ class ClaudeSessions {
         /** On a failure: "true" when you stopped the tool yourself, which is no failure at all. */
         const val IS_INTERRUPT = "is_interrupt"
 
+        /** What a permission request is for, for [Approval]: the tool, and its input as JSON. */
+        const val TOOL_NAME = "tool_name"
+        const val TOOL_INPUT = "tool_input"
+
         /** The only fields NODE reads from a hook event. */
-        val FIELDS = setOf(EVENT, SESSION_ID, CWD, NOTIFICATION_TYPE, IS_INTERRUPT)
+        val FIELDS = setOf(EVENT, SESSION_ID, CWD, NOTIFICATION_TYPE, IS_INTERRUPT, TOOL_NAME, TOOL_INPUT)
 
         /** Notifications that mean Claude is blocked on you. */
         private val NEEDS_YOU_TYPES = setOf("permission_prompt", "elicitation_dialog", "agent_needs_input")

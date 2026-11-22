@@ -17,6 +17,8 @@ class HttpServerTest {
         assertEquals(Route.Page, HttpServer.route("GET", "/$key/", key))
         assertEquals(Route.Page, HttpServer.route("GET", "/$key/?x=1", key))
         assertEquals(Route.Claude, HttpServer.route("POST", "/$key/claude", key))
+        assertEquals(Route.Activity, HttpServer.route("GET", "/$key/activity", key))
+        assertEquals(Route.Watch, HttpServer.route("POST", "/$key/activity", key))
         assertEquals(Route.Note, HttpServer.route("POST", "/$key/note", key))
         assertEquals(Route.Face, HttpServer.route("POST", "/$key/face", key))
         assertEquals(Route.Say, HttpServer.route("POST", "/$key/say", key))

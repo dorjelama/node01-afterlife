@@ -25,7 +25,7 @@ android {
     }
 
     // The hand model is read straight out of the APK, which needs it stored uncompressed.
-    androidResources { noCompress += "task" }
+    androidResources { noCompress += listOf("task", "tflite") }
 
     buildTypes {
         debug {

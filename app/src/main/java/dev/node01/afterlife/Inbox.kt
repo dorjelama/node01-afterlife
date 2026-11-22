@@ -29,6 +29,9 @@ class Inbox(notes: List<Note> = emptyList()) {
 
     val size get() = notes.size
 
+    /** Soonest first. */
+    val all: List<Note> get() = notes
+
     /** Returns the note as stored, or null if the text is empty. Oldest give way past [MAX_NOTES]. */
     fun add(text: String, delayMs: Long, nowMs: Long, kind: Kind = Kind.NOTE, repeatMs: Long = 0L): Note? {
         val clean = clean(text) ?: return null

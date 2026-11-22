@@ -32,7 +32,8 @@ import java.io.ByteArrayOutputStream
  * that viewer; still nothing is stored or logged. The frames are the small
  * ones face detection already runs on, so the view is low resolution by
  * construction. While hand tracking is on, frames also go to [hands], which
- * reads them on the phone. Otherwise only the rectangle of the largest face
+ * reads them on the phone, and while camera activities are allowed, about one
+ * a second goes to [objects]. Otherwise only the rectangle of the largest face
  * leaves this class, as a gaze direction.
  *
  * Camera callbacks and results run on a private thread; [onFace] and
@@ -62,9 +63,14 @@ class Presence(
     @Volatile
     var hands: HandTracker? = null
 
+    /** Camera activities, while any are allowed: about a frame a second is read on the phone for them. */
+    @Volatile
+    var objects: ObjectWatcher? = null
+
     /** Only touched on [thread]. */
     private var lastReportMs = 0L
     private var lastLiveMs = 0L
+    private var lastObjectsMs = 0L
 
     /**
      * Throws if the front camera cannot do face detection at all. Call [stop]
@@ -195,8 +201,9 @@ class Presence(
         val image = reader.acquireLatestImage() ?: return
         val now = SystemClock.elapsedRealtime()
         val tracker = hands?.takeIf { it.ready }
+        val watcher = objects?.takeIf { it.ready && now - lastObjectsMs >= OBJECTS_INTERVAL_MS }
         val watched = live.hasSubscribers && now - lastLiveMs >= LIVE_INTERVAL_MS
-        if (tracker == null && !watched) return image.close()
+        if (tracker == null && watcher == null && !watched) return image.close()
         val w = image.width
         val h = image.height
         try {
@@ -204,6 +211,10 @@ class Presence(
             val upright = rotateNv21(image.use { nv21(it) }, w, h, rotation)
             val (uw, uh) = if (((rotation % 360) + 360) % 180 == 0) w to h else h to w
             tracker?.offer(upright, uw, uh, now)
+            if (watcher != null) {
+                lastObjectsMs = now
+                watcher.offer(upright, uw, uh, now)
+            }
             if (!watched) return
             lastLiveMs = now
             val jpeg = ByteArrayOutputStream(JPEG_BUFFER_BYTES)
@@ -240,6 +251,9 @@ class Presence(
         /** The camera view: about 10 frames a second, not 100 ms, or frames that land a hair early are skipped. */
         private const val LIVE_INTERVAL_MS = 90L
         private const val LIVE_QUALITY = 70
+
+        /** A cup raised to drink stays up for seconds: once a second is plenty, and leaves the CPU to the model. */
+        private const val OBJECTS_INTERVAL_MS = 1_000L
         private const val JPEG_BUFFER_BYTES = 32 * 1024
 
         /**

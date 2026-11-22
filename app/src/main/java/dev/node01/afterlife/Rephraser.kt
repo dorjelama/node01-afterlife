@@ -9,6 +9,7 @@ import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.SamplerConfig
+import android.os.SystemClock
 import java.io.File
 
 /**
@@ -18,7 +19,11 @@ import java.io.File
  * "ping me in ten to stretch" becomes "remind me in 10 minutes to stretch" --
  * and [Assistant.parse] still decides what that means. So it can never do
  * anything a spoken sentence could not already do. A question about the world
- * comes back as `ASK` ([asks]), for [answer] to answer from what [Lookup] found.
+ * comes back as `ASK` ([asks]), for [answer] to answer from what [Lookup] found;
+ * anything else said to NODE gets a short [chat] reply.
+ *
+ * Answers and chat share one conversation, carried on for [TALK_MS] after the
+ * last reply, so "how old is he?" knows who was just talked about.
  *
  * Blocking and slow (seconds): call it off the main thread. One sentence at a
  * time; [close] waits for a sentence in progress.
@@ -26,8 +31,12 @@ import java.io.File
 class Rephraser private constructor(
     private val engine: Engine,
     private val rewriting: Conversation,
-    private val answering: Conversation,
+    private val talking: Conversation,
 ) : AutoCloseable {
+
+    /** The conversation in progress, and when it last replied; replaced once it is [TALK_MS] old. */
+    private var talk: Conversation? = null
+    private var talkAtMs = 0L
 
     // Each call works on a copy of a primed conversation: its instructions are read once, at load,
     // and nothing said is seen by the next call.
@@ -39,20 +48,60 @@ class Rephraser private constructor(
         return runCatching { rewriting.clone().use { chat -> clean(chat.sendMessage(heard).text()) } }.getOrNull()
     }
 
-    /** One short sentence answering [question] from [notes], to be spoken; null when the notes do not answer it. */
+    /**
+     * One short sentence answering [question] from [notes], to be spoken; null when the notes do not answer it.
+     * A [followUp] carries on the conversation in progress; anything else starts a new one.
+     */
+    fun answer(question: String, notes: String, followUp: Boolean = false): String? =
+        reply("Notes: $notes\n\nQuestion: $question", carryOn = followUp)
+
+    /**
+     * A short spoken reply to something said to NODE that is neither a command nor a question. After a question
+     * the model can take it for one more and say UNKNOWN; then it is asked again, afresh.
+     */
+    fun chat(said: String): String? {
+        val carried = inConversation
+        return reply(said, carryOn = true) ?: if (carried) reply(said, carryOn = false) else null
+    }
+
+    /** The morning's greeting, one cheerful sentence made from [notes]. */
+    fun brief(notes: String): String? = reply(
+        // No "I" or "me" in it: the model copies them, and said "I have to fix the bike".
+        "Notes: $notes\n\nGreet the listener good morning, then tell them the weather and everything they have " +
+            "today, calling them you. One or two short, cheerful sentences.",
+        carryOn = false,
+    )
+
+    /** Whether a conversation is still in progress, for a follow-up to carry on. */
+    val inConversation: Boolean
+        @Synchronized get() = talk != null && SystemClock.elapsedRealtime() - talkAtMs <= TALK_MS
+
+    /**
+     * [question] said again so it stands alone -- "how old is he" as "how old is Emmanuel Macron" -- from the
+     * conversation in progress, for searching; null if there is none or the model gives nothing.
+     */
+    fun standalone(question: String): String? = if (!inConversation) null else reply(
+        "Say my next question again so it makes sense on its own, naming who or what it is about. " +
+            "Reply with the question only: $question",
+        carryOn = true,
+    )
+
     @Synchronized
-    fun answer(question: String, notes: String): String? = runCatching {
-        answering.clone().use { chat ->
-            clean(chat.sendMessage("Notes: $notes\n\nQuestion: $question").text())?.takeIf { !asks(it) }
+    private fun reply(message: String, carryOn: Boolean): String? = runCatching {
+        val chat = talk?.takeIf { carryOn && inConversation } ?: talking.clone().also {
+            talk?.close()
+            talk = it
         }
+        clean(chat.sendMessage(message).text())?.takeIf { !asks(it) }.also { talkAtMs = SystemClock.elapsedRealtime() }
     }.getOrNull()
 
     private fun Message.text() = contents.contents.filterIsInstance<Content.Text>().joinToString("") { it.text }
 
     @Synchronized
     override fun close() {
+        talk?.close()
         rewriting.close()
-        answering.close()
+        talking.close()
         engine.close()
     }
 
@@ -90,6 +139,13 @@ class Rephraser private constructor(
             "count down three minutes" to "set a timer for 3 minutes",
             "my coffee is cold" to "UNKNOWN",
             "the dog ate it" to "UNKNOWN",
+            // Small talk, which gets a reply of its own: "i'm so bored" came out as a focus session.
+            "i'm feeling a bit sad" to "UNKNOWN",
+            "you're a cute little robot" to "UNKNOWN",
+            "tell me something funny" to "UNKNOWN",
+            // A follow-up is a question too: "how old is he" came out as the date.
+            "how old is she" to "ASK",
+            "and what's its population" to "ASK",
         )
 
         // A question is answered "ASK" alone, not repeated: every word the model writes costs half a second here.
@@ -101,7 +157,8 @@ class Rephraser private constructor(
             |NODE's commands:
             |${COMMANDS.joinToString("\n")}
             |
-            |A question about the world: reply ASK. Anything else: reply UNKNOWN.
+            |Only a clear request for one of these is a command. A question about the world: reply ASK.
+            |Small talk, feelings, jokes and anything else: reply UNKNOWN.
         """.trimMargin()
 
         // Greedy: the same input always gets the same reply.
@@ -115,15 +172,21 @@ class Rephraser private constructor(
             maxOutputToken = 32,
         )
 
+        /** How long a conversation is carried on after NODE last replied: long enough for a follow-up. */
+        const val TALK_MS = 2 * 60_000L
+
         // Short: it is spoken, and every word costs a moment.
-        private val ANSWERING = ConversationConfig(
+        private val TALKING = ConversationConfig(
             systemInstruction = Contents.of(
-                "You are NODE, a small desk robot. Answer the question in one short sentence, to be spoken " +
-                    "aloud, using only the notes. If the notes do not answer it, reply UNKNOWN.",
+                // "Reply UNKNOWN if they do not answer it" was taken too far: it said UNKNOWN to the moon's
+                // distance with the distance in the notes, and to "what's your favourite colour".
+                "You are NODE, a small, friendly desk robot. Reply in one short sentence, to be spoken aloud. " +
+                    "Never promise to do anything. When a message starts with Notes, answer from the notes, and " +
+                    "reply UNKNOWN only if they say nothing about the question.",
             ),
             samplerConfig = GREEDY,
             prefillPrefaceOnInit = true,
-            maxOutputToken = 40,
+            maxOutputToken = 60,
         )
 
         /**
@@ -136,7 +199,7 @@ class Rephraser private constructor(
             return runCatching {
                 val engine = Engine(EngineConfig(modelPath = model.path, backend = Backend.CPU(), cacheDir = cacheDir.path))
                 engine.initialize()
-                runCatching { Rephraser(engine, engine.createConversation(REWRITING), engine.createConversation(ANSWERING)) }
+                runCatching { Rephraser(engine, engine.createConversation(REWRITING), engine.createConversation(TALKING)) }
                     .onFailure { engine.close() }
                     .getOrThrow()
             }.getOrNull()

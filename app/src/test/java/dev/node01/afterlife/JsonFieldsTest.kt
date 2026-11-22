@@ -24,6 +24,7 @@ class JsonFieldsTest {
                 "session_id" to "abc-123",
                 "cwd" to "C:\\Users\\me\\code\\node01",
                 "hook_event_name" to "PermissionRequest",
+                "tool_name" to "Bash",
             ),
             JsonFields.extract(json, wanted),
         )
@@ -34,9 +35,22 @@ class JsonFieldsTest {
         val json = """{"tool_input":{"hook_event_name":"Stop","cwd":"/evil","list":[1,{"session_id":"x"}]},""" +
             """"tool_response":"{\"hook_event_name\":\"Stop\"}","hook_event_name":"PostToolUse","session_id":"s1"}"""
         assertEquals(
-            mapOf("hook_event_name" to "PostToolUse", "session_id" to "s1"),
+            mapOf(
+                "hook_event_name" to "PostToolUse",
+                "session_id" to "s1",
+                // Wanted itself, so it comes back whole, for another extract to read.
+                "tool_input" to """{"hook_event_name":"Stop","cwd":"/evil","list":[1,{"session_id":"x"}]}""",
+            ),
             JsonFields.extract(json, wanted),
         )
+    }
+
+    @Test
+    fun aWantedObjectCutOffKeepsItsStart() {
+        val json = """{"hook_event_name":"PermissionRequest","tool_name":"Write","tool_input":{"file_path":"/code/a/b.kt","content":"lots"""
+        val found = JsonFields.extract(json, wanted)
+        assertEquals("Write", found["tool_name"])
+        assertEquals("/code/a/b.kt", JsonFields.extract(found.getValue("tool_input"), setOf("file_path"))["file_path"])
     }
 
     @Test
