@@ -131,7 +131,7 @@ class NodeActivity : Activity() {
     private var listener: Listener? = null
     private var speaker: Speaker? = null
 
-    /** NODE's own model, once loaded; null with no model file on the phone. See [Rephraser]. */
+    /** NODE's model on the server, while it answers; null while the server is away. See [Rephraser]. */
     private var rephraser: Rephraser? = null
     /** The model or a lookup is at work: the thinking face is up, and the model takes no new sentence. */
     private var thinking = false
@@ -231,26 +231,30 @@ class NodeActivity : Activity() {
         loadRephraser()
     }
 
-    /** Loads NODE's own model, if one has been pushed to the phone, off the main thread: it takes seconds. */
+    /**
+     * Finds NODE's model on the server, off the main thread: it takes seconds. While the server is away
+     * -- the laptop off, or a call just failed -- it is tried again every [MODEL_RETRY_MS].
+     */
     private fun loadRephraser() {
-        val dir = getExternalFilesDir(null) ?: return
         thread(name = "node-model", isDaemon = true) {
-            val started = SystemClock.elapsedRealtime()
-            val loaded = Rephraser.open(dir, cacheDir) ?: return@thread
-            Log.d(TAG, "model: loaded in ${SystemClock.elapsedRealtime() - started} ms")
-            val warm = SystemClock.elapsedRealtime()
-            // A fixed sentence, not something said, so its rewrite can be logged.
-            val rewrite = loaded.rephrase(Rephraser.WARM_UP)
-            Log.d(TAG, "model: warm-up \"${Rephraser.WARM_UP}\" -> \"$rewrite\" in ${SystemClock.elapsedRealtime() - warm} ms")
-            mainExecutor.execute { if (isDestroyed) loaded.close() else rephraser = loaded }
+            val model = Rephraser()
+            var up = false
+            while (!isDestroyed) {
+                if (!up || !model.reachable) {
+                    val warm = SystemClock.elapsedRealtime()
+                    // A fixed sentence, not something said, so its rewrite can be logged.
+                    val rewrite = model.rephrase(Rephraser.WARM_UP)
+                    val now = model.reachable
+                    if (now != up) {
+                        Log.d(TAG, "model: " + if (now) "warm-up \"${Rephraser.WARM_UP}\" -> \"$rewrite\" in " +
+                            "${SystemClock.elapsedRealtime() - warm} ms" else "server not answering")
+                    }
+                    up = now
+                    mainExecutor.execute { rephraser = model.takeIf { now } }
+                }
+                Thread.sleep(MODEL_RETRY_MS)
+            }
         }
-    }
-
-    override fun onDestroy() {
-        // Waits for a sentence in progress, on its own thread, rather than holding up the main one.
-        rephraser?.let { r -> thread(name = "node-model-close", isDaemon = true) { r.close() } }
-        rephraser = null
-        super.onDestroy()
     }
 
     override fun onStart() {
@@ -756,7 +760,7 @@ class NodeActivity : Activity() {
      */
     private fun brief() {
         val waiting = inbox.size
-        val model = rephraser?.takeIf { voiceLang == Lang.EN && !thinking }
+        val model = rephraser?.takeIf { it.reachable && voiceLang == Lang.EN && !thinking }
         // Gathered here: the inbox and the tasks are main-thread only.
         val day = if (model != null) dayNotes() else null
         if (model != null) thinking = true
@@ -955,7 +959,8 @@ class NodeActivity : Activity() {
         val commands = said.map { Assistant.parse(it) }
         val command = commands.first()
         var lang = Assistant.langOf(text)
-        val model = rephraser
+        // Not after a call that just failed: keywords only until the server answers again.
+        val model = rephraser?.takeIf { it.reachable }
         if (said.size == 1 && command == Command.Unknown && !rephrased && lang == Lang.EN && model != null && !thinking) {
             return think(text, model)
         }
@@ -1826,6 +1831,8 @@ class NodeActivity : Activity() {
 
         /** No hand seen for this long and hand tracking turns itself off. */
         const val HANDS_IDLE_MS = 60_000L
+        /** How often the model's server is tried while it is away; when it answers, it is left alone. */
+        const val MODEL_RETRY_MS = 60_000L
 
         /** How long turning hand tracking on says so under the eyes. */
         const val MODE_CAPTION_MS = 1_500L

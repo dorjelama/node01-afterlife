@@ -6,7 +6,7 @@ import java.time.format.DateTimeFormatter
 
 /**
  * What NODE's model was asked and what it made of it, one dated line each, in
- * [FILE_NAME] beside the model. Every new line drops those older than
+ * [FILE_NAME] on the phone. Every new line drops those older than
  * [KEEP_DAYS], so it never holds more than the last week. Read it with
  * `adb shell cat /sdcard/Android/data/dev.node01.companion/files/asked.log`.
  */

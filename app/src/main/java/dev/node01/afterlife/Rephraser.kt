@@ -1,51 +1,46 @@
 package dev.node01.afterlife
 
-import com.google.ai.edge.litertlm.Backend
-import com.google.ai.edge.litertlm.Content
-import com.google.ai.edge.litertlm.Contents
-import com.google.ai.edge.litertlm.Conversation
-import com.google.ai.edge.litertlm.ConversationConfig
-import com.google.ai.edge.litertlm.Engine
-import com.google.ai.edge.litertlm.EngineConfig
-import com.google.ai.edge.litertlm.Message
-import com.google.ai.edge.litertlm.SamplerConfig
 import android.os.SystemClock
-import java.io.File
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URL
 
 /**
- * A ready-made open model (Qwen2.5 1.5B; any `.litertlm` file), run on the
- * phone. Told NODE's commands and shown a few [EXAMPLES], it rewrites a
- * loosely worded English sentence into one the keyword parser already knows --
- * "ping me in ten to stretch" becomes "remind me in 10 minutes to stretch" --
- * and [Assistant.parse] still decides what that means. So it can never do
- * anything a spoken sentence could not already do. A question about the world
- * comes back as `ASK` ([asks]), for [answer] to answer from what [Lookup] found;
- * anything else said to NODE gets a short [chat] reply.
+ * A ready-made open model ([MODEL]) run by Ollama on the user's own server on
+ * the LAN ([SERVER]), never a cloud AI. Told NODE's commands and shown a few
+ * [EXAMPLES], it rewrites a loosely worded English sentence into one the
+ * keyword parser already knows -- "ping me in ten to stretch" becomes "remind
+ * me in 10 minutes to stretch" -- and [Assistant.parse] still decides what that
+ * means. So it can never do anything a spoken sentence could not already do. A
+ * question about the world comes back as `ASK` ([asks]), for [answer] to answer
+ * from what [Lookup] found; anything else said to NODE gets a short [chat] reply.
  *
  * Answers and chat share one conversation, carried on for [TALK_MS] after the
  * last reply, so "how old is he?" knows who was just talked about.
  *
- * Blocking and slow (seconds): call it off the main thread. One sentence at a
- * time; [close] waits for a sentence in progress.
+ * Blocking and slow (seconds): call it off the main thread. One sentence at a time.
  */
-class Rephraser private constructor(
-    private val engine: Engine,
-    private val rewriting: Conversation,
-    private val talking: Conversation,
-) : AutoCloseable {
+class Rephraser(private val server: String = SERVER, private val model: String = MODEL) {
 
-    /** The conversation in progress, and when it last replied; replaced once it is [TALK_MS] old. */
-    private var talk: Conversation? = null
+    /** Whether the last call got an answer from the server; false while it is off, unreachable or lacks [model]. */
+    @Volatile
+    var reachable = false
+        private set
+
+    /** The conversation in progress, as (role, text), and when it last replied; replaced once it is [TALK_MS] old. */
+    private var talk: MutableList<Pair<String, String>>? = null
     private var talkAtMs = 0L
 
-    // Each call works on a copy of a primed conversation: its instructions are read once, at load,
-    // and nothing said is seen by the next call.
+    // Every call sends the instructions again: Ollama keeps them read from the call before, so only the new
+    // words cost time, and nothing said is seen by the next rewrite.
 
     @Synchronized
     fun rephrase(heard: String): String? {
         // One of its examples gets the answer it was shown, without asking: the model does not always copy them.
         known(heard)?.let { return clean(it) }
-        return runCatching { rewriting.clone().use { chat -> clean(chat.sendMessage(heard).text()) } }.getOrNull()
+        return send(REWRITING + ("user" to heard), REWRITE_TOKENS)?.let(::clean)
     }
 
     /**
@@ -87,28 +82,57 @@ class Rephraser private constructor(
     )
 
     @Synchronized
-    private fun reply(message: String, carryOn: Boolean): String? = runCatching {
-        val chat = talk?.takeIf { carryOn && inConversation } ?: talking.clone().also {
-            talk?.close()
-            talk = it
+    private fun reply(message: String, carryOn: Boolean): String? {
+        val chat = talk?.takeIf { carryOn && inConversation } ?: mutableListOf<Pair<String, String>>().also { talk = it }
+        val raw = send(listOf("system" to TALKING) + chat + ("user" to message), TALK_TOKENS) ?: return null
+        chat += "user" to message
+        chat += "assistant" to raw
+        talkAtMs = SystemClock.elapsedRealtime()
+        return clean(raw)?.takeIf { !asks(it) }
+    }
+
+    /** The model's reply to [messages], greedy so the same input always gets the same reply; null if the server gave none. */
+    private fun send(messages: List<Pair<String, String>>, maxTokens: Int): String? = try {
+        val body = JSONObject()
+            .put("model", model)
+            .put("stream", false)
+            // Kept loaded: loading it again costs the next sentence half a minute on the server's CPU.
+            .put("keep_alive", -1)
+            .put("messages", JSONArray(messages.map { (role, text) -> JSONObject().put("role", role).put("content", text) }))
+            .put("options", JSONObject().put("temperature", 0).put("top_k", 1).put("seed", 0).put("num_predict", maxTokens))
+        val connection = (URL("$server/api/chat").openConnection() as HttpURLConnection).apply {
+            connectTimeout = CONNECT_MS
+            readTimeout = READ_MS
+            doOutput = true
+            setRequestProperty("Content-Type", "application/json")
         }
-        clean(chat.sendMessage(message).text())?.takeIf { !asks(it) }.also { talkAtMs = SystemClock.elapsedRealtime() }
-    }.getOrNull()
-
-    private fun Message.text() = contents.contents.filterIsInstance<Content.Text>().joinToString("") { it.text }
-
-    @Synchronized
-    override fun close() {
-        talk?.close()
-        rewriting.close()
-        talking.close()
-        engine.close()
+        try {
+            connection.outputStream.use { it.write(body.toString().toByteArray()) }
+            // Not 200: most likely the model is not pulled on the server.
+            if (connection.responseCode != 200) throw IOException("HTTP ${connection.responseCode}")
+            JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
+                .getJSONObject("message").getString("content")
+                .also { reachable = true }
+        } finally {
+            connection.disconnect()
+        }
+    } catch (e: Exception) {
+        reachable = false
+        null
     }
 
     companion object {
-        const val FILE_NAME = "node.litertlm"
+        /** The user's own Ollama server on the LAN; it must listen on the LAN, not only 127.0.0.1 (README). */
+        const val SERVER = "http://192.168.1.76:11434"
 
-        /** Rewritten once at load, so the first real sentence is not also the slowest. */
+        /** qwen2.5:3b beat gemma3:4b there: as many right, 1.6 s a sentence against 31 (README). */
+        const val MODEL = "qwen2.5:3b"
+
+        // A few seconds is enough to find a server on the LAN; an answer can take most of a minute if it had to load.
+        private const val CONNECT_MS = 3_000
+        private const val READ_MS = 90_000
+
+        /** Rewritten at start, and while the server is away, to see that it answers; it also loads the model there. */
         const val WARM_UP = "is it getting late"
 
         /** What NODE knows, one example of each. Every line must parse: RephraserTest checks. */
@@ -161,49 +185,22 @@ class Rephraser private constructor(
             |Small talk, feelings, jokes and anything else: reply UNKNOWN.
         """.trimMargin()
 
-        // Greedy: the same input always gets the same reply.
-        private val GREEDY = SamplerConfig(topK = 1, topP = 1.0, temperature = 0.0, seed = 0)
-
-        private val REWRITING = ConversationConfig(
-            systemInstruction = Contents.of(INSTRUCTIONS),
-            initialMessages = EXAMPLES.flatMap { (said, heard) -> listOf(Message.user(said), Message.model(heard)) },
-            samplerConfig = GREEDY,
-            prefillPrefaceOnInit = true,
-            maxOutputToken = 32,
-        )
+        /** The instructions and examples every rewrite starts from. */
+        private val REWRITING = listOf("system" to INSTRUCTIONS) +
+            EXAMPLES.flatMap { (said, heard) -> listOf("user" to said, "assistant" to heard) }
+        private const val REWRITE_TOKENS = 32
 
         /** How long a conversation is carried on after NODE last replied: long enough for a follow-up. */
         const val TALK_MS = 2 * 60_000L
 
         // Short: it is spoken, and every word costs a moment.
-        private val TALKING = ConversationConfig(
-            systemInstruction = Contents.of(
-                // "Reply UNKNOWN if they do not answer it" was taken too far: it said UNKNOWN to the moon's
-                // distance with the distance in the notes, and to "what's your favourite colour".
-                "You are NODE, a small, friendly desk robot. Reply in one short sentence, to be spoken aloud. " +
-                    "Never promise to do anything. When a message starts with Notes, answer from the notes, and " +
-                    "reply UNKNOWN only if they say nothing about the question.",
-            ),
-            samplerConfig = GREEDY,
-            prefillPrefaceOnInit = true,
-            maxOutputToken = 60,
-        )
-
-        /**
-         * The model in [dir], loaded and primed -- most of a minute -- or null
-         * if there is none or it will not load. On the CPU: the Redmi's GPU
-         * (Adreno 610) loads Qwen2.5 1.5B but answers nothing, 22 s at a time.
-         */
-        fun open(dir: File, cacheDir: File): Rephraser? {
-            val model = File(dir, FILE_NAME).takeIf { it.isFile } ?: return null
-            return runCatching {
-                val engine = Engine(EngineConfig(modelPath = model.path, backend = Backend.CPU(), cacheDir = cacheDir.path))
-                engine.initialize()
-                runCatching { Rephraser(engine, engine.createConversation(REWRITING), engine.createConversation(TALKING)) }
-                    .onFailure { engine.close() }
-                    .getOrThrow()
-            }.getOrNull()
-        }
+        // "Reply UNKNOWN if they do not answer it" was taken too far: it said UNKNOWN to the moon's
+        // distance with the distance in the notes, and to "what's your favourite colour".
+        private const val TALKING =
+            "You are NODE, a small, friendly desk robot. Reply in one short sentence, to be spoken aloud. " +
+                "Never promise to do anything. When a message starts with Notes, answer from the notes, and " +
+                "reply UNKNOWN only if they say nothing about the question."
+        private const val TALK_TOKENS = 60
 
         /** The model's [raw] reply as one line -- a sentence for the parser, `ASK`, or an answer -- or null for `UNKNOWN`. */
         fun clean(raw: String): String? {

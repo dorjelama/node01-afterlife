@@ -61,13 +61,12 @@ kotlin {
     compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
 }
 
-// Two runtime dependencies: MediaPipe's on-device hand landmarker, for hand
-// tracking, and LiteRT-LM, to run NODE's own fine-tuned model (Rephraser.kt).
+// One runtime dependency: MediaPipe's on-device vision tasks, for hand
+// tracking and camera activities. NODE's language model runs on the user's
+// own server and is reached over HTTP (Rephraser.kt), so it needs no library.
 // kotlin-stdlib is contributed automatically by the Kotlin Android plugin.
 // JUnit is test-only and never reaches the APK.
 dependencies {
     implementation("com.google.mediapipe:tasks-vision:0.10.35")
-    // Built with Kotlin 2.4, which is why the Kotlin plugin is 2.4 too.
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.19.1")
     testImplementation("junit:junit:4.13.2")
 }

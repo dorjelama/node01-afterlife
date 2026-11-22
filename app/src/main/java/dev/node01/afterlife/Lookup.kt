@@ -11,7 +11,7 @@ import java.net.URLEncoder
  * cut down to the sentences that share the most words with the question --
  * the fewer words the model has to read, the sooner it answers. A question
  * about now goes to Google News's headlines instead ([wantsNews]), which also
- * answer "what's the news?". Only the question leaves the phone, as the
+ * answer "what's the news?". Only the question leaves the LAN, as the
  * search, under a generic client name.
  */
 object Lookup {
@@ -157,7 +157,7 @@ object Lookup {
     private val BACK = setOf("he", "she", "it", "its", "they", "them", "their", "his", "her", "him", "there", "that")
 
     private const val TIMEOUT_MS = 8_000
-    // Two: the model reads about 8 words a second on the Redmi, and the answer waits for all of them.
+    // Two: the model reads about 15 words a second on the server, and the answer waits for all of them.
     private const val MAX_SENTENCES = 2
     private const val STEM = 6
     private const val MIN_SENTENCE = 20

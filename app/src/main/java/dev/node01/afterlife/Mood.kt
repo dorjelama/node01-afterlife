@@ -73,7 +73,7 @@ object Mood {
         val listening: Boolean = false,
         /** What has been heard so far while [listening]. */
         val heard: String? = null,
-        /** The on-phone model is working out what was said, or an answer to it. */
+        /** NODE's model is working out what was said, or an answer to it. */
         val thinking: Boolean = false,
         /** NODE's latest spoken answer, while it is still worth showing. */
         val reply: String? = null,

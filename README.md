@@ -9,13 +9,13 @@ lights go off. They wink, tilt, bounce, turn into hearts when you say thank you 
 when you shake the phone. When Claude Code on your PC needs your
 approval, they turn amber and chirp, so you can step away from the keyboard and still know.
 Tap it or wave at it and it listens: ask the time, set a timer, have it remind you — in
-English or Nepali, with no cloud AI. Put [a small AI model](#on-phone-ai) on it and it
-understands loosely worded English too, still on the phone.
+English or Nepali, with no cloud AI. Run [a small AI model on your own server](#ai-on-your-own-server)
+and it understands loosely worded English too, without anything you say leaving your LAN.
 
 <p align="left">
   <img alt="platform" src="https://img.shields.io/badge/platform-Android%2011%2B%20(API%2030)-000000">
   <img alt="language" src="https://img.shields.io/badge/Kotlin-2.4.0-000000">
-  <img alt="dependencies" src="https://img.shields.io/badge/runtime%20dependencies-two%20(MediaPipe%2C%20LiteRT--LM)-000000">
+  <img alt="dependencies" src="https://img.shields.io/badge/runtime%20dependencies-one%20(MediaPipe)-000000">
   <img alt="permissions" src="https://img.shields.io/badge/permissions-INTERNET%20CAMERA%20RECORD__AUDIO%20WAKE__LOCK-000000">
   <img alt="cloud" src="https://img.shields.io/badge/cloud%20AI-none-000000">
 </p>
@@ -34,7 +34,7 @@ the page's **WEBCAM** buttons turn the phone into one or the other (see
 | **Sees you** | The front camera's own face detection, done by the camera hardware. The eyes follow you, say hello with a double blink when you come back after a while, and look around the room when you have just left |
 | **Sleeps** | Away 2 minutes: sleepy and dim. Away 10 minutes, or the room dark: eyes closed, backlight at the panel minimum |
 | **Feels the desk** | Knock on the desk and it startles. Shake the phone and it goes woozy: its eyes loll round, one up as the other drops, until it shakes it off |
-| **Briefs you in the morning** | The first time it sees you each morning, after "Good morning!": with [the AI model](#on-phone-ai) on the phone, one friendly sentence made from the weather, what is due today and your open tasks; without it, or in Nepali, the time, the Bikram Sambat date, the weather, and how many things are waiting, each part dropped when there is nothing to say |
+| **Briefs you in the morning** | The first time it sees you each morning, after "Good morning!": with [the AI model](#ai-on-your-own-server) answering, one friendly sentence made from the weather, what is due today and your open tasks; without it, or in Nepali, the time, the Bikram Sambat date, the weather, and how many things are waiting, each part dropped when there is nothing to say |
 | **Notices what you do** | Only what you tick on the page: a drink (a cup or bottle raised to your face), a phone in your hand, a book. When one happens it reacts and chirps, and the page lists it: `10:42  a drink (3 today)`. It runs on the phone with MediaPipe's object detector, about one frame a second while you are there; see [Privacy](#privacy) |
 | **Is pettable** | Rub a finger back and forth across the screen and its eyes turn to beating hearts: "Hehe." Petting never opens the microphone, so you can fuss over it without talking to it |
 | **Swipes** | A straight swipe changes mode. **Sideways:** hand tracking on or off. **Up or down:** the corner readouts — usage, the time, the PC's load — hidden for a bare face, or shown again; a running timer always shows. Swipes that start at a screen edge are left to the system |
@@ -152,16 +152,16 @@ with or without "Hey Buddy", is still in the code, switched off: `WAKE` in `Node
 | "Bye" / "See you" | "बाइ" | "Bye! See you soon." |
 
 It answers in the language you spoke. These are matched by keyword, which is instant. An
-English sentence the keywords miss goes to [the AI model on the phone](#on-phone-ai), if you
-have put one there. The model rewrites it into one of the phrases above, so "ping me in ten to
+English sentence the keywords miss goes to [the AI model on your server](#ai-on-your-own-server),
+while it answers. The model rewrites it into one of the phrases above, so "ping me in ten to
 stretch" works like "remind me in 10 minutes to stretch", [answers a question about the
 world](#questions) from Wikipedia or the news, and has a word back for anything else you say to
 it: "I'm so bored" gets a short, friendly reply. A follow-up within two minutes carries on the
 conversation: "who wrote Harry Potter?", then "when was she born?". Meanwhile the eyes' dots stream off in a swarm and
 rebuild themselves as a small cat, which plays until the answer is ready -- walking to and fro,
 turning at the edges, sitting or lying down a while with its tail flicking, stretching out flat,
-hopping, crouching and pouncing -- and then streams back into eyes: a few seconds for a command,
-10 to 15 for a reply, 15 to 30 for a question, and up to 40 for a follow-up. Every unmatched Nepali sentence gets "Sorry, I
+hopping, crouching and pouncing -- and then streams back into eyes: about 2 seconds for a command
+and 4 for a reply on the server's CPU, more for a question, which is searched first. Every unmatched Nepali sentence gets "Sorry, I
 didn't catch that".
 
 **Offline first, online if need be.** NODE asks the phone's speech recognizer to work offline,
@@ -173,13 +173,15 @@ and the caption says `· online` while it listens. It tries offline again every 
 Spoken answers use a voice installed on the phone where there is one; Nepali, with none here,
 uses Google's online voice. See [engineering notes](docs/ENGINEERING-NOTES.md).
 
-## On-phone AI
+## AI on your own server
 
-NODE can run a small, ready-made AI model on the phone, offline. Nothing is trained: the model
+NODE can use a small, ready-made AI model that runs on your own computer on the LAN, under
+[Ollama](https://ollama.com): never a cloud AI. Nothing is trained: the model
 is told NODE's commands and shown a few examples, and rewrites a loosely worded English
 sentence into a phrase NODE already understands. The keyword parser still decides what that
-phrase means, so the model can never do anything a spoken sentence couldn't already do. With
-no model on the phone, NODE behaves as before.
+phrase means, so the model can never do anything a spoken sentence couldn't already do. While
+the server is off or unreachable, NODE goes by keywords only, as before, and tries the server
+again every minute.
 
 | You say | The model rewrites it as | NODE |
 |---|---|---|
@@ -195,7 +197,7 @@ flowchart TD
     S["You speak"] --> R["Speech recognizer<br/>text"]
     R --> KW{"Keyword parser<br/>Assistant.parse"}
     KW -- "match" --> ACT["Do it<br/>timer · reminder · time …"]
-    KW -- "no match, English,<br/>model on the phone" --> M["AI model<br/>on the phone, a few seconds"]
+    KW -- "no match, English,<br/>server answering" --> M["AI model<br/>on your server, a few seconds"]
     KW -- "no match, otherwise" --> NO["Didn't catch that"]
     M -- "rewrite" --> KW2{"Keyword parser<br/>once more"}
     KW2 -- "match" --> ACT
@@ -208,48 +210,56 @@ flowchart TD
     W -- "nothing found" --> NF["Couldn't find that"]
 ```
 
-What the model is told is `COMMANDS` and `EXAMPLES` in `Rephraser.kt`. It reads them once,
-when it loads; each sentence then gets a fresh copy of that conversation, so nothing said
-carries over to the next one. Answers and replies have a conversation of their own, carried on
+What the model is told is `COMMANDS` and `EXAMPLES` in `Rephraser.kt`. Each sentence is sent
+with them, on its own, so nothing said carries over to the next one; Ollama keeps them read
+from the sentence before, so only the new words cost time. Answers and replies have a conversation of their own, carried on
 for two minutes after NODE last spoke (`TALK_MS`), so a follow-up knows what came before. `RephraserTest` checks that the model is only ever shown
 phrases NODE understands. When it gets a sentence wrong, add it to `EXAMPLES` with the phrase
 it should have been. That exact sentence, capitals and punctuation aside, is then answered
 straight from `EXAMPLES` without asking the model, which does not always copy what it is shown;
 sentences worded like it are left to the model, which the example helps along.
 
-### Put one on the phone
+### Set up the server
 
-Any instruction-tuned model in the `.litertlm` format works. Tried on the Redmi Note 8:
-
-| Model | Size | Right | Each sentence | Verdict |
-|---|---|---|---|---|
-| [Qwen2.5 1.5B Instruct](https://huggingface.co/litert-community/Qwen2.5-1.5B-Instruct/tree/main), `…_q8_ekv4096.litertlm` | 1.6 GB | 14 of 16 | 2–9 s | Use this. No account needed |
-| [Gemma 3 1B](https://huggingface.co/litert-community/Gemma3-1B-IT/tree/main), `gemma3-1b-it-int4.litertlm` | 584 MB | 8 of 16 | 3–4 s | Quicker and lighter, but often answers with a command from its list. Needs a Hugging Face account and the Gemma licence |
-| [Qwen3 0.6B](https://huggingface.co/litert-community/Qwen3-0.6B-int4/tree/main) | 347 MB | 3 of 10 | 1.5–5 s | Too often the wrong command |
-
-"Right" counts the sentences the keywords missed, in one test of loosely worded commands,
-questions and noise (Qwen3 0.6B's in an earlier, rougher one). With Qwen2.5 1.5B, NODE takes
-about a minute after it starts to load the model, and uses about 2.7 GB of memory. Until it has
-loaded, sentences go by keywords only. Its mistakes are real commands -- "my coffee is cold" once
-came out as `what's the date` -- so it is worth listening to what NODE says back.
-
-Download the file on the laptop, then, with the phone plugged in:
+Any computer on the LAN that runs [Ollama](https://ollama.com) will do; here it is an old
+laptop (Core i7-5500U, 8 GB, no usable GPU, Debian). Pull the model and let Ollama listen on
+the LAN, not only on the laptop itself:
 
 ```bash
-adb push Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv4096.litertlm /sdcard/Android/data/dev.node01.companion/files/node.litertlm
+ollama pull qwen2.5:3b
+sudo mkdir -p /etc/systemd/system/ollama.service.d
+printf '[Service]\nEnvironment=OLLAMA_HOST=0.0.0.0:11434\n' | sudo tee /etc/systemd/system/ollama.service.d/lan.conf
+sudo systemctl daemon-reload && sudo systemctl restart ollama
 ```
 
-Reopen NODE. `adb logcat -s NODE` shows how long loading took and how it rewrote a test
-sentence, `model: warm-up "is it getting late" -> "what time is it"`, and after that how long
-each sentence took. What the model was asked and what it made of it goes to `asked.log`, beside
-the model, one dated line each, and each new line drops those older than a week:
+Ollama has no password: anyone on your Wi-Fi can use the model. NODE asks for it to stay
+loaded (`keep_alive`), since loading it again costs the next sentence half a minute. The
+server's address is `SERVER` in `Rephraser.kt` and, because Android refuses plain HTTP
+elsewhere, `res/xml/network_security_config.xml`: change both together, and give the server a
+fixed address in your router. The model is `MODEL`. Tried on that laptop, with NODE's
+instructions and 22 sentences the keywords miss (loosely worded commands, questions and noise):
+
+| Model | Right | Each sentence | Verdict |
+|---|---|---|---|
+| `qwen2.5:3b` | 18 of 22 | 1–2.6 s | Use this |
+| `gemma3:4b` | 17 of 22 | about 31 s | Reads all of NODE's instructions again for every sentence, where Qwen reads only the new words |
+| `qwen2.5:1.5b` | 13 of 22 | about 1 s | Too often wrong: questions came back as commands |
+
+Earlier, run on the phone itself with LiteRT-LM, Qwen2.5 1.5B took 2–9 s a sentence and 2.7 GB
+of the phone's memory. Mistakes are real commands -- qwen2.5:3b made "quarter to seven" 6:30 --
+so it is worth listening to what NODE says back. A hot laptop slows down: with its CPU at
+100 °C, gemma3:4b took half as long again.
+
+`adb logcat -s NODE` shows how the server rewrote a test sentence when it first answers,
+`model: warm-up "is it getting late" -> "what time is it"`, `model: server not answering`
+when it goes away, and how long each sentence took. What the model was asked and what it made
+of it goes to `asked.log` on the phone, one dated line each, and each new line drops those
+older than a week:
 
 ```bash
 adb shell cat /sdcard/Android/data/dev.node01.companion/files/asked.log
 # 2026-11-22 01:35:40  "what is the capital of nepal" -> ASK -> "Kathmandu" (17.5 s)
 ```
-
-Delete the model file to go back to keywords only.
 
 ### Questions
 
@@ -259,7 +269,7 @@ from the model, and then:
 1. **Search.** NODE searches Wikipedia for the question's subject, with the question words
    taken out ("harry potter"). A question about now ("today", "latest", "right now", "score")
    searches Google News instead, and so does one Wikipedia has nothing for. That search, under
-   a generic client name, is the only thing that leaves the phone. No key or account, and no AI
+   a generic client name, is the only thing that leaves your LAN. No key or account, and no AI
    company sees it. A follow-up that leans on the last question ("how old is he?") is first said
    again in full by the model ("when was J. K. Rowling born"), so the search has a subject. A sentence
    worded as a question about the world ("who…", "where…", "how far…", but not about you or NODE)
@@ -267,12 +277,12 @@ from the model, and then:
 2. **Notes.** From the top two articles' opening paragraphs it keeps two sentences: the first
    one, which says what the subject is, and the one that shares most words with the question
    (rarer words count for more, and "tall" counts as "height"). From the news, the top five
-   headlines. The model reads about 8 words
-   a second on this phone, so fewer words mean a sooner answer.
-3. **Answer.** The same model on the phone writes one short sentence from those notes, and NODE
+   headlines. The model reads about 15 words
+   a second on the server, so fewer words mean a sooner answer.
+3. **Answer.** The same model on your server writes one short sentence from those notes, and NODE
    says it, with a little nod. If the notes don't answer it: "Sorry, I couldn't find that."
 
-On the Redmi it takes 15 to 30 seconds in all, most of it the model reading. It knows only what
+The model's part takes about 4 seconds on the server; the search adds its own. It knows only what
 Wikipedia's opening paragraphs and the day's headlines say, and an answer can be wrong. Ask the
 weather by keyword instead ("will it rain tomorrow?"): that goes to the forecast. `Lookup.kt`
 does the searches and picks the notes.
@@ -320,9 +330,11 @@ stops the face, the front camera and the voice assistant, and starts the rear ca
   is no wake word and nothing listens in the background. Recognition is offline when the
   phone has the model and online through Google when it does not, and the screen says
   which; see [Voice](#voice).
-- **No cloud AI.** The voice assistant is a fixed set of commands. If you put
-  [an AI model on the phone](#on-phone-ai), it runs there, offline, and writes every answer
-  there. What it was asked and answered stays on the phone, in `asked.log`, for a week.
+- **No cloud AI.** The voice assistant is a fixed set of commands. With
+  [an AI model on your own server](#ai-on-your-own-server), an English sentence the keywords
+  miss goes to that server over your Wi-Fi as **plain HTTP**, with the notes for an answer and
+  the last two minutes' conversation; the model writes every answer there. What it was asked
+  and answered is logged on the phone, in `asked.log`, for a week.
   Four things leave your LAN and nothing else does: online speech when the offline
   model is missing; a [question](#questions) the model sorts as one for the web, whose subject
   goes to Wikipedia's or Google News's search under a generic client name; asking for the news,
@@ -377,14 +389,13 @@ screen size), and softens the same on/off map, a pixel per dot, into the glow. A
 function of their own progress, and blinks, glances and fidgets are single delayed callbacks,
 not a frame loop.
 
-**Two runtime dependencies, each for one feature.** Camera2's hardware face detection, `SensorManager`,
+**One runtime dependency.** Camera2's hardware face detection, `SensorManager`,
 `SpeechRecognizer`, `TextToSpeech`, `AudioTrack` and `java.net` are all in the platform. The
 chirps are synthesized at start-up, so the repo carries no sound files. The exception is hand
 tracking: Google's MediaPipe hand landmarker (`tasks-vision`) and its 7.8 MB model, which run
 on the phone, are loaded only while the mode is on, and take the APK from about 3 MB to 25 MB.
-The other is LiteRT-LM, which runs [the on-phone AI model](#on-phone-ai). It is loaded only when
-the model file is on the phone, and its native library takes the APK to about 52 MB. It is built
-with Kotlin 2.4, which is why the project is too. JUnit is test-only and never reaches the APK.
+[The AI model](#ai-on-your-own-server) runs on your server and is reached with `java.net`, so it
+needs no library. JUnit is test-only and never reaches the APK.
 
 **One pure function decides.** `Mood.decide` turns what NODE senses into what it shows, and is
 unit-tested like any other function. The activity only gathers inputs and draws the answer.
@@ -446,6 +457,7 @@ Everything configurable is a constant — there is no settings screen, by design
 | Knock and shake sensitivity, wave timing, how dark is dark | `Senses.kt` |
 | Chirp pitches and loudness, and the tune it sings | `Chirp.kt` |
 | Where the weather comes from | `Weather.kt` (`LAT`/`LON`) |
+| The AI model's server and model, and what it is told | `Rephraser.kt` (`SERVER`, `MODEL`, `EXAMPLES`), with the address in `res/xml/network_security_config.xml` too |
 | When the battery counts as hot or low | `Battery.kt` |
 | Voice commands, their wording and replies | `Assistant.kt` |
 | What it says unprompted, and how often | `Chatter.kt` |
@@ -492,7 +504,7 @@ app/src/main/java/dev/node01/afterlife/
 ├── Battery.kt         the phone's own health: hot, or unplugged and draining
 ├── Weather.kt         the weather now and the forecast, for the briefing and weather questions
 ├── Assistant.kt       voice commands: what was said → what to do → what to say, EN + NE
-├── Rephraser.kt       the on-phone AI model: a loose English sentence → a phrase Assistant knows, an answer or a reply
+├── Rephraser.kt       the AI model on your server: a loose English sentence → a phrase Assistant knows, an answer or a reply
 ├── Lookup.kt          a question's subject → Wikipedia or Google News → the notes the answer is written from
 ├── Listener.kt        one sentence through the phone's speech recognizer, offline preferred
 ├── Speaker.kt         spoken answers, with installed voices only

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Ollama on the LAN speaks plain HTTP: allowed to that one address, the
+     server in Rephraser.SERVER (change both together). Everything else stays
+     HTTPS only. -->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">192.168.1.76</domain>
+    </domain-config>
+</network-security-config>
