@@ -170,6 +170,8 @@ class Rephraser(private val server: String = SERVER, private val model: String =
             // A follow-up is a question too: "how old is he" came out as the date.
             "how old is she" to "ASK",
             "and what's its population" to "ASK",
+            // "Stop" got a chatty reply instead of quieting what was ringing.
+            "stop" to "dismiss",
         )
 
         // A question is answered "ASK" alone, not repeated: every word the model writes costs half a second here.
