@@ -19,6 +19,7 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import android.util.TypedValue
+import android.hardware.display.DisplayManager
 import android.view.MotionEvent
 import android.view.Surface
 import android.view.View
@@ -244,6 +245,7 @@ class NodeActivity : Activity() {
     override fun onStart() {
         super.onStart()
         registerReceiver(batteryWatch, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        getSystemService(DisplayManager::class.java).registerDisplayListener(rotationWatch, null)
         wifiLock?.acquire()
         startServer()
         val missing = PERMISSIONS.filterNot(::granted)
@@ -309,6 +311,7 @@ class NodeActivity : Activity() {
         server = null
         wifiLock?.release()
         unregisterReceiver(batteryWatch)
+        getSystemService(DisplayManager::class.java).unregisterDisplayListener(rotationWatch)
         battery = null
         // Finalizes the clip in progress, so leaving NODE never costs footage.
         stopWebcam()
@@ -1263,7 +1266,8 @@ class NodeActivity : Activity() {
 
     private fun startPresence() {
         if (presence != null) return
-        val p = Presence(this, displayDegrees(), ::onFace, ::reevaluate, ::restartPresence, camView)
+        presenceDegrees = displayDegrees()
+        val p = Presence(this, presenceDegrees, ::onFace, ::reevaluate, ::restartPresence, camView)
         p.hands = hands
         presence = p
         try {
@@ -1276,6 +1280,25 @@ class NodeActivity : Activity() {
     private fun stopPresence() {
         presence?.stop()
         presence = null
+    }
+
+    /** The display rotation [presence] was started with, to turn its frames upright. */
+    private var presenceDegrees = 0
+
+    /**
+     * Turned end over end, from one landscape side to the other, the screen
+     * follows without restarting anything -- so the camera must be told
+     * which way is now up, or the eyes would look away from you.
+     */
+    private val rotationWatch = object : DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) = Unit
+        override fun onDisplayRemoved(displayId: Int) = Unit
+        override fun onDisplayChanged(displayId: Int) {
+            if (presence == null || displayDegrees() == presenceDegrees) return
+            Log.d(TAG, "rotated to ${displayDegrees()} degrees: camera restarted")
+            stopPresence()
+            startPresence()
+        }
     }
 
     /**

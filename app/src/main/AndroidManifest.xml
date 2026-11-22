@@ -41,7 +41,7 @@
         <activity
             android:name=".NodeActivity"
             android:exported="true"
-            android:screenOrientation="landscape"
+            android:screenOrientation="sensorLandscape"
             android:launchMode="singleTask"
             android:stateNotNeeded="true"
             android:resizeableActivity="false"
