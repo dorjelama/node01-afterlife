@@ -400,7 +400,7 @@ class HttpServer(
         )
 
         /** The only files the collector may fetch: the tank's finished clips and its training data. */
-        val DATA_PATH = Regex("""tank-video/NODE_\d{8}_\d{6}\.mp4|training/(\d{8}/(\d{6}\.jpg|minutes\.csv)|labels\.jsonl)""")
+        val DATA_PATH = Regex("""tank-video/NODE_\d{8}_\d{6}\.mp4|training/(\d{8}/(\d{6}\.jpg|minutes\.csv)|labels\.jsonl|days\.csv)""")
 
         /** Pure, so the key check is unit-tested. Wrong method is a 404 too. */
         internal fun route(method: String, path: String, key: String): Route {

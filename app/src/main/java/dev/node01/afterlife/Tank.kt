@@ -19,6 +19,8 @@ data class Tank(
     val kind: String = DEFAULT_KIND,
     /** The fish, shrimp and snails, as you would say them. */
     val livestock: String = "",
+    /** The plants, as you would say them. */
+    val plants: String = "",
     /** When NODE started keeping this tank: a job with no record counts from here. */
     val startMs: Long = 0L,
     val everyDays: Map<Job, Int> = emptyMap(),
@@ -114,6 +116,7 @@ data class Tank(
             kind.ifBlank { null },
             litres.takeIf { it > 0 }?.let { "$it litres" },
             livestock.ifBlank { null }?.let { "with $it" },
+            plants.ifBlank { null }?.let { "planted with $it" },
         ).joinToString(", ")
         val today = day(nowMs, zone)
         val fedToday = feeds.filter { day(it, zone) == today }.map { clock(it, zone) }
@@ -138,6 +141,7 @@ data class Tank(
         add("litres=$litres")
         add("kind=$kind")
         add("livestock=$livestock")
+        add("plants=$plants")
         add("start=$startMs")
         for ((job, days) in everyDays) add("every.${job.name}=$days")
         for ((job, ms) in lastMs) add("last.${job.name}=$ms")
@@ -146,7 +150,7 @@ data class Tank(
     }.joinToString("\n")
 
     /**
-     * This tank set up from the page's form: `name`, `litres`, `kind`, `livestock`, and `every.<JOB>` in days. A
+     * This tank set up from the page's form: `name`, `litres`, `kind`, `livestock`, `plants`, and `every.<JOB>` in days. A
      * missing or unreadable field keeps what was there.
      */
     fun setUp(form: Map<String, String>): Tank = copy(
@@ -154,6 +158,7 @@ data class Tank(
         litres = form["litres"]?.trim()?.toIntOrNull()?.coerceIn(0, MAX_LITRES) ?: litres,
         kind = form["kind"]?.let { Inbox.clean(it, MAX_TEXT) ?: DEFAULT_KIND } ?: kind,
         livestock = form["livestock"]?.let { Inbox.clean(it, MAX_TEXT).orEmpty() } ?: livestock,
+        plants = form["plants"]?.let { Inbox.clean(it, MAX_TEXT).orEmpty() } ?: plants,
         everyDays = everyDays + Job.entries.mapNotNull { job ->
             form["every.${job.name}"]?.trim()?.toIntOrNull()?.coerceIn(1, MAX_DAYS)?.let { job to it }
         },
@@ -196,6 +201,7 @@ data class Tank(
                 litres = fields["litres"]?.toIntOrNull() ?: 0,
                 kind = fields["kind"] ?: DEFAULT_KIND,
                 livestock = fields["livestock"].orEmpty(),
+                plants = fields["plants"].orEmpty(),
                 startMs = fields["start"]?.toLongOrNull() ?: 0L,
                 everyDays = perJob("every") { it.toIntOrNull() },
                 lastMs = perJob("last") { it.toLongOrNull() },

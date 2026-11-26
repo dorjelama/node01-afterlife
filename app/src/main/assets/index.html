@@ -33,7 +33,7 @@
   #watch { flex-direction: column; align-items: flex-start; }
   #watch label { display: flex; gap: 8px; align-items: center; cursor: pointer; }
   #watch input { flex: none; width: 18px; height: 18px; margin: 0; accent-color: #ffb000; }
-  #activity-log, #tank-log { margin: 8px 0; padding-left: 20px; color: #9a9a9a; }
+  #activity-log, #tank-log, #tank-days { margin: 8px 0; padding-left: 20px; color: #9a9a9a; }
   #tank-jobs .row { margin: 4px 0; }
   #tank-jobs .job { flex: 1 1 260px; }
   #tank-jobs .late { color: #ffb000; }
@@ -120,6 +120,8 @@ reacts, chirps and adds a line here. The log stays on the phone for a week.</p>
 </div>
 <img id="tank-live" alt="The tank, live from the rear camera" hidden>
 <div id="tank-jobs"></div>
+<p>Day by day, as the rear camera measured it (moving at once is at most the fish seen together, not a count):</p>
+<ul id="tank-days" aria-label="The tank, day by day"></ul>
 <ul id="tank-log" aria-label="The aquarium's week"></ul>
 <form id="tank-form">
   <input name="name" maxlength="140" autocomplete="off" placeholder="Name: desk tank" aria-label="Tank name">
@@ -127,6 +129,8 @@ reacts, chirps and adds a line here. The log stays on the phone for a week.</p>
   <input name="kind" maxlength="140" autocomplete="off" placeholder="Kind: low-tech planted" aria-label="Kind of tank">
   <input name="livestock" maxlength="140" autocomplete="off" placeholder="Fish: 6 neon tetras, 3 cherry shrimp"
          aria-label="Fish and other livestock">
+  <input name="plants" maxlength="140" autocomplete="off" placeholder="Plants: hornwort, hairgrass, java fern"
+         aria-label="Plants">
   <div class="row" id="tank-every"></div>
   <button type="submit">Save</button>
 </form>
@@ -415,6 +419,8 @@ const loadTank = async () => {
     photo.onload = () => { photo.hidden = false; };
     photo.onerror = () => { photo.hidden = true; };
     photo.src = 'tank/photo?' + Date.now();
+    const days = (tank.days || []).map((d) => logLine(d));
+    document.getElementById('tank-days').replaceChildren(...(days.length ? days : [logLine('No days yet: the first comes after ten minutes of watching.')]));
     // Newest first: who said it, when, and what.
     const labels = (tank.labels || []).slice().reverse().map((l) =>
       logLine((l.from === 'you' ? 'You' : 'AI') + ', ' + l.at.slice(5) + ' (' + l.photo + '): ' + l.text));
@@ -446,7 +452,7 @@ const loadTank = async () => {
     }));
     // Leave the form alone while it is being typed in.
     if (!tankForm.contains(document.activeElement)) {
-      for (const k of ['name', 'litres', 'kind', 'livestock']) tankForm.elements[k].value = tank[k] || '';
+      for (const k of ['name', 'litres', 'kind', 'livestock', 'plants']) tankForm.elements[k].value = tank[k] || '';
       document.getElementById('tank-every').replaceChildren(...tank.jobs.map((j) => {
         const label = document.createElement('label');
         label.append(j.name + ' every', Object.assign(document.createElement('input'), {

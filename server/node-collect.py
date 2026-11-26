@@ -23,7 +23,7 @@ KEEP_VIDEO_DAYS = 30
 MIN_FREE_BYTES = 20 * 10**9
 
 # The same paths the phone serves, and only those: a reply cannot write anywhere else.
-PATH = re.compile(r"tank-video/NODE_\d{8}_\d{6}\.mp4|training/(\d{8}/(\d{6}\.jpg|minutes\.csv)|labels\.jsonl)")
+PATH = re.compile(r"tank-video/NODE_\d{8}_\d{6}\.mp4|training/(\d{8}/(\d{6}\.jpg|minutes\.csv)|labels\.jsonl|days\.csv)")
 
 
 def log(line):

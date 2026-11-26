@@ -30,6 +30,7 @@ class HttpServerTest {
         assertEquals(Route.DataFile("training/20261126/172722.jpg"), HttpServer.route("GET", "/$key/data/training/20261126/172722.jpg", key))
         assertEquals(Route.DataFile("training/20261126/minutes.csv"), HttpServer.route("GET", "/$key/data/training/20261126/minutes.csv", key))
         assertEquals(Route.DataFile("training/labels.jsonl"), HttpServer.route("GET", "/$key/data/training/labels.jsonl", key))
+        assertEquals(Route.DataFile("training/days.csv"), HttpServer.route("GET", "/$key/data/training/days.csv", key))
         assertEquals(Route.DataFile("tank-video/NODE_20261126_172520.mp4"), HttpServer.route("GET", "/$key/data/tank-video/NODE_20261126_172520.mp4", key))
         assertEquals("no way out", Route.NotFound, HttpServer.route("GET", "/$key/data/training/../shared_prefs/node.xml", key))
         assertEquals("unfinished clips stay", Route.NotFound, HttpServer.route("GET", "/$key/data/tank-video/NODE_20261126_172520.mp4.part", key))

@@ -93,10 +93,10 @@ class TankTest {
 
     @Test
     fun notesSayWhatIsKnownAndThatItIsAGuess() {
-        val t = Tank.start(start).setUp(mapOf("litres" to "60", "livestock" to "6 neon tetras"))
+        val t = Tank.start(start).setUp(mapOf("litres" to "60", "livestock" to "6 neon tetras", "plants" to "hornwort"))
             .done(Job.FEED, noon - 2 * hour)
         val notes = t.notes(noon, utc, camera = "The lights are on.")
-        assertTrue(notes, notes.startsWith("The aquarium: low-tech planted, 60 litres, with 6 neon tetras."))
+        assertTrue(notes, notes.startsWith("The aquarium: low-tech planted, 60 litres, with 6 neon tetras, planted with hornwort."))
         assertTrue(notes, notes.contains("Fed today at 10:00 AM."))
         assertTrue(notes, notes.contains("Water change: last not recorded yet, due every 7 days."))
         assertTrue(notes, notes.contains("The lights are on."))
@@ -105,7 +105,7 @@ class TankTest {
 
     @Test
     fun keptAcrossRestarts() {
-        val t = Tank.start(start).setUp(mapOf("name" to "Desk tank", "litres" to "60", "every.TRIM" to "21"))
+        val t = Tank.start(start).setUp(mapOf("name" to "Desk tank", "litres" to "60", "plants" to "hornwort", "every.TRIM" to "21"))
             .done(Job.FEED, noon - day).done(Job.FEED, noon).done(Job.FILTER, noon).raised(Job.WATER_CHANGE, noon)
         assertEquals(t, Tank.decode(t.encode()))
         assertNull(Tank.decode(null))

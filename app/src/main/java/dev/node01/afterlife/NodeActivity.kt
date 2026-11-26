@@ -370,8 +370,33 @@ class NodeActivity : Activity() {
 
     private fun statsOf(look: TankCam.Look) = TankLook.Stats(
         TankLook.brightness(look.frames.first()), TankLook.green(look.argb), TankLook.motion(look.frames),
-        TankLook.clarity(look.frames.first()),
+        TankLook.clarity(look.frames.first()), TankLook.plants(look.argb), TankLook.movers(look.frames, TankCam.SMALL_WIDTH),
     )
+
+    /** The days so far, oldest first, from `days.csv`. Blocking. */
+    private fun tankDays(): List<TankDay> = getExternalFilesDir(TRAINING)?.let { File(it, DAYS) }?.takeIf { it.isFile }
+        ?.let { runCatching { it.readLines() }.getOrNull() }.orEmpty().mapNotNull(TankDay::decode)
+
+    /** Each of the last [days] days in words, against the week before it. Blocking. */
+    private fun dayLines(days: Int): List<String> {
+        val all = tankDays()
+        return all.indices.toList().takeLast(days).map { i -> all[i].describe(TankDay.usual(all.subList(maxOf(0, i - 7), i))) }
+    }
+
+    /** Today's row of `days.csv`, from today's minutes so far and its feeds. Blocking. */
+    private fun keepDay(now: LocalDateTime, feeds: Int) {
+        val root = getExternalFilesDir(TRAINING) ?: return
+        runCatching {
+            val minutes = File(File(root, now.format(DAY_NAME)), "minutes.csv").takeIf { it.isFile }?.readLines().orEmpty()
+                // Only rows with every number: ones kept before clarity and plants were measured would read as 0.
+                .drop(1).filter { it.count { c -> c == ',' } == CSV_HEADER.count { c -> c == ',' } }
+                .mapNotNull { TankLook.decode(it.substringAfter(',')) }
+            val day = TankDay.of(now.toLocalDate(), minutes, feeds) ?: return
+            val file = File(root, DAYS)
+            val rows = if (file.isFile) file.readLines() else emptyList()
+            file.writeText(TankDay.upsert(rows, day).joinToString("\n", postfix = "\n"))
+        }.onFailure { Log.e(TAG, "tank: day not kept: ${it.message}") }
+    }
 
     /** A quick look is over: measured and kept like a minute's watching, and the watch started if the light is on. */
     private fun onTankLook(look: TankCam.Look?) {
@@ -474,11 +499,14 @@ class NodeActivity : Activity() {
      */
     private fun measure(look: TankCam.Look, compare: Boolean) {
         val dir = getExternalFilesDir(null) ?: return
+        val today = LocalDate.now()
+        val fedToday = tank?.feeds?.count { java.time.Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate() == today } ?: 0
         thread(name = "node-tank-look", isDaemon = true) {
             val now = LocalDateTime.now()
             val stats = statsOf(look)
             keepTraining(now, look.jpeg, stats)
             if (!compare) return@thread
+            keepDay(now, fedToday)
             val past = File(dir, TANK_STATS).takeIf { it.isFile }?.let { runCatching { it.readLines() }.getOrNull() }.orEmpty()
                 .mapNotNull { TankLook.decode(it.drop(STAMP_CHARS)) }
             val greener = TankLook.greener(stats, past)
@@ -608,8 +636,8 @@ class NodeActivity : Activity() {
             val csv = File(day, "minutes.csv")
             if (!csv.exists()) {
                 csv.writeText(CSV_HEADER + "\n")
-            } else if (!csv.useLines { it.first() }.endsWith("clarity")) {
-                // A day begun before clarity was kept gets the new header, once.
+            } else if (csv.useLines { it.first() } != CSV_HEADER) {
+                // A day begun before the newer numbers were kept gets the new header, once.
                 csv.writeText(CSV_HEADER + "\n" + csv.readText().substringAfter('\n'))
             }
             csv.appendText("$name,${stats.encode().replace(' ', ',')}\n")
@@ -646,6 +674,7 @@ class NodeActivity : Activity() {
             ?.forEach { add("tank-video/${it.name}", it) }
         getExternalFilesDir(TRAINING)?.let { root ->
             File(root, LABELS).takeIf { it.isFile }?.let { add("training/$LABELS", it) }
+            File(root, DAYS).takeIf { it.isFile }?.let { add("training/$DAYS", it) }
             val since = LocalDate.now().minusDays(1).format(DAY_NAME)
             root.listFiles { f -> f.isDirectory && DAY_DIR.matches(f.name) && f.name >= since }?.forEach { day ->
                 day.listFiles { f -> f.isFile }?.forEach { add("training/${day.name}/${it.name}", it) }
@@ -1498,6 +1527,7 @@ class NodeActivity : Activity() {
         val seen = listOfNotNull(
             tankSeen,
             prefs.getString(KEY_TANK_AI, null)?.let { "A small AI's description of a photo of the tank, which can be wrong, from ${it.take(16)}: ${it.drop(18)}" },
+            dayLines(2).takeIf { it.isNotEmpty() }?.let { "The rear camera's days, measured, not judged: " + it.joinToString("; ") + "." },
             // The owner knows the tank: their word stands over the AI's.
             prefs.getString(KEY_TANK_NOTE, null)?.let { "The owner's own note on the tank, from ${it.take(16)}, which is right: ${it.drop(18)}" },
         ).joinToString(" ").ifBlank { null }
@@ -1585,6 +1615,8 @@ class NodeActivity : Activity() {
                 .put("jobs", jobs).put("risk", risk.name.lowercase()).put("why", JSONArray(why))
                 .put("described", prefs.getString(KEY_TANK_AI, null) ?: JSONObject.NULL)
                 .put("watching", tankWatch != null)
+                .put("plants", t.plants)
+                .put("days", JSONArray(dayLines(7).reversed()))
                 .put("lightOn", light.usualOn()?.let { "%d:%02d".format(it / 60, it % 60) } ?: JSONObject.NULL)
                 .put("lightHours", light.usualMinutes()?.let { it / 60.0 } ?: JSONObject.NULL)
                 .put(
@@ -2302,7 +2334,9 @@ class NodeActivity : Activity() {
         const val KEY_WATER = "tank_water"
         const val KEY_WATER_RAISED = "tank_water_raised"
         const val TANK_WATER_FASTER = "The water is greening or clouding faster than usual. A water change soon?"
-        const val CSV_HEADER = "photo,brightness,green,motion,clarity"
+        const val CSV_HEADER = "photo,brightness,green,motion,clarity,plants,moving_at_once"
+        /** A row a day, under the training folder: see [TankDay]. */
+        const val DAYS = "days.csv"
         const val TANK_FED_AGAIN = "The fish look fed again: they were fed at %s. Go easy, leftover food fouls the water."
         const val TANK_LIGHT_LATE = "The tank light hasn't come on today. Timer or bulb?"
         const val TANK_LIGHT_LONG = "The tank light has been on much longer than usual. Is its timer stuck?"

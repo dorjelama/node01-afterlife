@@ -322,6 +322,29 @@ face keeps following you while the rear camera watches the tank. Every 10 minute
   (`files/tank-video/`);
 - **Live view** on the page shows it, upright, while the tab is in view.
 
+**The light's schedule.** From the light coming on and going off, NODE learns over two weeks
+when it usually comes on and how long it stays on. An hour past its usual time with the light
+not on: "The tank light hasn't come on today. Timer or bulb?" Two hours past its usual length, or
+14 hours whatever it usually does: "...on much longer than usual. Is its timer stuck?" Each at most
+once a day, after three days of learning (`LightSchedule.kt`).
+
+**Feedings seen on video.** A minute moving at least twice the last hour's usual is taken for a
+feeding frenzy and logged as "feeding seen on video", with the overfeeding word if they were fed
+in the last four hours. A hand at the glass looks the same, which is why it says so. Said and
+seen within 20 minutes is the one feeding.
+
+**The water between changes.** Each look also measures the picture's clarity (its contrast,
+which haze flattens). The first day after a water change you log is the clean water; after it,
+water greening faster than the tank's own usual pace (learnt cycle by cycle), or a quarter
+hazier, brings "The water is greening or clouding faster than usual. A water change soon?" and
+raises the guessed risk (`WaterWatch.kt`).
+
+**What is in the tank, day by day.** The fish and plants are yours to list, on the page. The
+camera tracks them as it can measure them, a row a day in `training/days.csv` and on the page:
+hours lit, activity against the week before, the most things seen moving at once (at most the
+fish seen together, not a count), how much of the picture is plant, the water's green and
+clarity, and feeds (`TankDay.kt`). "How is the tank?" hears the last two days.
+
 **A description once a day.** The first lit look of the day goes to `gemma3:4b`, the model on
 your server that can see, which says in a sentence or two what the picture shows: the water,
 the plants, any fish. It takes about 100 seconds on that laptop. **Capture and describe** on the page

@@ -169,6 +169,8 @@ class TankCam(
         const val WIDTH = 1280
         const val HEIGHT = 720
         private const val SCALE = 16
+        /** The width of [smallLuma]'s grey frames. */
+        const val SMALL_WIDTH = WIDTH / SCALE
         /** Exposure and focus settling after the camera starts. */
         const val SETTLE_MS = 1_500L
         const val FRAME_GAP_MS = 200L

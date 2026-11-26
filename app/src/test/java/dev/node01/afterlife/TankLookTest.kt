@@ -34,6 +34,25 @@ class TankLookTest {
     }
 
     @Test
+    fun plantsAreTheClearlyGreenShare() {
+        assertEquals(0.5, TankLook.plants(intArrayOf(argb(40, 120, 40), argb(100, 100, 100))), 1e-9)
+        assertEquals("barely greener is not a plant", 0.0, TankLook.plants(intArrayOf(argb(100, 105, 100))), 1e-9)
+    }
+
+    @Test
+    fun moversAreSeparateBlobsOfChange() {
+        val w = 10
+        val still = ByteArray(100) { 50 }
+        val two = still.copyOf().apply { this[11] = 200.toByte(); this[12] = 200.toByte(); this[77] = 200.toByte(); this[78] = 200.toByte() }
+        assertEquals(2, TankLook.movers(listOf(still, two), w))
+        val speck = still.copyOf().apply { this[55] = 200.toByte() }
+        assertEquals("one changed pixel is noise", 0, TankLook.movers(listOf(still, speck), w))
+        val edge = still.copyOf().apply { this[9] = 200.toByte(); this[10] = 200.toByte() }
+        assertEquals("a row's end does not join the next row's start", 0, TankLook.movers(listOf(still, edge), w))
+        assertEquals(0, TankLook.movers(listOf(still), w))
+    }
+
+    @Test
     fun motionIsTheChangeBetweenFrames() {
         assertEquals(0.0, TankLook.motion(listOf(grey(100), grey(100), grey(100))), 1e-9)
         assertEquals(10.0, TankLook.motion(listOf(grey(100), grey(110), grey(100))), 1e-9)
@@ -76,9 +95,10 @@ class TankLookTest {
 
     @Test
     fun keptAsALogLine() {
-        val s = Stats(118, 0.412, 3.07, 41.2)
-        assertEquals("118 0.412 3.07 41.2", s.encode())
+        val s = Stats(118, 0.412, 3.07, 41.2, 0.31, 3)
+        assertEquals("118 0.412 3.07 41.2 0.310 3", s.encode())
         assertEquals(s, TankLook.decode(s.encode()))
+        assertEquals("a minutes.csv row's numbers", s, TankLook.decode("118,0.412,3.07,41.2,0.310,3"))
         assertEquals("an older line, without clarity", Stats(118, 0.412, 3.07), TankLook.decode("118 0.412 3.07"))
         assertNull(TankLook.decode("feeding done"))
     }

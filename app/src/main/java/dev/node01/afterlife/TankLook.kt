@@ -1,5 +1,6 @@
 package dev.node01.afterlife
 
+import java.util.Locale
 import kotlin.math.abs
 
 /**
@@ -17,12 +18,70 @@ object TankLook {
      * One look: mean luma 0..255, the green share of the colour 0..1, the mean change between frames, and the
      * spread of luma -- the picture's contrast, which cloudy water flattens.
      */
-    data class Stats(val brightness: Int, val green: Double, val motion: Double, val clarity: Double = 0.0) {
+    data class Stats(
+        val brightness: Int,
+        val green: Double,
+        val motion: Double,
+        val clarity: Double = 0.0,
+        /** The share of the picture that is plant-green, 0..1. */
+        val plants: Double = 0.0,
+        /** The most separate moving things in any one moment: at most the fish seen together, not a count of them. */
+        val movers: Int = 0,
+    ) {
         val lightsOn: Boolean get() = brightness >= LIGHTS_ON
 
-        /** For the week-long stats log: `118 0.412 3.07 41.2`. */
-        fun encode() = "$brightness ${"%.3f".format(java.util.Locale.ROOT, green)} ${"%.2f".format(java.util.Locale.ROOT, motion)} " +
-            "%.1f".format(java.util.Locale.ROOT, clarity)
+        /** For the week-long stats log and minutes.csv: `118 0.412 3.07 41.2 0.310 3`. */
+        fun encode() = listOf(
+            brightness, "%.3f".format(Locale.ROOT, green), "%.2f".format(Locale.ROOT, motion),
+            "%.1f".format(Locale.ROOT, clarity), "%.3f".format(Locale.ROOT, plants), movers,
+        ).joinToString(" ")
+    }
+
+    /** The share of a picture that is plant-green: green clearly over both red and blue. */
+    fun plants(argb: IntArray): Double {
+        if (argb.isEmpty()) return 0.0
+        return argb.count { p ->
+            val r = p shr 16 and 0xff
+            val g = p shr 8 and 0xff
+            val b = p and 0xff
+            g > r + PLANT_MARGIN && g > b + PLANT_MARGIN
+        }.toDouble() / argb.size
+    }
+
+    /**
+     * The most separate moving things between any two frames of a burst ([w] wide): the pixels that changed by
+     * [MOVED], joined where they touch, counting blobs of [MIN_BLOB] or more. Two fish side by side are one;
+     * a fish behind a plant, none. So: at most the fish seen moving together.
+     */
+    fun movers(frames: List<ByteArray>, w: Int): Int = frames.zipWithNext { a, b ->
+        val moved = BooleanArray(a.size) { abs((a[it].toInt() and 0xff) - (b[it].toInt() and 0xff)) >= MOVED }
+        blobs(moved, w)
+    }.maxOrNull() ?: 0
+
+    /** Blobs of [MIN_BLOB] or more set cells, joined across their four sides. */
+    private fun blobs(set: BooleanArray, w: Int): Int {
+        val seen = BooleanArray(set.size)
+        var count = 0
+        val stack = ArrayDeque<Int>()
+        for (start in set.indices) {
+            if (!set[start] || seen[start]) continue
+            var size = 0
+            seen[start] = true
+            stack.addLast(start)
+            while (stack.isNotEmpty()) {
+                val i = stack.removeLast()
+                size++
+                val x = i % w
+                for (n in intArrayOf(if (x > 0) i - 1 else -1, if (x < w - 1) i + 1 else -1, i - w, i + w)) {
+                    if (n in set.indices && set[n] && !seen[n]) {
+                        seen[n] = true
+                        stack.addLast(n)
+                    }
+                }
+            }
+            if (size >= MIN_BLOB) count++
+        }
+        return count
     }
 
     /** The spread of a grey frame's luma, its standard deviation: higher for a crisp picture, lower through haze. */
@@ -80,15 +139,17 @@ object TankLook {
             (if (greener) "and the water greener than last week." else "and the water no greener than last week.")
     }
 
-    /** A stats log line back, after its date, with or without its clarity: null if it is not one. */
+    /** A stats log line back, after its date; older, shorter lines too: null if it is not one. */
     fun decode(line: String): Stats? {
-        val parts = line.trim().split(' ')
-        if (parts.size !in 3..4) return null
+        val parts = line.trim().split(' ', ',')
+        if (parts.size !in 3..6) return null
         return Stats(
             parts[0].toIntOrNull() ?: return null,
             parts[1].toDoubleOrNull() ?: return null,
             parts[2].toDoubleOrNull() ?: return null,
             parts.getOrNull(3)?.let { it.toDoubleOrNull() ?: return null } ?: 0.0,
+            parts.getOrNull(4)?.let { it.toDoubleOrNull() ?: return null } ?: 0.0,
+            parts.getOrNull(5)?.let { it.toIntOrNull() ?: return null } ?: 0,
         )
     }
 
@@ -131,6 +192,10 @@ object TankLook {
     }
 
     // shortcut: thresholds picked by reasoning, not yet from real looks at the tank; tune them from the stats log.
+    private const val PLANT_MARGIN = 12
+    private const val MOVED = 25
+    private const val MIN_BLOB = 2
+
     /** Mean luma at or above which the tank's light counts as on. */
     const val LIGHTS_ON = 60
 
