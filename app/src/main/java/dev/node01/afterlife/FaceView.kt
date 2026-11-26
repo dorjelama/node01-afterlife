@@ -404,7 +404,7 @@ class FaceView @JvmOverloads constructor(
         grid = null
         glowMap = null
         if (w <= 0 || h <= 0) return
-        pitch = h / ROWS
+        pitch = min(w, h) / ROWS
         dotR = pitch * DOT
         // A column and a row through the middle of the screen, so a centred face sits symmetric on the grid.
         x0 = (w / 2f) % pitch
@@ -574,22 +574,26 @@ class FaceView @JvmOverloads constructor(
         }
         val w = width.toFloat()
         val h = height.toFloat()
-        val rawCx = w / 2f + (gx * GAZE_X + shake) * h
+        // The face's size: the screen's short side, so it fits upright as well as on its side.
+        val u = min(w, h)
+        // As far sideways as the eyes may look, and no further than keeps them on a narrow, upright screen.
+        val gazeX = min(GAZE_X * u, max(0f, w / 2f - (EYE_GAP + EYE_W) / 2f * u))
+        val rawCx = w / 2f + gx * gazeX + shake * u
         // The face's centre dot: a shape centred between dots comes out lopsided.
         val cCol = ((rawCx - x0) / pitch).roundToInt()
-        val cRow = ((h * FACE_Y + gy * GAZE_Y * h - lift * h - y0) / pitch).roundToInt()
+        val cRow = ((h * FACE_Y + gy * GAZE_Y * u - lift * u - y0) / pitch).roundToInt()
         val cy = y0 + cRow * pitch
         // Centre to each eye in whole dots, so the two are mirror images.
-        val halfCols = (h * EYE_GAP / 2f / pitch).roundToInt()
+        val halfCols = (u * EYE_GAP / 2f / pitch).roundToInt()
 
         // Moving fast sideways stretches the eyes along the way they go.
-        val speed = if (fresh) 0f else abs(rawCx - lastCx) / h / dtMs
+        val speed = if (fresh) 0f else abs(rawCx - lastCx) / u / dtMs
         lastCx = rawCx
         stretch += (min(speed * MOTION_STRETCH, MAX_STRETCH) - stretch) * 0.5f
         if (stretch < 0.001f) stretch = 0f
 
-        val baseW = h * EYE_W
-        val baseH = h * EYE_H
+        val baseW = u * EYE_W
+        val baseH = u * EYE_H
         on.fill(0)
         var rightCol = cCol
         // A hand in view takes the eyes' place; with none, the face carries on.
@@ -601,9 +605,9 @@ class FaceView @JvmOverloads constructor(
             lightCat(now, thinking)
         } else for (i in 0..1) {
             val side = SIDES[i]
-            val col = cCol + (if (i == 0) -halfCols else halfCols) + dots(eyeDx[i] * h)
+            val col = cCol + (if (i == 0) -halfCols else halfCols) + dots(eyeDx[i] * u)
             // A tilted head lifts and enlarges one eye.
-            val row = cRow - dots(side * tilt * TILT_RISE * h) + dots(eyeDy[i] * h)
+            val row = cRow - dots(side * tilt * TILT_RISE * u) + dots(eyeDy[i] * u)
             if (i == 1) rightCol = col
             val scale = (1f + side * tilt * TILT) * eyeSize[i]
             if (eyeScale > 0.02f) {
@@ -771,15 +775,16 @@ class FaceView @JvmOverloads constructor(
 
     /**
      * Each hand as lit dots: its bones as lines, its fingertips as small
-     * crosses. The camera's frame is fitted to the panel's height and centred,
-     * so a hand keeps its proportions.
+     * crosses. The camera's frame is fitted inside the panel and centred, so a
+     * hand keeps its proportions.
      */
     private fun lightHands(pts: FloatArray, aspect: Float) {
-        val h = height.toFloat()
-        val frameW = h * aspect
+        val frameH = min(height.toFloat(), width / aspect)
+        val frameW = frameH * aspect
         val left = (width - frameW) / 2f
+        val top = (height - frameH) / 2f
         fun col(i: Int) = (left + pts[2 * i] * frameW - x0) / pitch
-        fun row(i: Int) = (pts[2 * i + 1] * h - y0) / pitch
+        fun row(i: Int) = (top + pts[2 * i + 1] * frameH - y0) / pitch
         for (hand in 0 until pts.size / (2 * HandTracker.POINTS)) {
             val b = hand * HandTracker.POINTS
             for (k in BONES.indices step 2) {
