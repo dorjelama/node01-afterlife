@@ -47,8 +47,19 @@ class Camcorder(
     private val context: Context,
     private val recorder: LoopRecorder,
     private val jpegHub: Hub,
-    private val pcmHub: Hub,
+    /** Live sound for the webcam page; null records and streams picture only, with the microphone left closed. */
+    private val pcmHub: Hub?,
     private val onError: (String) -> Unit,
+    private val videoWidth: Int = VIDEO_WIDTH,
+    private val videoHeight: Int = VIDEO_HEIGHT,
+    private val videoBitrate: Int = VIDEO_BITRATE,
+    /**
+     * Every 1280×720 frame, on the live thread, whether or not anybody watches: copy out what is
+     * needed at once, since the image goes back to the camera straight after.
+     */
+    private val onFrame: ((Image) -> Unit)? = null,
+    /** How far to turn live pictures clockwise to stand them upright. */
+    private val liveRotation: Int = 0,
 ) {
     @Volatile
     private var running = false
@@ -78,9 +89,9 @@ class Camcorder(
         val video = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
         this.video = video
         video.configure(
-            MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, VIDEO_WIDTH, VIDEO_HEIGHT).apply {
+            MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, videoWidth, videoHeight).apply {
                 setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-                setInteger(MediaFormat.KEY_BIT_RATE, VIDEO_BITRATE)
+                setInteger(MediaFormat.KEY_BIT_RATE, videoBitrate)
                 setInteger(MediaFormat.KEY_FRAME_RATE, FPS)
                 // Clips can only be cut on a keyframe, so this is the cut granularity.
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
@@ -91,32 +102,35 @@ class Camcorder(
         this.encoderSurface = encoderSurface
         video.start()
 
-        val aac = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
-        this.aac = aac
-        aac.configure(
-            MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, SAMPLE_RATE, 1).apply {
-                setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
-                setInteger(MediaFormat.KEY_BIT_RATE, AUDIO_BITRATE)
-                setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, CHUNK_BYTES)
-            },
-            null, null, MediaCodec.CONFIGURE_FLAG_ENCODE,
-        )
-        aac.start()
+        // No sound wanted: the microphone stays closed.
+        if (pcmHub != null) {
+            val aac = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
+            this.aac = aac
+            aac.configure(
+                MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, SAMPLE_RATE, 1).apply {
+                    setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
+                    setInteger(MediaFormat.KEY_BIT_RATE, AUDIO_BITRATE)
+                    setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, CHUNK_BYTES)
+                },
+                null, null, MediaCodec.CONFIGURE_FLAG_ENCODE,
+            )
+            aac.start()
 
-        // CAMCORDER picks the microphone that faces the same way as the camera.
-        val mic = AudioRecord(
-            MediaRecorder.AudioSource.CAMCORDER,
-            SAMPLE_RATE,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT,
-            maxOf(
-                AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT),
-                MIC_BUFFER_BYTES,
-            ),
-        )
-        this.mic = mic
-        check(mic.state == AudioRecord.STATE_INITIALIZED) { "microphone unavailable" }
-        mic.startRecording()
+            // CAMCORDER picks the microphone that faces the same way as the camera.
+            val mic = AudioRecord(
+                MediaRecorder.AudioSource.CAMCORDER,
+                SAMPLE_RATE,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+                maxOf(
+                    AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT),
+                    MIC_BUFFER_BYTES,
+                ),
+            )
+            this.mic = mic
+            check(mic.state == AudioRecord.STATE_INITIALIZED) { "microphone unavailable" }
+            mic.startRecording()
+        }
 
         val liveThread = HandlerThread("node-live").apply { start() }
         this.liveThread = liveThread
@@ -125,7 +139,9 @@ class Camcorder(
         live.setOnImageAvailableListener(::onLiveFrame, Handler(liveThread.looper))
 
         workers += thread(name = "node-video") { pumpVideo(video) }
-        workers += thread(name = "node-audio") { pumpAudio(mic, aac) }
+        val mic = mic
+        val aac = aac
+        if (mic != null && aac != null) workers += thread(name = "node-audio") { pumpAudio(mic, aac) }
 
         val manager = context.getSystemService(CameraManager::class.java)
         val rear = manager.cameraIdList.first {
@@ -257,7 +273,7 @@ class Camcorder(
                 val ptsUs = maxOf(ptsNs / 1_000, lastPtsUs + 1)
                 lastPtsUs = ptsUs
 
-                pcmHub.publish(pcm.copyOf(n))
+                pcmHub?.publish(pcm.copyOf(n))
 
                 val i = codec.dequeueInputBuffer(TIMEOUT_US)
                 // No free buffer means the encoder is backed up: drop 20 ms of
@@ -298,18 +314,27 @@ class Camcorder(
         }
     }
 
-    /** Runs on [liveThread]. Skips all the work while nobody is watching. */
+    /** Runs on [liveThread]. Skips the live JPEG while nobody is watching; [onFrame] sees every frame. */
     private fun onLiveFrame(reader: ImageReader) {
         val image = reader.acquireLatestImage() ?: return
+        onFrame?.let { f ->
+            try {
+                f(image)
+            } catch (e: RuntimeException) {
+                Log.w(TAG, "frame dropped by its reader: ${e.message}")
+            }
+        }
         val now = SystemClock.elapsedRealtime()
         if (!jpegHub.hasSubscribers || now - lastLiveMs < LIVE_INTERVAL_MS) return image.close()
         lastLiveMs = now
         // Copy out and hand the buffer straight back before compressing: a held
         // buffer can stall the camera's whole request, recording included.
-        val w = image.width
-        val h = image.height
+        // The size before the image goes back: a closed image throws.
+        val iw = image.width
+        val ih = image.height
+        val (w, h) = if (liveRotation % 180 == 0) iw to ih else ih to iw
         try {
-            val yuv = image.use { nv21(it) }
+            val yuv = Presence.rotateNv21(image.use { nv21(it) }, iw, ih, liveRotation)
             val jpeg = ByteArrayOutputStream(JPEG_BUFFER_BYTES)
             YuvImage(yuv, ImageFormat.NV21, w, h, null).compressToJpeg(Rect(0, 0, w, h), LIVE_QUALITY, jpeg)
             jpegHub.publish(jpeg.toByteArray())

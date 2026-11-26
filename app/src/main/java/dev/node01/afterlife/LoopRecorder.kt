@@ -13,7 +13,7 @@ import java.util.Locale
 /**
  * Loop recording. The encoded video and audio are cut into fixed-length MP4
  * clips in [dir], and the oldest clips are deleted whenever the folder passes
- * [CAP_BYTES] or the phone's free space drops under [MIN_FREE_BYTES].
+ * [capBytes] or the phone's free space drops under [MIN_FREE_BYTES].
  *
  * A clip is written as `NODE_….mp4.part` and renamed to `.mp4` only once it is
  * finalized. A clip cut short by a crash has no index and will not play, so it
@@ -23,7 +23,15 @@ import java.util.Locale
  * Fed from two threads -- the video drain and the audio pump -- so every entry
  * point is synchronized.
  */
-class LoopRecorder(private val dir: File) {
+class LoopRecorder(
+    private val dir: File,
+    /** How much footage the folder may hold before the oldest clips go. */
+    private val capBytes: Long = CAP_BYTES,
+    /** False for picture-only clips: the tank's, which have no sound. */
+    private val withAudio: Boolean = true,
+    /** Degrees a player turns the picture to show it upright. */
+    private val orientationHint: Int = 0,
+) {
 
     private var videoFormat: MediaFormat? = null
     private var audioFormat: MediaFormat? = null
@@ -99,7 +107,8 @@ class LoopRecorder(private val dir: File) {
 
     private fun openClip(startUs: Long) {
         val video = videoFormat ?: return
-        val audio = audioFormat ?: return
+        val audio = audioFormat
+        if (withAudio && audio == null) return
         // Never fill the phone: if pruning could not free enough, do not record.
         if (dir.usableSpace < MIN_FREE_BYTES) {
             Log.w(TAG, "not recording: ${dir.usableSpace / 1_000_000} MB free")
@@ -112,8 +121,9 @@ class LoopRecorder(private val dir: File) {
         var m: MediaMuxer? = null
         try {
             m = MediaMuxer(file.path, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            m.setOrientationHint(orientationHint)
             videoTrack = m.addTrack(video)
-            audioTrack = m.addTrack(audio)
+            audioTrack = if (withAudio && audio != null) m.addTrack(audio) else -1
             m.start()
         } catch (e: Exception) {
             // Storage gone, or a format the muxer refuses. Retried on the next keyframe.
@@ -152,7 +162,7 @@ class LoopRecorder(private val dir: File) {
         val clips = dir.listFiles { f -> ANY_CLIP.matches(f.name) }
             .orEmpty()
             .map { it.name to it.length() }
-        for (name in clipsToDelete(clips, CAP_BYTES, dir.usableSpace, MIN_FREE_BYTES)) {
+        for (name in clipsToDelete(clips, capBytes, dir.usableSpace, MIN_FREE_BYTES)) {
             if (File(dir, name).delete()) Log.i(TAG, "pruned $name") else Log.w(TAG, "cannot delete $name")
         }
     }

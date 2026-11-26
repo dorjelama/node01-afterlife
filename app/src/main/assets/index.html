@@ -25,8 +25,10 @@
   textarea.field { height: 80px; background: #000; color: inherit; border: 1px solid #555; padding: 8px 12px;
                    font: inherit; }
   .said { min-height: 1.5em; color: #ffb000; }
-  #cam, #tank-photo { display: block; width: 480px; max-width: 100%; margin-top: 8px; background: #0b0b0b; }
-  #tank-photo[hidden] { display: none; }
+  #cam, #tank-photo, #tank-live { display: block; width: 480px; max-width: 100%; margin-top: 8px; background: #0b0b0b; }
+  #tank-photo, #tank-live { width: auto; max-height: 480px; }
+  #tank-photo[hidden], #tank-live[hidden] { display: none; }
+  #labels { margin: 8px 0; padding-left: 20px; color: #9a9a9a; }
   code { color: #e8e8e8; }
   #watch { flex-direction: column; align-items: flex-start; }
   #watch label { display: flex; gap: 8px; align-items: center; cursor: pointer; }
@@ -112,8 +114,11 @@ reacts, chirps and adds a line here. The log stays on the phone for a week.</p>
 <img id="tank-photo" alt="The tank, as the rear camera last saw it" hidden>
 <p id="tank-described"></p>
 <div class="row">
+  <button type="button" id="tank-live-toggle" aria-controls="tank-live">Live view</button>
   <button type="button" id="tank-describe">Describe it now</button>
+  <span class="said" id="tank-live-said" role="status"></span>
 </div>
+<img id="tank-live" alt="The tank, live from the rear camera" hidden>
 <div id="tank-jobs"></div>
 <ul id="tank-log" aria-label="The aquarium's week"></ul>
 <form id="tank-form">
@@ -131,6 +136,27 @@ reacts, chirps and adds a line here. The log stays on the phone for a week.</p>
 day while you are at the desk; "dismiss" puts it off until tomorrow. "How is the tank?" gets an
 answer from all of this. The water's state is a guess from your care habits: with no test kit,
 NODE never knows ammonia or nitrate. The log stays on the phone for a week.</p>
+<p>While the tank's light is on, the rear camera watches it the whole time, beside the face's camera:
+a picture and its numbers every minute, and video with no sound. <strong>Live view</strong>
+shows it here while this tab is in view. When the light has been off a few minutes the rear
+camera stops, and a quick look every 10 minutes notices it coming back on.</p>
+
+<h2>TRAINING</h2>
+<p>What NODE keeps for training a model of your own later: a picture a minute while the tank is
+lit (60 days), its numbers, the AI's descriptions, and what you write here about the newest
+picture, above. Say what is really there or what is wrong: "no yellow fish; a loach on the
+sand, two neon tetras; the water is clear". It is kept beside that picture, and the latest one
+is what "how is the tank?" believes over the AI.</p>
+<form id="label-form">
+  <textarea id="label-text" class="field" name="text" maxlength="500" required
+            placeholder="What is really in the newest picture, or what is wrong" aria-label="Your label"></textarea>
+  <button type="submit">Save</button>
+</form>
+<p class="said" id="label-said" role="status"></p>
+<ul id="labels" aria-label="Recent labels"></ul>
+<p>On the phone: <code>Android/data/dev.node01.companion/files/training/</code> (a folder a day,
+<code>minutes.csv</code>, <code>labels.jsonl</code>) and <code>files/tank-video/</code> (about the
+last three days). Copy them off with <code>adb pull</code>.</p>
 
 <h2>SAY IT</h2>
 <form id="say">
@@ -389,6 +415,10 @@ const loadTank = async () => {
     photo.onload = () => { photo.hidden = false; };
     photo.onerror = () => { photo.hidden = true; };
     photo.src = 'tank/photo?' + Date.now();
+    // Newest first: who said it, when, and what.
+    const labels = (tank.labels || []).slice().reverse().map((l) =>
+      logLine((l.from === 'you' ? 'You' : 'AI') + ', ' + l.at.slice(5) + ' (' + l.photo + '): ' + l.text));
+    document.getElementById('labels').replaceChildren(...(labels.length ? labels : [logLine('No labels yet.')]));
     // "2026-11-26 12:10  A planted aquarium with...": when, then the words.
     document.getElementById('tank-described').textContent = tank.described
       ? 'The AI on your server, ' + tank.described.slice(5, 16) + ' (it can be wrong): ' + tank.described.slice(18) : '';
@@ -430,6 +460,46 @@ const loadTank = async () => {
     tankSaid.textContent = 'Not loaded: is NODE Companion open on the phone?';
   }
 };
+// The tank, live: the rear camera's MJPEG while the light is on and this tab is in view; dropping src hangs up.
+const tankLive = document.getElementById('tank-live');
+const tankLiveToggle = document.getElementById('tank-live-toggle');
+const tankLiveSaid = document.getElementById('tank-live-said');
+let tankLiveOn = false;
+const showTankLive = (on) => {
+  tankLiveOn = on;
+  tankLiveToggle.textContent = on ? 'Hide live view' : 'Live view';
+  tankLiveToggle.setAttribute('aria-expanded', on);
+  tankLive.hidden = !on;
+  if (on) {
+    tankLiveSaid.textContent = 'Shows while the tank\'s light is on and the rear camera is watching.';
+    tankLive.src = 'video?' + Date.now();
+  } else {
+    tankLive.removeAttribute('src');
+  }
+};
+tankLiveToggle.onclick = () => showTankLive(!tankLiveOn);
+document.addEventListener('visibilitychange', () => { if (document.hidden && tankLiveOn) showTankLive(false); });
+tankLive.onerror = () => {
+  if (!tankLiveOn) return;
+  showTankLive(false);
+  tankLiveSaid.textContent = 'No picture: is NODE Companion open on the phone?';
+};
+
+document.getElementById('label-form').onsubmit = async (e) => {
+  e.preventDefault();
+  const text = document.getElementById('label-text').value.trim();
+  if (!text) return;
+  try {
+    const res = await fetch('tank/label', { method: 'POST', body: new URLSearchParams({ text }) });
+    if (!res.ok) throw new Error(res.status);
+    document.getElementById('label-said').textContent = 'Kept with the newest picture.';
+    document.getElementById('label-text').value = '';
+    setTimeout(loadTank, 500);
+  } catch (err) {
+    document.getElementById('label-said').textContent = 'Not sent: is NODE Companion open on the phone?';
+  }
+};
+
 document.getElementById('tank-describe').onclick = async () => {
   try {
     const res = await fetch('tank/describe', { method: 'POST' });

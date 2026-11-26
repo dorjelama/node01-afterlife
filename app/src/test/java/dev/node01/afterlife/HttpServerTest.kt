@@ -25,6 +25,7 @@ class HttpServerTest {
         assertEquals(Route.NotFound, HttpServer.route("GET", "/$key/tank/done", key))
         assertEquals(Route.TankPhoto, HttpServer.route("GET", "/$key/tank/photo", key))
         assertEquals(Route.TankDescribe, HttpServer.route("POST", "/$key/tank/describe", key))
+        assertEquals(Route.TankLabel, HttpServer.route("POST", "/$key/tank/label", key))
         assertEquals(Route.Note, HttpServer.route("POST", "/$key/note", key))
         assertEquals(Route.Face, HttpServer.route("POST", "/$key/face", key))
         assertEquals(Route.Say, HttpServer.route("POST", "/$key/say", key))

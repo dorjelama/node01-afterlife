@@ -53,11 +53,8 @@ class TankCam(
     fun start() = handler.post {
         try {
             val manager = context.getSystemService(CameraManager::class.java)
-            val rear = manager.cameraIdList.firstOrNull {
-                manager.getCameraCharacteristics(it).get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK
-            } ?: return@post finish(null)
-            val sensor = manager.getCameraCharacteristics(rear).get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
-            rotation = ((sensor - displayDegrees) % 360 + 360) % 360
+            val rear = rearId(manager) ?: return@post finish(null)
+            rotation = rotation(manager, rear, displayDegrees)
             val r = ImageReader.newInstance(WIDTH, HEIGHT, ImageFormat.YUV_420_888, 3)
             reader = r
             r.setOnImageAvailableListener({ onImage(it) }, handler)
@@ -133,38 +130,52 @@ class TankCam(
         context.mainExecutor.execute { onDone(look) }
     }
 
-    private fun look(nv21: ByteArray): Look {
-        val upright = Presence.rotateNv21(nv21, WIDTH, HEIGHT, rotation)
-        val (w, h) = if (rotation % 180 == 0) WIDTH to HEIGHT else HEIGHT to WIDTH
-        val jpeg = ByteArrayOutputStream(JPEG_BUFFER_BYTES).also {
-            YuvImage(upright, ImageFormat.NV21, w, h, null).compressToJpeg(Rect(0, 0, w, h), JPEG_QUALITY, it)
-        }.toByteArray()
-        val small = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, BitmapFactory.Options().apply { inSampleSize = SCALE })
-        val argb = IntArray(small.width * small.height).also { small.getPixels(it, 0, small.width, 0, 0, small.width, small.height) }
-        small.recycle()
-        return Look(jpeg, argb, frames.toList())
-    }
+    private fun look(nv21: ByteArray): Look = picture(nv21, rotation).let { (jpeg, argb) -> Look(jpeg, argb, frames.toList()) }
 
-    /** Every [SCALE]th luma sample of every [SCALE]th row: an 80×45 grey frame, enough to see a fish move. */
-    private fun smallLuma(image: Image): ByteArray {
-        val plane = image.planes[0]
-        val buffer = plane.buffer
-        val w = WIDTH / SCALE
-        val h = HEIGHT / SCALE
-        return ByteArray(w * h) { i -> buffer.get((i / w) * SCALE * plane.rowStride + (i % w) * SCALE * plane.pixelStride) }
-    }
+    companion object {
+        /** The rear camera's id, or null if there is none. */
+        fun rearId(manager: CameraManager): String? = manager.cameraIdList.firstOrNull {
+            manager.getCameraCharacteristics(it).get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK
+        }
 
-    private companion object {
+        /** How far to turn the rear camera's picture clockwise to stand upright: a rear camera's turn runs against the display's. */
+        fun rotation(manager: CameraManager, rear: String, displayDegrees: Int): Int {
+            val sensor = manager.getCameraCharacteristics(rear).get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
+            return ((sensor - displayDegrees) % 360 + 360) % 360
+        }
+
+        /** A [WIDTH]×[HEIGHT] NV21 frame as an upright JPEG, and its colours scaled right down for [TankLook.green]. */
+        fun picture(nv21: ByteArray, rotation: Int): Pair<ByteArray, IntArray> {
+            val upright = Presence.rotateNv21(nv21, WIDTH, HEIGHT, rotation)
+            val (w, h) = if (rotation % 180 == 0) WIDTH to HEIGHT else HEIGHT to WIDTH
+            val jpeg = ByteArrayOutputStream(JPEG_BUFFER_BYTES).also {
+                YuvImage(upright, ImageFormat.NV21, w, h, null).compressToJpeg(Rect(0, 0, w, h), JPEG_QUALITY, it)
+            }.toByteArray()
+            val small = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, BitmapFactory.Options().apply { inSampleSize = SCALE })
+            val argb = IntArray(small.width * small.height).also { small.getPixels(it, 0, small.width, 0, 0, small.width, small.height) }
+            small.recycle()
+            return jpeg to argb
+        }
+
+        /** Every [SCALE]th luma sample of every [SCALE]th row: an 80×45 grey frame, enough to see a fish move. */
+        fun smallLuma(image: Image): ByteArray {
+            val plane = image.planes[0]
+            val buffer = plane.buffer
+            val w = WIDTH / SCALE
+            val h = HEIGHT / SCALE
+            return ByteArray(w * h) { i -> buffer.get((i / w) * SCALE * plane.rowStride + (i % w) * SCALE * plane.pixelStride) }
+        }
+
         const val WIDTH = 1280
         const val HEIGHT = 720
-        const val SCALE = 16
+        private const val SCALE = 16
         /** Exposure and focus settling after the camera starts. */
         const val SETTLE_MS = 1_500L
         const val FRAME_GAP_MS = 200L
         /** Three seconds of movement at five frames a second. */
-        const val BURST_FRAMES = 15
-        const val TIMEOUT_MS = 10_000L
-        const val JPEG_QUALITY = 80
-        const val JPEG_BUFFER_BYTES = 256 * 1024
+        private const val BURST_FRAMES = 15
+        private const val TIMEOUT_MS = 10_000L
+        private const val JPEG_QUALITY = 80
+        private const val JPEG_BUFFER_BYTES = 256 * 1024
     }
 }

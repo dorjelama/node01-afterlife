@@ -45,7 +45,7 @@ the page's **WEBCAM** buttons turn the phone into one or the other (see
 | **Claude Code** | Through Claude Code hooks on your PC. While Claude works the eyes narrow and look toward the PC, and now and then read along a line or two, look up to think, or narrow harder for a moment, so the stare never sets. When Claude needs approval or has a question: amber, wide, an amber **!!** beside them, `NEEDS YOU`, one chirp, and it says what Claude is asking to do — "Claude wants to delete the build folder." — from Claude's own description of the command, a file's name or a site. When it finishes: a happy bounce, then **^ ^** eyes, `DONE`, a softer chirp — held until you have actually looked |
 | **Desk notes** | Send a short note from any browser, now or in a few minutes — or say "remind me in 10 minutes to stretch". It shows in amber and is read out; tap or wave to dismiss it |
 | **Keeps your tasks** | Add a task with a few lines of detail from the page. NODE chirps once and keeps it out of sight — no amber, no words. Hold a finger on the screen to see the list; tap a task for its details and **✓ MARK DONE**. Up to 30 at a time, kept across restarts |
-| **Looks after your aquarium** | Tell it when you feed the fish or change the water and it keeps the schedule, reminds you of what is overdue, and warns about feeding twice. Every 10 minutes the rear camera takes a look at the tank behind the phone; once a day the AI on your server describes the picture. See [Aquarium](#aquarium) |
+| **Looks after your aquarium** | Tell it when you feed the fish or change the water and it keeps the schedule, reminds you of what is overdue, and warns about feeding twice. While the tank's light is on the rear camera watches it, beside the face's camera, and keeps pictures and video for training; once a day the AI on your server describes the picture. See [Aquarium](#aquarium) |
 | **Shows its view** | The page's **CAMERA** section shows what the front camera sees, small and live (320×240), only while you have it showing in a tab that is in view. Nothing is recorded. See [Privacy](#privacy) |
 | **Shows the PC's load** | Leave the page's PowerShell lines running and the PC's CPU, memory and disk activity sit small and dim in the bottom-left corner — a chip, a memory stick and a disk, each with its number. Stop the script and they are gone within 15 seconds |
 | **Tells the time** | The time, 12-hour (`12:48`), in small grey dots in the top-right corner. A running timer takes its place, and in the dark it steps aside for the large knock clock |
@@ -306,20 +306,26 @@ in amber and is read out, once a day, while you are at the desk; saying it is do
 and "dismiss" puts it off until tomorrow. "When did I last change the water?" and "did I feed
 the fish?" are answered from the log, which stays on the phone for a week (`tank.log`).
 
-**A look every 10 minutes.** The front camera hands over to the rear one for about 8 seconds:
-it lets exposure settle, keeps one picture and three seconds of small grey frames, and hands
-back. It waits a minute while you are talking to NODE or hand tracking is on. From the look it
-works out whether the tank's light is on, how green the picture is, and how much moved. Against
-the last week's lit looks, water turning greener raises the guessed risk below, and two looks
-in a row with the fish far stiller than usual leave a note: "The fish look unusually still.
-Check on them?" Each look's numbers go to `tank-stats.log`; the pictures are kept on the phone
-for a week, a time-lapse in `Android/data/dev.node01.companion/files/tank/`, and the page shows
-the newest. The thresholds (`TankLook.kt`) are reasoned, not yet tuned on a real tank.
+**Watching while the light is on.** This phone runs its front and rear cameras at once, so the
+face keeps following you while the rear camera watches the tank. Every 10 minutes a quick look
+(a few seconds) checks whether the tank's light is on; if it is, the rear camera stays on it
+(`TankWatch`) until the light has been off three minutes. While it watches:
 
-**A description once a day.** The first lit look after noon goes to `gemma3:4b`, the model on
+- every minute, a picture and its numbers: whether the light is on, how green the picture is,
+  and how much moved, from small grey frames five times a second;
+- every 10 minutes, those numbers are set against the last week's: water turning greener raises
+  the guessed risk below, and two in a row with the fish far stiller than usual leave a note,
+  "The fish look unusually still. Check on them?" (`tank-stats.log`; the thresholds in
+  `TankLook.kt` are reasoned, not yet tuned on a real tank);
+- 720p video with no sound, in five-minute clips, about the last three days
+  (`files/tank-video/`);
+- **Live view** on the page shows it, upright, while the tab is in view.
+
+**A description once a day.** The first lit look of the day goes to `gemma3:4b`, the model on
 your server that can see, which says in a sentence or two what the picture shows: the water,
 the plants, any fish. It takes about 100 seconds on that laptop; **Describe it now** on the page
-asks again. It is only a description, shown on the page and handed to "how is the tank?", and
+asks again. On a real picture it found the plants and two fish, called the water relatively
+clear, and invented a yellow fish while missing one on the sand. It is only a description, shown on the page and handed to "how is the tank?", and
 never sounds an alert: asked whether anything looked wrong, gemma3:4b found cloudy green water
 in a photo of a cardboard label.
 
@@ -329,6 +335,18 @@ its interval, feeds a day over the last three days (more than two counts), and t
 word that the water is greening. One reason makes the risk *building*, two or a water change
 twice overdue make it *high*. "How is the tank?" gets all of this from the AI on your server,
 in a sentence or two; with the server away, a fixed line: what is overdue, and the guess.
+
+### Training data
+
+For a model of your own later, NODE keeps, under `Android/data/dev.node01.companion/files/training/`:
+a folder a day of the minute pictures while the tank is lit (`HHmmss.jpg`, about 200 KB each,
+kept 60 days), a `minutes.csv` beside them with each picture's light, green and movement, and
+`labels.jsonl`, one line per description of a picture: the AI's (`"from":"ai"`) and yours
+(`"from":"you"`). Yours come from the page's **TRAINING** section: write what is really in the
+newest picture, or what is wrong with it — "no yellow fish; a loach on the sand" — and it is kept
+beside that picture. The latest is also handed to "how is the tank?", to be believed over the AI.
+With the video, that is roughly 10 GB a day of a tank lit twelve hours; the phone keeps at least
+2 GB free whatever happens. Copy it off with `adb pull`.
 
 ### Later: real sensors
 
@@ -359,11 +377,12 @@ stops the face, the front camera and the voice assistant, and starts the rear ca
 - **In webcam mode the rear camera and the microphone are on, streamed and recorded.** Only in
   that mode, only while NODE is in front, and only to the phone and to whoever opens the
   webcam page with the key. The clips stay on the phone until they are overwritten.
-- **With an aquarium set up, the rear camera looks at it every 10 minutes**, for about 8
-  seconds, in the face's mode too. The pictures stay on the phone for a week, and the page
-  shows the newest to whoever opens it with the key. Once a day one picture crosses your
-  Wi-Fi, as plain HTTP, to the AI on your own server to be described, and nowhere else. Point
-  the rear camera at the tank, not at the room.
+- **With an aquarium set up, the rear camera watches it the whole time its light is on**, in
+  the face's mode too, and records it: a picture a minute (kept 60 days), video with no sound
+  (about three days), on the phone. The page shows the newest picture, and the live view, to
+  whoever opens it with the key, as plain HTTP across your Wi-Fi. Once a day one picture goes
+  to the AI on your own server to be described, and nowhere else. The microphone is not used.
+  Point the rear camera at the tank, not at the room: whatever it sees is recorded.
 - **Camera activities are off until you tick them on the page.** Then about one frame a second
   goes to MediaPipe's object detector on the phone, while you are at the desk; only the names
   of what it found (cup, bottle, phone, book) and where, high or low, come out of it. No frame
@@ -514,7 +533,7 @@ Everything configurable is a constant — there is no settings screen, by design
 | Knock and shake sensitivity, wave timing, how dark is dark | `Senses.kt` |
 | Chirp pitches and loudness, and the tune it sings | `Chirp.kt` |
 | Where the weather comes from | `Weather.kt` (`LAT`/`LON`) |
-| The aquarium's jobs and their defaults, how often it looks, what counts as greener or still | `Tank.kt`, `NodeActivity.kt` (`TANK_EVERY_MS`), `TankLook.kt` |
+| The aquarium's jobs and their defaults, how often it looks, what counts as greener or still, how long training data and video are kept | `Tank.kt`, `NodeActivity.kt` (`TANK_EVERY_MS`, `TRAINING_DAYS`), `TankLook.kt`, `TankWatch.kt` |
 | The AI model's server and model, and what it is told | `Rephraser.kt` (`SERVER`, `MODEL`, `EXAMPLES`), with the address in `res/xml/network_security_config.xml` too |
 | When the battery counts as hot or low | `Battery.kt` |
 | Voice commands, their wording and replies | `Assistant.kt` |
@@ -571,7 +590,8 @@ app/src/main/java/dev/node01/afterlife/
 ├── Inbox.kt           desk notes, reminders, timers, alarms and repeating nudges
 ├── Tasks.kt           tasks from the page, kept until marked done
 ├── Tank.kt            the aquarium: its jobs, when each was done, and the water's state guessed from care
-├── TankCam.kt         a few seconds' look at the tank through the rear camera
+├── TankCam.kt         a few seconds' look at the tank through the rear camera: is its light on?
+├── TankWatch.kt       the rear camera on the lit tank: a minute's look at a time, video, the live view
 ├── TankLook.kt        what a look says: light on, how green, how much moved, against the week's looks
 ├── PcStats.kt         the PC's CPU, memory and disk load, as its script sends it
 ├── Chirp.kt           the sounds, and the one tune
