@@ -422,8 +422,10 @@ const loadTank = async () => {
     // "2026-11-26 12:10  A planted aquarium with...": when, then the words.
     document.getElementById('tank-described').textContent = tank.described
       ? 'The AI on your server, ' + tank.described.slice(5, 16) + ' (it can be wrong): ' + tank.described.slice(18) : '';
-    state.textContent = 'Water, going by your care: ' + tank.risk
-      + (tank.why.length ? ' (' + tank.why.join('; ') + ')' : '') + '.';
+    const light = tank.lightOn ? ' Light: usually on at ' + tank.lightOn
+      + (tank.lightHours ? ' for ' + Math.round(tank.lightHours * 10) / 10 + ' hours' : '') + '.' : '';
+    state.textContent = (tank.watching ? 'Watching. ' : 'Not watching: the light looks off. ') + 'Water, going by your care: ' + tank.risk
+      + (tank.why.length ? ' (' + tank.why.join('; ') + ')' : '') + '.' + light;
     document.getElementById('tank-jobs').replaceChildren(...tank.jobs.map((j) => {
       const row = Object.assign(document.createElement('div'), { className: 'row' });
       const late = j.due <= Date.now();

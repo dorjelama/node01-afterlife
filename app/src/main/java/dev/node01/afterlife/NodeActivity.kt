@@ -90,6 +90,9 @@ class NodeActivity : Activity() {
 
     /** The rear camera on the tank for as long as its light is on. */
     private var tankWatch: TankWatch? = null
+
+    /** When the tank's light usually comes on and for how long; see [noteLight]. */
+    private var light = LightSchedule()
     private var watchedMinutes = 0
     private var darkMinutes = 0
 
@@ -261,6 +264,7 @@ class NodeActivity : Activity() {
         kiosk()
         loadRephraser()
         tank = Tank.decode(prefs.getString(KEY_TANK, null))
+        light = LightSchedule.decode(prefs.getString(KEY_LIGHT, null))
     }
 
     /**
@@ -349,6 +353,7 @@ class NodeActivity : Activity() {
     private val lookAtTank = object : Runnable {
         override fun run() {
             statusView.postDelayed(this, TANK_EVERY_MS)
+            if (tank != null) checkLight()
             if (tank == null || tankCam != null || tankWatch != null) return
             val cam = TankCam(this@NodeActivity, displayDegrees(), ::onTankLook)
             tankCam = cam
@@ -365,7 +370,40 @@ class NodeActivity : Activity() {
             return
         }
         measure(look, compare = true)
-        if (TankLook.brightness(look.frames.first()) >= TankLook.LIGHTS_ON) startTankWatch()
+        val lit = TankLook.brightness(look.frames.first()) >= TankLook.LIGHTS_ON
+        noteLight(lit, LocalDateTime.now())
+        if (lit) startTankWatch()
+    }
+
+    /**
+     * The tank's light seen [lit] or not at [at]. A change from what NODE last knew is a light coming on or going
+     * off, learnt into the schedule; with nothing known, as after a restart, it is only noted, so a light already
+     * on is never taken for one that just came on.
+     */
+    private fun noteLight(lit: Boolean, at: LocalDateTime) {
+        val known = prefs.getString(KEY_LIGHT_STATE, null)?.let { it == "on" }
+        prefs.edit().putString(KEY_LIGHT_STATE, if (lit) "on" else "off").apply()
+        if (known == null || known == lit) return
+        light = if (lit) light.on(at) else light.off(at)
+        prefs.edit().putString(KEY_LIGHT, light.encode()).apply()
+        tankLog("light " + (if (lit) "on" else "off") + " at " + at.format(CLOCK_FORMAT))
+    }
+
+    /** Once a day each: the light has not come on an hour past its usual time, or has stayed on far too long. */
+    private fun checkLight() {
+        val now = LocalDateTime.now()
+        val today = now.toLocalDate().toString()
+        val wall = System.currentTimeMillis()
+        fun raise(key: String, words: String) {
+            if (prefs.getString(key, null) == today) return
+            prefs.edit().putString(key, today).apply()
+            inbox.add(words, 0L, wall, Inbox.Kind.NOTE)
+            saveInbox()
+            tankLog(words)
+            reevaluate()
+        }
+        if (light.late(now)) raise(KEY_LIGHT_LATE, TANK_LIGHT_LATE)
+        if (light.tooLong(now)) raise(KEY_LIGHT_LONG, TANK_LIGHT_LONG)
     }
 
     /** The rear camera on the tank until its light goes off. A failure is logged and left to the next quick look. */
@@ -410,7 +448,10 @@ class NodeActivity : Activity() {
         watchedMinutes++
         measure(look, compare = watchedMinutes % COMPARE_EVERY == 0)
         darkMinutes = if (TankLook.brightness(look.frames.first()) < TankLook.LIGHTS_ON) darkMinutes + 1 else 0
-        if (darkMinutes >= DARK_MINUTES) stopTankWatch()
+        if (darkMinutes >= DARK_MINUTES) {
+            noteLight(false, LocalDateTime.now().minusMinutes(DARK_MINUTES.toLong()))
+            stopTankWatch()
+        }
     }
 
     /**
@@ -1487,6 +1528,8 @@ class NodeActivity : Activity() {
                 .put("jobs", jobs).put("risk", risk.name.lowercase()).put("why", JSONArray(why))
                 .put("described", prefs.getString(KEY_TANK_AI, null) ?: JSONObject.NULL)
                 .put("watching", tankWatch != null)
+                .put("lightOn", light.usualOn()?.let { "%d:%02d".format(it / 60, it % 60) } ?: JSONObject.NULL)
+                .put("lightHours", light.usualMinutes()?.let { it / 60.0 } ?: JSONObject.NULL)
                 .put(
                     "labels",
                     JSONArray(
@@ -2194,6 +2237,13 @@ class NodeActivity : Activity() {
         const val KEY_TANK_AI = "tank_ai"
         const val KEY_TANK_AI_DAY = "tank_ai_day"
         val AI_STAMP: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+        /** The tank light's last two weeks, whether it was last seen on, and the days its alerts were raised. */
+        const val KEY_LIGHT = "tank_light"
+        const val KEY_LIGHT_STATE = "tank_light_state"
+        const val KEY_LIGHT_LATE = "tank_light_late"
+        const val KEY_LIGHT_LONG = "tank_light_long"
+        const val TANK_LIGHT_LATE = "The tank light hasn't come on today. Timer or bulb?"
+        const val TANK_LIGHT_LONG = "The tank light has been on much longer than usual. Is its timer stuck?"
         /** Your latest word on the tank from the page's TRAINING section, `2026-11-26 17:20  words`. */
         const val KEY_TANK_NOTE = "tank_note"
 
