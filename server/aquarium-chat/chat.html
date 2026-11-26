@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Aquarium Chat</title>
+<title>Chat</title>
 <link rel="icon" href="data:,">
 <style>
   :root { color-scheme: dark; --bg: #0b0d0e; --panel: #121517; --line: #23282b; --text: #d8dcdf; --dim: #8b9499;
@@ -18,6 +18,11 @@
   aside { width: 260px; flex: none; background: var(--panel); border-right: 1px solid var(--line); display: flex;
           flex-direction: column; padding: 12px; gap: 8px; }
   aside h1 { font-size: 15px; margin: 4px 4px 8px; letter-spacing: .04em; }
+  aside h1 .sub { color: var(--dim); font-weight: 400; font-size: 12px; }
+  .badge.aqua { color: #7fd6ff; border-color: #2c6c88; }
+  .badge.web { color: #c9a8ff; border-color: #5a4a88; }
+  .sources { margin: 6px 0 0; padding-left: 20px; font-size: 13px; color: var(--dim); }
+  .sources a { color: #9cc8ff; }
   #chats { flex: 1; overflow-y: auto; list-style: none; margin: 0; padding: 0; }
   #chats li { display: flex; align-items: center; border-radius: 8px; }
   #chats li.current, #chats li:hover { background: #1a1f22; }
@@ -75,7 +80,7 @@
 <body>
 <div class="app">
   <aside id="side">
-    <h1>🐟 Aquarium Chat</h1>
+    <h1>💬 Chat <span class="sub">· 🐟 aquarium-aware</span></h1>
     <button type="button" id="new">+ New chat</button>
     <ul id="chats" aria-label="Your chats"></ul>
     <button type="button" id="open-memory">Memory</button>
@@ -86,11 +91,11 @@
     <div id="log" aria-live="polite"></div>
     <form id="ask">
       <div class="box">
-        <textarea id="text" rows="1" maxlength="2000" placeholder="Ask about your tank…" aria-label="Your question"></textarea>
+        <textarea id="text" rows="1" maxlength="2000" placeholder="Ask anything…" aria-label="Your question"></textarea>
         <button type="submit" id="send">Send</button>
       </div>
-      <p class="hint">Answers come from your tank's data first; deep questions take the big model a minute or two.
-        Local only: nothing leaves your network.</p>
+      <p class="hint">Answered by models on your own server: deep questions take a minute or two. Questions about
+        your tank use NODE's data; current facts are searched on the web (only the search leaves your network).</p>
     </form>
   </main>
 </div>
@@ -116,6 +121,7 @@
 const log = document.getElementById('log');
 const text = document.getElementById('text');
 const TIER_UP = { 0: 1, 1: 2, 3: 2 };
+const NAMES = { 0: 'From your data', 1: 'Quick', 2: 'Deep', 3: 'Looked at the tank' };
 let chatId = new URLSearchParams(location.hash.slice(1)).get('c');
 let busy = false;
 
@@ -160,15 +166,35 @@ function botMsg() {
   return { m, meta, body };
 }
 
-function badge(meta, tier, name, model) {
+function badge(meta, tier, name, model, aqua, web) {
   meta.replaceChildren(el('span', 'badge t' + tier, name + (model ? ' · ' + model : '')));
+  if (aqua) meta.append(el('span', 'badge aqua', '🐟 your tank'));
+  if (web) meta.append(el('span', 'badge web', '🔎 web'));
+}
+
+// The sources a searched answer read, as links that open in a new tab.
+function sources(m, list) {
+  if (!list || !list.length) return;
+  const ol = el('ol', 'sources');
+  for (const src of list) {
+    if (!/^https?:\/\//.test(src.url)) continue;
+    const li = el('li');
+    const a = el('a', null, src.title);
+    a.href = src.url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    li.append(a, ' · ' + src.host);
+    ol.append(li);
+  }
+  m.append(ol);
 }
 
 function empty() {
   const e = el('div', 'empty');
-  e.append(el('h2', null, 'Ask about your tank'));
-  e.append(el('p', null, 'It knows what NODE knows: the care log, the light, the camera\'s days, your care sheet and what you tell it.'));
-  for (const q of ['When did I last change the water?', 'Is my tank healthy today?', 'Why are my plant leaves melting?', 'Look at the tank: is there algae?']) {
+  e.append(el('h2', null, 'Ask anything'));
+  e.append(el('p', null, 'Your own models answer. Questions about your tank use what NODE knows; current facts are looked up on the web.'));
+  for (const q of ['When did I last change the water?', 'Is my tank healthy today?', 'Explain compound interest simply',
+    'What is the latest news about Nepal?', 'Look at the tank: is there algae?']) {
     const b = el('button', null, q);
     b.type = 'button';
     b.onclick = () => ask(q);
@@ -205,20 +231,20 @@ async function openChat(id) {
   if (!r.ok) { chatId = null; return empty(); }
   const chat = await r.json();
   log.replaceChildren();
-  const names = { 0: 'From your data', 1: 'Quick', 2: 'Deep', 3: 'Looked at the tank' };
   for (const m of chat.messages) {
     if (m.role === 'user') userMsg(m.content);
     else {
       const b = botMsg();
-      badge(b.meta, m.tier, names[m.tier] || '', '');
+      badge(b.meta, m.tier, NAMES[m.tier] || '', '', m.aqua, m.sources && m.sources.length);
       b.body.innerHTML = render(m.content);
+      sources(b.m, m.sources);
     }
   }
   log.scrollTop = log.scrollHeight;
   loadChats();
 }
 
-async function ask(q, tier) {
+async function ask(q, tier, search) {
   if (busy || !q.trim()) return;
   busy = true;
   document.getElementById('send').disabled = true;
@@ -233,10 +259,11 @@ async function ask(q, tier) {
   }, 1000);
   let reply = '';
   let answered = null;
+  let searched = false;
   try {
     const res = await fetch('api/ask', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat: chatId, text: q, tier }),
+      body: JSON.stringify({ chat: chatId, text: q, tier, search }),
     });
     const reader = res.body.getReader();
     const dec = new TextDecoder();
@@ -253,14 +280,22 @@ async function ask(q, tier) {
         const data = JSON.parse((block.match(/^data: (.*)$/m) || [])[1] || 'null');
         if (event === 'chat') {
           if (chatId !== data.id) { chatId = data.id; history.replaceState(null, '', '#c=' + data.id); loadChats(); }
+        } else if (event === 'status') {
+          wait.dataset.note = ' · ' + data;
+        } else if (event === 'sources') {
+          searched = true;
+          sources(b.m, data);
         } else if (event === 'tier') {
           answered = data.tier;
-          badge(b.meta, data.tier, data.name, data.model);
+          badge(b.meta, data.tier, data.name, data.model, data.aqua, data.search);
           if (data.tier === 2) wait.dataset.note = ' (the big model reads first, then writes)';
         } else if (event === 'token') {
           if (wait.isConnected) { clearInterval(tick); wait.remove(); }
           reply += data;
           b.body.innerHTML = render(reply);
+          // The sources stay below the answer as it grows.
+          const src = b.m.querySelector('.sources');
+          if (src) b.m.append(src);
           log.scrollTop = log.scrollHeight;
         } else if (event === 'remembered') {
           const r = el('div', 'remembered', 'Remembered: ' + data.text + ' ');
@@ -277,14 +312,20 @@ async function ask(q, tier) {
   }
   clearInterval(tick);
   if (wait.isConnected) wait.remove();
+  const act = el('div', 'actions');
   if (answered != null && TIER_UP[answered] != null) {
     const harder = el('button', null, 'Think harder');
     harder.type = 'button';
-    harder.onclick = () => { harder.parentElement.remove(); ask(q, TIER_UP[answered]); };
-    const act = el('div', 'actions');
+    harder.onclick = () => { act.remove(); ask(q, TIER_UP[answered], searched || undefined); };
     act.append(harder);
-    b.m.append(act);
   }
+  if (answered != null && answered !== 0 && answered !== 3 && !searched) {
+    const web = el('button', null, 'Search the web');
+    web.type = 'button';
+    web.onclick = () => { act.remove(); ask(q, answered, true); };
+    act.append(' ', web);
+  }
+  if (act.childElementCount) b.m.append(act);
   busy = false;
   document.getElementById('send').disabled = false;
   text.focus();

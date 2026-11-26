@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Aquarium chat: a ChatGPT-like page about your own tank, answered by local models on this server.
+"""Chat: a ChatGPT-like page answered by local models on this server, for any question, with your aquarium
+as its special subject.
 
-Knowledge: NODE Companion's live tank (from the phone), its days (~/node-data/training/days.csv), your care
-sheet, lasting facts remembered from your chats, and the titles of past chats. Answers come in tiers, cheapest
-first: straight from the data (no AI), a quick small model, a deep large one, or a look at the tank's newest
-picture. Nothing leaves your network.
+A question about the tank brings in what NODE Companion knows: the phone's live tank, its days
+(~/node-data/training/days.csv), your care sheet. Every question gets the lasting facts remembered from your
+chats. Answers come in tiers, cheapest first: straight from the data (no AI), a quick small model, a deep large
+one, or a look at the tank's newest picture; and with a web search, through SearXNG on this server, when the
+question needs current facts. No AI company sees anything: only searches leave your network.
 
 Run: python3 chat.py   (then open the address it prints; cron @reboot keeps it running)
 Standard library only.
@@ -15,6 +17,7 @@ import re
 import secrets
 import threading
 import time
+import urllib.parse
 import urllib.request
 import uuid
 from datetime import datetime
@@ -22,15 +25,20 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 OLLAMA = "http://127.0.0.1:11434/api/chat"
 QUICK = "qwen2.5:3b"
-DEEP = os.environ.get("CHAT_DEEP", "qwen2.5:7b")
+# Llama 3.1 8B beat qwen2.5:7b and mistral:7b on the tank's questions: most accurate, least made up (README).
+DEEP = os.environ.get("CHAT_DEEP", "llama3.1:8b")
 VISION = "gemma3:4b"
 PORT = 8090
+# SearXNG on this server: the web search, with no account or key.
+SEARXNG = "http://127.0.0.1:8888/search"
+SEARCH_RESULTS = 5
 
 HOME = os.path.expanduser("~/aquarium-chat")
 CHATS = os.path.join(HOME, "chats")
 MEMORY = os.path.join(HOME, "memory.json")
 SHEET = os.path.join(HOME, "care-sheet.md")
 KEY_FILE = os.path.join(HOME, "key")
+PID_FILE = os.path.join(HOME, "pid")
 NODE_CONFIG = os.path.expanduser("~/.config/node-collect")
 DAYS = os.path.expanduser("~/node-data/training/days.csv")
 PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chat.html")
@@ -68,7 +76,11 @@ def tank_lines(tank, now_ms):
         when = f"due in {due / 86_400_000:.1f} days" if due > 0 else f"overdue by {-due / 86_400_000:.1f} days"
         out.append(f"{j['name']}: {last}, every {j['every']} days, {when}.")
     why = "; ".join(tank.get("why", []))
-    out.append(f"Water quality guess from care habits only (no tests): {tank.get('risk', '?')}" + (f" ({why})." if why else "."))
+    # "low" alone was read as bad water by two of three models: say what it is the risk of, and what it means.
+    risk = tank.get("risk", "?")
+    meaning = {"low": "that is good", "building": "a water change may be due soon", "high": "act soon"}.get(risk, "")
+    out.append(f"Risk of the water going bad, guessed from care habits only (no tests): {risk}"
+               + (f", {meaning}" if meaning else "") + (f" ({why})." if why else "."))
     if tank.get("lightOn"):
         out.append(f"Light: usually on at {tank['lightOn']}" + (f" for {tank['lightHours']:.1f} hours." if tank.get("lightHours") else "."))
     out.append("Rear camera watching now: " + ("yes, the light is on." if tank.get("watching") else "no, the light looks off."))
@@ -77,14 +89,15 @@ def tank_lines(tank, now_ms):
     return out
 
 
-def days_lines(rows, keep=7):
-    """The last days from days.csv, compact."""
+def days_lines(rows, keep=7, today=None):
+    """The last days from days.csv, compact. [today]'s row is only so far: the day is not over."""
     out = []
     for row in rows[-keep:]:
         p = row.split(",")
         if len(p) != 8 or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", p[0]):
             continue
-        out.append(f"{p[0]}: lit {int(p[1]) / 60:.1f} h, activity {p[2]}, up to {p[3]} moving at once, "
+        so_far = " so far today" if p[0] == today else ""
+        out.append(f"{p[0]}: lit {int(p[1]) / 60:.1f} h{so_far}, activity {p[2]}, up to {p[3]} moving at once, "
                    f"plants {float(p[4]) * 100:.0f}% of picture, green {p[5]}, clarity {p[6]}, fed {p[7]}x")
     return out
 
@@ -130,7 +143,9 @@ def knowledge(now_ms):
         "CARE SHEET (written by the owner; it is right)\n" + sheet,
         "REMEMBERED FROM EARLIER CHATS (the owner said these)\n" + ("\n".join("- " + f for f in facts) or "(nothing yet)"),
         "THE TANK NOW (from the phone's camera and care log)\n" + "\n".join(tank_lines(fetch_tank(), now_ms)),
-        "LAST DAYS (measured by the camera, not judged)\n" + ("\n".join(days_lines(read_days())) or "(no days yet)"),
+        "LAST DAYS (camera measures for spotting change from day to day, not judgements: plants is only how much of "
+        "the picture is plant)\n"
+        + ("\n".join(days_lines(read_days(), today=datetime.now().strftime("%Y-%m-%d"))) or "(no days yet)"),
         "PAST CHATS\n" + ("\n".join(past) or "(none)"),
     ]
     return "\n\n".join(parts)
@@ -143,14 +158,83 @@ test kit, so ammonia, nitrite, nitrate, pH and temperature are unknown unless th
 short and practical.
 
 {knowledge}
-
+{results}
 Now: {now}"""
+
+GENERAL = """You are a helpful assistant in a chat, running privately on the owner's own computer. Answer clearly
+and to the point; use a short list when it helps. When you are not sure, say so. Never make up facts, names,
+numbers, quotes or links.
+
+WHAT YOU KNOW ABOUT THE OWNER (from earlier chats)
+{facts}
+{results}
+Now: {now}"""
+
+RESULTS = """
+WEB SEARCH RESULTS for "{query}" (searched just now)
+{lines}
+Answer from these results when they cover the question, citing them like [1] or [2]. If they do not answer it,
+say that the search did not find it, rather than guessing.
+"""
+
+
+def results_block(query, results):
+    """Search results as the model reads them; empty when there are none."""
+    if not results:
+        return ""
+    lines = "\n".join(f"[{i + 1}] {r['title']}: {r['content']} ({r['host']})" for i, r in enumerate(results))
+    return RESULTS.format(query=query, lines=lines)
+
+
+NEWS_WORDS = re.compile(r"\b(news|latest|headlines?|happening)\b", re.I)
+
+
+def search_params(query):
+    """SearXNG's query for [query]: its news search for news, which finds articles rather than news websites."""
+    params = {"q": query, "format": "json", "safesearch": 1}
+    if NEWS_WORDS.search(query):
+        params["categories"] = "news"
+    return params
+
+
+def search(query):
+    """The top results for [query] from SearXNG on this server: title, url, host and snippet; [] if it fails."""
+    url = SEARXNG + "?" + urllib.parse.urlencode(search_params(query))
+    try:
+        with urllib.request.urlopen(url, timeout=20) as r:
+            found = json.load(r).get("results", [])
+    except Exception:
+        return []
+    return pick_results(found)
+
+
+def pick_results(found):
+    """The first [SEARCH_RESULTS] usable results: an http(s) link and a title; snippets cut short."""
+    out = []
+    for f in found:
+        link = f.get("url", "")
+        if not link.startswith(("http://", "https://")) or not f.get("title"):
+            continue
+        out.append({"title": f["title"][:120], "url": link, "host": urllib.parse.urlparse(link).netloc,
+                    "content": re.sub(r"\s+", " ", f.get("content") or "")[:300]})
+        if len(out) == SEARCH_RESULTS:
+            break
+    return out
 
 # -- tiers ---------------------------------------------------------------------------------------------------------
 
 DEEP_WORDS = re.compile(r"\b(why|how (do|can|should) i|what should|fix|explain|compare|plan|melt\w*|dying|died|dead|sick|"
                         r"disease|cloud\w*|algae|spots?|gasping|cycle|ammonia|nitrite|nitrate|treat\w*|stock\w*|"
-                        r"add (a |more |some )?\w+|recommend\w*|advice)\b", re.I)
+                        r"add (a |more |some )?\w+|recommend\w*|advice|write|draft|essay|code|program\w*|script|"
+                        r"analy\w*|difference between|pros and cons|step by step|solve|calculat\w*|prove)\b", re.I)
+# What makes a question the aquarium's, so it gets the tank's data.
+AQUA_WORDS = re.compile(r"\b(tank|aquarium|fish\w*|shrimp|snails?|plants?|algae|water change|filter|substrate|gravel|"
+                        r"sand|hornwort|hairgrass|loach\w*|tetras?|guppy|guppies|betta|feed\w*|fed|fertili[sz]\w*|co2|"
+                        r"ammonia|nitrite|nitrate|water quality|cloudy|heater|aquascap\w*)\b", re.I)
+# What wants the web: current things, prices, who/when/where, or asking for a search.
+SEARCH_WORDS = re.compile(r"\b(latest|news|today|this (week|month|year)|current(ly)?|right now|price|costs?|weather|"
+                          r"forecast|score|who won|who is|who was|when is|when was|where is|released?|update|"
+                          r"20[2-3]\d|search|look (it )?up|google|online|website|near me)\b", re.I)
 LOOK_WORDS = re.compile(r"\b(look|see|photo|picture|camera|show me|right now in|is there (any )?algae)\b", re.I)
 JOB_WORDS = {
     "FEED": re.compile(r"\b(fed|feed\w*)\b", re.I),
@@ -163,17 +247,22 @@ WHEN = re.compile(r"\b(when did i( last)?|when was|last time|how long (ago|since
 LIGHT_HOURS = re.compile(r"\bhow long\b.*\blight\b|\blight\b.*\bhow long\b", re.I)
 
 
-def route(text):
-    """The cheapest tier that can answer: 0 data, 1 quick, 2 deep, 3 look."""
-    if WHEN.search(text) and any(p.search(text) for p in JOB_WORDS.values()):
-        return 0
-    if LIGHT_HOURS.search(text) and not DEEP_WORDS.search(text):
-        return 0
-    if LOOK_WORDS.search(text):
-        return 3
-    if DEEP_WORDS.search(text) or len(text.split()) > 25:
-        return 2
-    return 1
+def route(text, aqua_before=False):
+    """
+    How to answer [text]: (tier, aquarium, search). Tier is the cheapest that can: 0 data, 1 quick, 2 deep,
+    3 look. Aquarium when it is about the tank, or a short follow-up to an answer that was. Search when it wants
+    current facts. Data and looks are the aquarium's only.
+    """
+    aqua = bool(AQUA_WORDS.search(text) or LIGHT_HOURS.search(text) or any(p.search(text) for p in JOB_WORDS.values())) \
+        or (aqua_before and len(text.split()) <= 12)
+    if aqua and WHEN.search(text) and any(p.search(text) for p in JOB_WORDS.values()):
+        return 0, True, False
+    if aqua and LIGHT_HOURS.search(text) and not DEEP_WORDS.search(text):
+        return 0, True, False
+    if aqua and LOOK_WORDS.search(text):
+        return 3, True, False
+    tier = 2 if DEEP_WORDS.search(text) or len(text.split()) > 25 else 1
+    return tier, aqua, bool(SEARCH_WORDS.search(text))
 
 
 def data_answer(text, tank, days, now_ms):
@@ -227,10 +316,11 @@ def ollama_once(model, messages, keep_alive, num_predict=200):
     return "".join(ollama_stream(model, messages, keep_alive, num_predict))
 
 
-FACTS_PROMPT = """From the owner's message below, list only lasting facts about their own aquarium that are worth
-remembering for future chats: species and counts, tank size, equipment and its settings, routines, products used,
-problems they have had. Not questions, not feelings, not anything uncertain. Reply with a JSON array of short
-sentences in the third person ("The owner has 6 neon tetras."), or [] if there are none.
+FACTS_PROMPT = """From the owner's message below, list only lasting facts about the owner worth remembering for
+future chats: their aquarium (species and counts, tank size, equipment and its settings, routines, products,
+problems), and about themselves (where they live, their work, family, devices, preferences). Not questions, not
+passing feelings, not anything uncertain. Reply with a JSON array of short sentences in the third person
+("The owner has 6 neon tetras."), or [] if there are none.
 
 Message: {text}"""
 
@@ -337,24 +427,46 @@ def list_chats():
 # -- answering -----------------------------------------------------------------------------------------------------
 
 
-def answer(chat_id, text, tier, send):
-    """One exchange: route, answer in a stream of events, remember, save. [send] takes (event, data)."""
+def answer(chat_id, text, tier, want_search, send):
+    """
+    One exchange: route, search if wanted, answer in a stream of events, remember, save. [send] takes
+    (event, data). [tier] and [want_search] come from the page's buttons, else from [route].
+    """
     now_ms = int(time.time() * 1000)
     chat = (load_chat(chat_id) if chat_id else None) or {
         "id": uuid.uuid4().hex[:12], "title": text[:70], "at": datetime.now().isoformat(timespec="minutes"), "messages": []}
-    tier = route(text) if tier is None else tier
+    last = next((m for m in reversed(chat["messages"]) if m["role"] == "assistant"), None)
+    auto_tier, aqua, auto_search = route(text, bool(last and last.get("aqua")))
+    tier = auto_tier if tier is None else tier
+    searching = auto_search if want_search is None else want_search
+    if tier in (0, 3):
+        aqua, searching = True, False
     send("chat", {"id": chat["id"], "title": chat["title"]})
     reply = None
     if tier == 0:
         reply = data_answer(text, fetch_tank(), read_days(), now_ms)
         if reply is None:
             tier = 1
-    send("tier", {"tier": tier, "name": TIER_NAMES[tier], "model": {0: None, 1: QUICK, 2: DEEP, 3: VISION}[tier]})
+    results = []
+    if searching:
+        send("status", "Searching the web…")
+        results = search(text)
+        send("sources", [{"title": r["title"], "url": r["url"], "host": r["host"]} for r in results])
+        if not results:
+            send("status", "The web search found nothing, or is not running; answering without it.")
+    send("tier", {"tier": tier, "name": TIER_NAMES[tier], "model": {0: None, 1: QUICK, 2: DEEP, 3: VISION}[tier],
+                  "aqua": aqua, "search": bool(results)})
     if reply is not None:
         send("token", reply)
     else:
         history = [{"role": m["role"], "content": m["content"]} for m in chat["messages"][-8:]]
-        system = SYSTEM.format(knowledge=knowledge(now_ms), now=datetime.now().strftime("%A %d %B %Y, %H:%M"))
+        found = results_block(text, results)
+        now = datetime.now().strftime("%A %d %B %Y, %H:%M")
+        if aqua:
+            system = SYSTEM.format(knowledge=knowledge(now_ms), results=found, now=now)
+        else:
+            facts = "\n".join("- " + f["text"] for f in load_memory()) or "(nothing yet)"
+            system = GENERAL.format(facts=facts, results=found, now=now)
         messages = [{"role": "system", "content": system}] + history + [{"role": "user", "content": text}]
         images = None
         model, keep = {1: (QUICK, -1), 2: (DEEP, "5m"), 3: (VISION, "5m")}[tier]
@@ -379,7 +491,8 @@ def answer(chat_id, text, tier, send):
         reply = "".join(parts).strip()
     stamp = datetime.now().isoformat(timespec="minutes")
     chat["messages"] += [{"role": "user", "content": text, "at": stamp},
-                         {"role": "assistant", "content": reply, "at": stamp, "tier": tier}]
+                         {"role": "assistant", "content": reply, "at": stamp, "tier": tier, "aqua": aqua,
+                          "sources": [{"title": r["title"], "url": r["url"], "host": r["host"]} for r in results]}]
     chat["at"] = stamp
     with LOCK:
         os.makedirs(CHATS, exist_ok=True)
@@ -475,6 +588,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(400, b"{}")
             tier = data.get("tier")
             tier = tier if tier in (0, 1, 2, 3) else None
+            want_search = data.get("search")
+            want_search = want_search if isinstance(want_search, bool) else None
             chat_id = str(data.get("chat") or "")
             chat_id = chat_id if CHAT_ID.fullmatch(chat_id) else None
             # A stream of server-sent events, one exchange long.
@@ -489,7 +604,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n".encode())
                 self.wfile.flush()
             try:
-                answer(chat_id, text, tier, send)
+                answer(chat_id, text, tier, want_search, send)
             except (BrokenPipeError, ConnectionResetError):
                 pass
             return
@@ -522,8 +637,11 @@ def main():
     global KEY
     KEY = key()
     os.makedirs(CHATS, exist_ok=True)
+    # So a restart can stop exactly this process, and nothing else that happens to match its name.
+    with open(PID_FILE, "w") as f:
+        f.write(str(os.getpid()))
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-    print(f"Aquarium chat on http://<this server>:{PORT}/{KEY}/", flush=True)
+    print(f"Chat on http://<this server>:{PORT}/{KEY}/", flush=True)
     server.serve_forever()
 
 

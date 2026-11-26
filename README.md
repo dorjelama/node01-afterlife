@@ -402,45 +402,69 @@ None of this is built yet.
 
 ## Aquarium chat
 
-A chat page about your tank, like ChatGPT but on your own server and about nothing else, in
-`server/aquarium-chat/`. It is not part of the phone's app: one Python file (standard library
-only) and one HTML page, beside Ollama on the laptop.
+A chat page like ChatGPT, on your own server, for any question, with your aquarium as its
+special subject, in `server/aquarium-chat/`. It is not part of the phone's app: one Python file
+(standard library only) and one HTML page, beside Ollama and SearXNG on the laptop. No AI
+company sees anything; only web searches leave your network.
 
-**What it knows.** What NODE knows, read fresh for every question: the phone's care log and live
-state (`GET tank`), the camera's days from the collector's `~/node-data/training/days.csv`, a
-**care sheet** you write on the page (your fish, plants, equipment, routine: it is believed over
-the model's general knowledge), the **lasting facts** remembered from your chats, and the titles of
-past chats. All of it goes to the model as a few hundred words of plain lines, so even the small
-model reads it quickly. It says when your data does not cover a question, and never invents a
-measurement: there is no test kit, so ammonia, nitrate, pH and temperature are unknown unless you
-say them.
+**Any question, the tank when it is about the tank.** A question that mentions the tank, the
+fish, plants, algae, a water change or the light (or a short follow-up to one that did) is
+answered with what NODE knows, read fresh: the phone's care log and live state (`GET tank`), the
+camera's days from `~/node-data/training/days.csv`, and a **care sheet** you write on the page,
+believed over the model's general knowledge. Anything else gets a plain assistant. Every answer
+knows the **lasting facts** remembered from your chats. Your tank's data goes to the model as a
+few hundred words of plain lines, which even the small model reads quickly; it says when the data
+does not cover something, and never invents a measurement.
 
-**Tiers, cheapest first**, chosen by simple rules, and shown on each answer:
+**Tiers, cheapest first**, chosen by simple rules and shown on each answer:
 
-| Tier | For | Model | Time |
+| Tier | For | Model | Time on the laptop |
 |---|---|---|---|
 | From your data | "When did I last change the water?", "how long has the light been on?" | none: read straight from the data | instant |
-| Quick | everything else that is simple | `qwen2.5:3b`, NODE's own | seconds |
-| Deep | why, what should I do, explain, troubleshooting | the larger model (`CHAT_DEEP`) | a minute or two, streamed |
+| Quick | everything simple | `qwen2.5:3b`, NODE's own | seconds; 30 s with a search |
+| Deep | why, what should I do, explain, write, compare | `llama3.1:8b` (`CHAT_DEEP`) | 1½–2 minutes, streamed |
 | Looked at the tank | "look", "is there algae?" | `gemma3:4b` with the tank's newest picture | about two minutes; can be wrong |
 
 **Think harder** under an answer asks again one tier up.
 
-**Memory.** The conversation itself; lasting facts ("The owner has 6 neon tetras."), which the
-quick model picks out of what you say and saves at once, each shown as *Remembered: …* with an
-**Undo**, and all listed under **Memory** to edit or delete; and past chats, kept on the server.
+**Web search** through [SearXNG](https://github.com/searxng/searxng), a search engine that runs on
+the laptop and asks Google, Bing, DuckDuckGo and others for it, with no account or key. Questions
+about current things (news, latest, weather, prices, who won, a year) search by themselves; news
+questions use its news search, which finds articles rather than news websites. The model answers
+from the top five results and cites them as [1], [2], listed under the answer as links. Every other
+answer has **Search the web**. Install it once, without sudo: `sh server/searxng-install.sh` on the
+server; it listens on 127.0.0.1:8888 only.
+
+**Memory.** The conversation itself; lasting facts about your tank and about you ("The owner has 6
+neon tetras.", "The owner lives in Kathmandu."), which the quick model picks out of what you say
+and saves at once, each shown as *Remembered: …* with **Undo**, and all listed under **Memory**
+to edit or delete; and past chats, kept on the server.
+
+**Which deep model.** Tried on the laptop (i7-5500U, 8 GB, CPU only) with the chat's own prompt
+and seven questions, qwen 3B loaded beside each as it always is:
+
+| Model | First answer / next | Writing | Swap | Verdict |
+|---|---|---|---|---|
+| `llama3.1:8b` | 94 s / 18–67 s | 3.2 tokens/s | 2.0 GB | Use this: right on cloudy water (a bacterial bloom), the nitrogen cycle and feeding, and the readiest to say what it does not know |
+| `qwen2.5:7b` | 86 s / 17–61 s | 3.5 tokens/s | 1.2 GB | A little faster; contradicted itself on feeding, and misread a due date as a done date |
+| `mistral:7b` | 88 s / 14–58 s | 3.4 tokens/s | 2.5 GB | Advised 50–75% water changes for cloudy water, and read "low risk" as bad water |
+
+Answers vary a little from one run to the next. All three misread "water quality guess: low" (a
+low *risk*) until the line said so; the plain lines the model gets are worth as much as the model.
+Long answers heat the laptop's CPU to the high 80s °C: keep its vents clear.
 
 **Run it** on the server, where the collector already keeps the phone's address:
 
 ```bash
 mkdir -p ~/aquarium-chat-app && cp server/aquarium-chat/chat.py server/aquarium-chat/chat.html ~/aquarium-chat-app/
+ollama pull llama3.1:8b
 (crontab -l; echo "@reboot cd $HOME/aquarium-chat-app && /usr/bin/python3 chat.py >> $HOME/aquarium-chat/server.log 2>&1") | crontab -
 cd ~/aquarium-chat-app && python3 chat.py      # prints the address, with its key, once
 ```
 
 It answers on port 8090, at an address with a random key in it, like the phone's page: plain
-HTTP, for your own network only. Chats, memory and the care sheet live in `~/aquarium-chat/`.
-`python3 -m unittest test_chat` tests the parts that decide things.
+HTTP, for your own network only. Chats, memory, the care sheet and its pid live in
+`~/aquarium-chat/`. `python3 -m unittest test_chat` tests the parts that decide things.
 
 ## Webcam mode
 
@@ -649,7 +673,7 @@ Everything configurable is a constant — there is no settings screen, by design
 ## Project structure
 
 Beside the app, `server/` holds what runs on the laptop: `node-collect.py`, the collector, and
-`aquarium-chat/` (`chat.py`, `chat.html`, `test_chat.py`).
+`aquarium-chat/` (`chat.py`, `chat.html`, `test_chat.py`), and `searxng-install.sh`, its web search.
 
 ```
 app/src/main/java/dev/node01/afterlife/

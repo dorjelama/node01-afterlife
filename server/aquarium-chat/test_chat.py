@@ -18,15 +18,55 @@ TANK = {
 
 
 class Route(unittest.TestCase):
-    def test_tiers(self):
-        self.assertEqual(0, chat.route("When did I last change the water?"))
-        self.assertEqual(0, chat.route("when was the filter cleaned"))
-        self.assertEqual(0, chat.route("How long has the light been on today?"))
-        self.assertEqual(3, chat.route("Look at the tank: is there algae?"))
-        self.assertEqual(2, chat.route("Why are my plant leaves melting?"))
-        self.assertEqual(2, chat.route("Explain the nitrogen cycle"))
-        self.assertEqual(1, chat.route("Is my tank healthy today?"))
-        self.assertEqual(1, chat.route("hello"))
+    def test_aquarium_tiers(self):
+        self.assertEqual((0, True, False), chat.route("When did I last change the water?"))
+        self.assertEqual((0, True, False), chat.route("when was the filter cleaned"))
+        self.assertEqual((0, True, False), chat.route("How long has the light been on today?"))
+        self.assertEqual((3, True, False), chat.route("Look at the tank: is there algae?"))
+        self.assertEqual((2, True, False), chat.route("Why are my plant leaves melting?"))
+        self.assertEqual((1, True, False), chat.route("Is my tank healthy?"))
+
+    def test_general_questions(self):
+        self.assertEqual((1, False, False), chat.route("hello"))
+        self.assertEqual((2, False, False), chat.route("Explain compound interest"))
+        self.assertEqual((2, False, False), chat.route("Write a short message to my landlord"))
+
+    def test_search(self):
+        self.assertTrue(chat.route("What is the latest news about Nepal?")[2])
+        self.assertTrue(chat.route("Who won the match yesterday?")[2])
+        self.assertTrue(chat.route("What is the weather in Kathmandu tomorrow?")[2])
+        self.assertFalse(chat.route("What is 15% of 2400?")[2])
+        self.assertFalse(chat.route("When was the filter cleaned?")[2], "the log answers it, not the web")
+
+    def test_follow_ups_stay_with_the_tank(self):
+        self.assertTrue(chat.route("and how often?", aqua_before=True)[1])
+        self.assertFalse(chat.route("and how often?")[1])
+        long_new = "Now something else entirely: explain how mortgages work in a few simple steps please"
+        self.assertFalse(chat.route(long_new, aqua_before=True)[1], "a long new question starts afresh")
+
+
+class Search(unittest.TestCase):
+    def test_news_asks_for_articles(self):
+        self.assertEqual("news", chat.search_params("What is the latest news about Nepal?").get("categories"))
+        self.assertNotIn("categories", chat.search_params("ideal temperature for neon tetras"))
+
+    def test_picks_usable_results(self):
+        found = [{"title": "Neon tetra care", "url": "https://example.org/neon", "content": "Keep them   at 22-26 C."},
+                 {"title": "No link", "url": "javascript:alert(1)", "content": "x"},
+                 {"title": "", "url": "https://example.org/empty", "content": "x"}] + \
+                [{"title": f"r{i}", "url": f"https://e.com/{i}", "content": None} for i in range(10)]
+        picked = chat.pick_results(found)
+        self.assertEqual(chat.SEARCH_RESULTS, len(picked))
+        self.assertEqual({"title": "Neon tetra care", "url": "https://example.org/neon", "host": "example.org",
+                          "content": "Keep them at 22-26 C."}, picked[0])
+        self.assertEqual("", picked[1]["content"])
+
+    def test_block_for_the_model(self):
+        self.assertEqual("", chat.results_block("q", []))
+        block = chat.results_block("neon tetra temperature", chat.pick_results(
+            [{"title": "Neon tetra care", "url": "https://example.org/neon", "content": "22-26 C."}]))
+        self.assertIn('WEB SEARCH RESULTS for "neon tetra temperature"', block)
+        self.assertIn("[1] Neon tetra care: 22-26 C. (example.org)", block)
 
 
 class DataAnswers(unittest.TestCase):
@@ -57,11 +97,14 @@ class Knowledge(unittest.TestCase):
         self.assertIn("Filter clean: not logged yet, every 30 days, due in 20.0 days.", lines)
         self.assertTrue(any("(can be wrong): A planted aquarium with clear water." in l for l in lines))
         self.assertIn("not answering", chat.tank_lines(None, NOW)[0])
+        self.assertIn("Risk of the water going bad, guessed from care habits only (no tests): building, "
+                      "a water change may be due soon (9 days since the last water change).", lines)
 
     def test_days_lines(self):
         rows = ["date,lit_minutes,activity,moving_at_once,plants,green,clarity,feeds", "2026-11-26,300,4.60,3,0.190,0.387,82.1,1"]
         self.assertEqual(["2026-11-26: lit 5.0 h, activity 4.60, up to 3 moving at once, plants 19% of picture, "
                           "green 0.387, clarity 82.1, fed 1x"], chat.days_lines(rows))
+        self.assertIn("lit 5.0 h so far today,", chat.days_lines(rows, today="2026-11-26")[0])
 
 
 class Memory(unittest.TestCase):
