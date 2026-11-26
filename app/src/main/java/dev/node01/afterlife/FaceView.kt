@@ -268,9 +268,12 @@ class FaceView @JvmOverloads constructor(
         kick()
     }
 
-    /** Small icons in the bottom-right: a muted speaker while [quiet], and the AI server, up or down. Nothing unless [shown]. */
-    fun showStatus(shown: Boolean, quiet: Boolean, aiUp: Boolean) {
-        val text = if (!shown) null else (if (quiet) "Q " else "") + if (aiUp) "A" else "O"
+    /**
+     * Small icons in the bottom-right: a muted speaker while [quiet], and the AI server, up or down, with its
+     * CPU temperature in degrees C after it while one is coming in. Nothing unless [shown].
+     */
+    fun showStatus(shown: Boolean, quiet: Boolean, aiUp: Boolean, serverTempC: Int?) {
+        val text = if (!shown) null else (if (quiet) "Q " else "") + (if (aiUp) "A" else "O") + (serverTempC ?: "")
         if (text == statusText) return
         statusText = text
         kick()

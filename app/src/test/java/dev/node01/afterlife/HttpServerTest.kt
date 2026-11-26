@@ -42,6 +42,7 @@ class HttpServerTest {
         assertEquals(Route.Usage, HttpServer.route("POST", "/$key/usage", key))
         assertEquals(Route.Task, HttpServer.route("POST", "/$key/task", key))
         assertEquals(Route.Pc, HttpServer.route("POST", "/$key/pc", key))
+        assertEquals(Route.ServerTemp, HttpServer.route("POST", "/$key/server", key))
         assertEquals(Route.Cam, HttpServer.route("GET", "/$key/cam", key))
         assertEquals("the page's cache-buster", Route.Cam, HttpServer.route("GET", "/$key/cam?1731500000000", key))
         assertEquals(Route.Mode, HttpServer.route("POST", "/$key/mode", key))

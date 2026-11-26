@@ -153,6 +153,11 @@ class NodeActivity : Activity() {
 
     /** The PC's load as it last sent it, and when, in elapsedRealtime: shown only while it keeps coming. */
     private var pc: PcStats? = null
+
+    /** The AI server's CPU temperature, sent every 15 seconds by its cron job. */
+    private var serverTemp: Int? = null
+    private var serverTempAtMs = 0L
+    private var serverHotWarned = false
     private var pcAtMs = NEVER
 
     /** Claude's 5-hour session usage, last sent by the PC's status line; kept across restarts. */
@@ -951,7 +956,7 @@ class NodeActivity : Activity() {
         face.showTime(if (nightClock || !detailsShown) null else time)
         // A script that has stopped sending leaves nothing behind on the face.
         face.showPc(pc?.takeIf { detailsShown && now - pcAtMs <= PC_FRESH_MS })
-        face.showStatus(detailsShown, quiet, rephraser != null)
+        face.showStatus(detailsShown, quiet, rephraser != null, serverTemp?.takeIf { now - serverTempAtMs <= SERVER_TEMP_FRESH_MS })
         // Nobody's hand for a while: back to the face, and the model unloaded, so the phone stays cool.
         if (hands != null && now - handSeenMs > HANDS_IDLE_MS) stopHands()
         if (taskList.visibility == View.VISIBLE && now >= tasksUntilMs) closeTasks()
@@ -1861,6 +1866,20 @@ class NodeActivity : Activity() {
     }
 
     /** From the PC, every few seconds: shown by the next heartbeat. */
+    private fun onServerTemp(celsius: Int) {
+        serverTemp = celsius
+        serverTempAtMs = SystemClock.elapsedRealtime()
+        // Once per hot spell, as a note to dismiss; it must cool well below before it can warn again.
+        // At 95 the server's node-temp.sh stops its AI, and the sparkle breaks.
+        if (celsius >= SERVER_HOT_C && !serverHotWarned) {
+            serverHotWarned = true
+            onNote("The server is hot, $celsius degrees.", 0)
+        } else if (celsius < SERVER_HOT_C - 10) {
+            serverHotWarned = false
+        }
+        reevaluate()
+    }
+
     private fun onPc(stats: PcStats) {
         pc = stats
         pcAtMs = SystemClock.elapsedRealtime()
@@ -2061,6 +2080,7 @@ class NodeActivity : Activity() {
             onUsage = { u -> mainExecutor.execute { if (server === http) onUsage(u) } },
             onTask = { title, desc -> mainExecutor.execute { if (server === http) onTask(title, desc) } },
             onPc = { stats -> mainExecutor.execute { if (server === http) onPc(stats) } },
+            onServerTemp = { c -> mainExecutor.execute { if (server === http) onServerTemp(c) } },
             cam = camView,
             webcamPage = webcamPage,
             aquariumPage = aquariumPage,
@@ -2456,6 +2476,12 @@ class NodeActivity : Activity() {
 
         /** The PC sends its load every 5 seconds: three missed and the readout goes. */
         const val PC_FRESH_MS = 15_000L
+
+        /** A server temperature older than this is gone from the face: the cron job or the server has stopped. */
+        const val SERVER_TEMP_FRESH_MS = 60_000L
+
+        /** The server's CPU (an i7-5500U, critical at 105) this hot: warn. node-temp.sh stops its AI at 95. */
+        const val SERVER_HOT_C = 85
 
         /** Camera view frames a slow viewer may fall behind by before frames are dropped for it. */
         const val CAM_VIEW_QUEUE = 2

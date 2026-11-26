@@ -49,7 +49,7 @@ import kotlin.concurrent.thread
  * only in webcam mode; in face mode `audio` stays silent, and `video` shows the tank while the rear camera
  * watches it.
  *
- * [onClaude], [onNote], [onFace], [onSay], [onUsage], [onTask], [onPc], [onMode], [activity], [onWatch], [tank],
+ * [onClaude], [onNote], [onFace], [onSay], [onUsage], [onTask], [onPc], [onServerTemp], [onMode], [activity], [onWatch], [tank],
  * [onTank], [onTankDone], [tankPhoto], [onTankDescribe] and [onTankLabel] are called on the connection's thread.
  *
  * One instance per session: [start], then [stop], then discard.
@@ -64,6 +64,8 @@ class HttpServer(
     private val onUsage: (SessionUsage) -> Unit,
     private val onTask: (title: String, description: String) -> Unit,
     private val onPc: (PcStats) -> Unit,
+    /** The AI server's CPU temperature, in whole degrees C, as its cron job reports it. */
+    private val onServerTemp: (celsius: Int) -> Unit,
     /** JPEG frames for the camera view, filled by [Presence] only while someone is watching. */
     private val cam: Hub,
     private val webcamPage: ByteArray,
@@ -164,6 +166,12 @@ class HttpServer(
                         val stats = PcStats.parse(parseForm(String(body, Charsets.UTF_8)))
                         respond(out, 204)
                         if (stats != null) onPc(stats)
+                    }
+                    Route.ServerTemp -> readBody(head, input, out)?.let { body ->
+                        val c = parseForm(String(body, Charsets.UTF_8))["temp"]?.trim()?.toFloatOrNull()
+                            ?.takeIf { it.isFinite() && it in 0f..150f }?.toInt()
+                        respond(out, 204)
+                        if (c != null) onServerTemp(c)
                     }
                     Route.Cam -> streamJpeg(out, cam)
                     Route.Mode -> readBody(head, input, out)?.let { body ->
@@ -349,6 +357,7 @@ class HttpServer(
         data object Usage : Route
         data object Task : Route
         data object Pc : Route
+        data object ServerTemp : Route
         data object Cam : Route
         data object Mode : Route
         data object Webcam : Route
@@ -424,6 +433,7 @@ class HttpServer(
                 method == "POST" && rest == "usage" -> Route.Usage
                 method == "POST" && rest == "task" -> Route.Task
                 method == "POST" && rest == "pc" -> Route.Pc
+                method == "POST" && rest == "server" -> Route.ServerTemp
                 method == "GET" && rest == "cam" -> Route.Cam
                 method == "POST" && rest == "mode" -> Route.Mode
                 method == "GET" && rest == "webcam" -> Route.Webcam
