@@ -1,0 +1,2 @@
+# Scripts that run on the Linux server: Unix line endings, whatever the checkout.
+server/** text eol=lf
