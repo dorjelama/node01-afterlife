@@ -115,7 +115,7 @@ reacts, chirps and adds a line here. The log stays on the phone for a week.</p>
 <p id="tank-described"></p>
 <div class="row">
   <button type="button" id="tank-live-toggle" aria-controls="tank-live">Live view</button>
-  <button type="button" id="tank-describe">Describe it now</button>
+  <button type="button" id="tank-describe">Capture and describe</button>
   <span class="said" id="tank-live-said" role="status"></span>
 </div>
 <img id="tank-live" alt="The tank, live from the rear camera" hidden>
@@ -504,7 +504,9 @@ document.getElementById('tank-describe').onclick = async () => {
   try {
     const res = await fetch('tank/describe', { method: 'POST' });
     if (!res.ok) throw new Error(res.status);
-    tankSaid.textContent = 'Asked. The server takes a minute or two; this page shows it when it is done.';
+    tankSaid.textContent = 'Taking a picture now. The AI on your server describes it in about two minutes; '
+      + 'write your own label for it under TRAINING meanwhile.';
+    setTimeout(loadTank, 3000);
   } catch (err) {
     tankSaid.textContent = 'Not sent: is NODE Companion open on the phone?';
   }

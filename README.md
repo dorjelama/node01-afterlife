@@ -323,8 +323,8 @@ face keeps following you while the rear camera watches the tank. Every 10 minute
 
 **A description once a day.** The first lit look of the day goes to `gemma3:4b`, the model on
 your server that can see, which says in a sentence or two what the picture shows: the water,
-the plants, any fish. It takes about 100 seconds on that laptop; **Describe it now** on the page
-asks again. On a real picture it found the plants and two fish, called the water relatively
+the plants, any fish. It takes about 100 seconds on that laptop. **Capture and describe** on the page
+takes a fresh picture there and then, keeps it as the newest for your label, and has it described. On a real picture it found the plants and two fish, called the water relatively
 clear, and invented a yellow fish while missing one on the sand. It is only a description, shown on the page and handed to "how is the tank?", and
 never sounds an alert: asked whether anything looked wrong, gemma3:4b found cloudy green water
 in a photo of a cardboard label.

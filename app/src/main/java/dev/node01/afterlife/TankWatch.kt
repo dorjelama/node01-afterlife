@@ -40,15 +40,31 @@ class TankWatch(
     private var nextFrameMs = 0L
     private val frames = ArrayList<ByteArray>()
 
+    /** A picture asked for out of turn, taken from the next settled frame. */
+    @Volatile
+    private var pending: ((TankCam.Look) -> Unit)? = null
+
     fun start() = camcorder.start()
 
     fun stop() = camcorder.stop()
+
+    /** A picture now, rather than at the minute: [then] gets it, with the minute's frames so far, on the main thread. */
+    fun capture(then: (TankCam.Look) -> Unit) {
+        pending = then
+    }
 
     private fun onFrame(image: Image) {
         val now = SystemClock.elapsedRealtime()
         // The first frames are dark while exposure finds its level.
         if (settledMs == 0L) settledMs = now + TankCam.SETTLE_MS
-        if (now < settledMs || now < nextFrameMs) return
+        if (now < settledMs) return
+        pending?.let { then ->
+            pending = null
+            val (jpeg, argb) = TankCam.picture(nv21(image), rotation)
+            val look = TankCam.Look(jpeg, argb, frames.toList() + TankCam.smallLuma(image))
+            context.mainExecutor.execute { then(look) }
+        }
+        if (now < nextFrameMs) return
         if (minuteFromMs == 0L) minuteFromMs = now
         nextFrameMs = now + TankCam.FRAME_GAP_MS
         frames += TankCam.smallLuma(image)

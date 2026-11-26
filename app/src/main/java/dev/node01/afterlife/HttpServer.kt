@@ -34,7 +34,8 @@ import kotlin.concurrent.thread
  * - `POST /<key>/tank`     the aquarium's details, as a form: `name`, `litres`, `kind`, `livestock`, `every.<JOB>` (days)
  * - `POST /<key>/tank/done` an aquarium job done, as a form: `job` (`FEED`, `WATER_CHANGE`, ...)
  * - `GET  /<key>/tank/photo` the rear camera's newest picture of the tank, as a JPEG; 404 before the first
- * - `POST /<key>/tank/describe` has the model on the server describe that picture now (a minute or two)
+ * - `POST /<key>/tank/describe` takes a fresh picture of the tank now and has the model on the server describe it
+ *                         (a minute or two)
  * - `POST /<key>/tank/label` what is really in that picture, as a form: `text`; kept beside it for training
  *
  * Every path sits under a random key shown on the phone's screen; anything

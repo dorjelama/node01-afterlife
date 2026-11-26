@@ -473,7 +473,33 @@ class NodeActivity : Activity() {
         }
     }
 
-    /** Describe the newest picture now: from the page, or for the day's first lit look. */
+    /**
+     * From the page: a fresh picture of the tank, now -- from the rear camera if it is watching, else a quick look
+     * -- kept with the training pictures, so it is the newest one there for your label, then described.
+     */
+    private fun onTankCapture() {
+        val watch = tankWatch
+        when {
+            watch != null -> watch.capture { if (tankWatch === watch) captured(it) }
+            tankCam == null -> TankCam(this, displayDegrees()) { look ->
+                tankCam = null
+                if (faceOn && look != null && look.frames.isNotEmpty()) captured(look) else Log.d(TAG, "tank: no picture")
+            }.also { tankCam = it }.start()
+            else -> Log.d(TAG, "tank: already looking")
+        }
+    }
+
+    /** A picture taken on request: measured, kept, and then described. */
+    private fun captured(look: TankCam.Look) {
+        thread(name = "node-tank-capture", isDaemon = true) {
+            val stats = TankLook.Stats(TankLook.brightness(look.frames.first()), TankLook.green(look.argb), TankLook.motion(look.frames))
+            val photo = keepTraining(LocalDateTime.now(), look.jpeg, stats) ?: return@thread
+            Log.d(TAG, "tank: captured ${photo.name}")
+            mainExecutor.execute { describeTank(photo) }
+        }
+    }
+
+    /** Describe the newest picture now: for the day's first lit look. */
     private fun onTankDescribe() {
         thread(name = "node-tank-photo", isDaemon = true) {
             val photo = newestPhoto() ?: return@thread
@@ -496,20 +522,22 @@ class NodeActivity : Activity() {
 
     /**
      * A minute's picture and numbers into the training folder: one folder a day, `HHmmss.jpg` and a
-     * `minutes.csv` row per picture; days older than [TRAINING_DAYS] go. Blocking.
+     * `minutes.csv` row per picture; days older than [TRAINING_DAYS] go. The picture's file, or null if it could
+     * not be kept. Blocking.
      */
-    private fun keepTraining(now: LocalDateTime, jpeg: ByteArray, stats: TankLook.Stats) {
-        val root = getExternalFilesDir(TRAINING) ?: return
-        runCatching {
+    private fun keepTraining(now: LocalDateTime, jpeg: ByteArray, stats: TankLook.Stats): File? {
+        val root = getExternalFilesDir(TRAINING) ?: return null
+        return runCatching {
             val day = File(root, now.format(DAY_NAME)).apply { mkdirs() }
             val name = now.format(PHOTO_NAME) + ".jpg"
-            File(day, name).writeBytes(jpeg)
+            val photo = File(day, name).apply { writeBytes(jpeg) }
             val csv = File(day, "minutes.csv")
             if (!csv.exists()) csv.writeText("photo,brightness,green,motion\n")
             csv.appendText("$name,${stats.encode().replace(' ', ',')}\n")
             val oldest = now.toLocalDate().minusDays(TRAINING_DAYS).format(DAY_NAME)
             root.listFiles { f -> f.isDirectory && DAY_DIR.matches(f.name) && f.name < oldest }?.forEach { it.deleteRecursively() }
-        }.onFailure { Log.e(TAG, "tank: training data not kept: ${it.message}") }
+            photo
+        }.onFailure { Log.e(TAG, "tank: training data not kept: ${it.message}") }.getOrNull()
     }
 
     /** One label, as a JSON line in the training folder's `labels.jsonl`: which picture, who says so, and what. Blocking. */
@@ -1887,7 +1915,7 @@ class NodeActivity : Activity() {
                 }
             },
             tankPhoto = ::tankPhoto,
-            onTankDescribe = { mainExecutor.execute { if (server === http) onTankDescribe() } },
+            onTankDescribe = { mainExecutor.execute { if (server === http) onTankCapture() } },
             onTankLabel = { text -> mainExecutor.execute { if (server === http) onTankLabel(text) } },
         )
         server = http
