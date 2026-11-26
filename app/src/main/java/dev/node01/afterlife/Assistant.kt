@@ -63,6 +63,9 @@ sealed interface Command {
     /** "Louder" / "quieter": one step of the phone's media volume. */
     data class Volume(val up: Boolean) : Command
 
+    /** "Be quiet" / "you can talk": no chirps or spoken lines for Claude and small talk. Alarms still ring. */
+    data class Quiet(val on: Boolean) : Command
+
     /** "Sing." */
     data object Sing : Command
 
@@ -305,6 +308,10 @@ object Assistant {
             has("louder", "speak up", "volume up", "ठूलो स्वर", "ठूलो बोल") -> Command.Volume(up = true)
             has("quieter", "softer", "quiet down", "volume down", "बिस्तारै", "सानो स्वर") ->
                 Command.Volume(up = false)
+            // After the volume: "quieter" and "quiet down" are a step down, not silence. "unmute" before "mute".
+            has("unmute", "you can talk", "you can speak", "talk again", "speak again", "sound on") ->
+                Command.Quiet(on = false)
+            word("quiet", "silent", "mute", "shh", "chup") || has("चुप") -> Command.Quiet(on = true)
             has("sing", "a song", "गीत", "गाउ") -> Command.Sing
 
             has("coin", "heads or tails", "सिक्का") -> Command.Coin
@@ -810,6 +817,7 @@ object Assistant {
         Command.StopwatchStart -> "Stopwatch started. Ask me how long."
         Command.StopwatchRead -> f.stopwatchMs?.let { "${durationEn(it)}." } ?: "No stopwatch is running."
         is Command.Volume -> if (c.up) "Louder." else "Quieter."
+        is Command.Quiet -> if (c.on) "Quiet mode." else "I'll talk again."
         Command.Sing -> "La la la!"
         Command.Coin -> if (f.random.nextBoolean()) "Heads." else "Tails."
         is Command.Dice -> "You rolled a ${roll(c, f.random)}."
@@ -883,6 +891,7 @@ object Assistant {
         Command.StopwatchStart -> "स्टपवाच सुरु भयो। कति भयो भनेर सोध्नुहोस्।"
         Command.StopwatchRead -> f.stopwatchMs?.let { "${durationNe(it)} भयो।" } ?: "स्टपवाच चलिरहेको छैन।"
         is Command.Volume -> if (c.up) "ठूलो स्वरमा।" else "बिस्तारै।"
+        is Command.Quiet -> if (c.on) "चुप लागें।" else "फेरि बोल्छु।"
         Command.Sing -> "ला ला ला!"
         Command.Coin -> if (f.random.nextBoolean()) "चित।" else "पट।"
         is Command.Dice -> "${Bs.neDigits(roll(c, f.random))} आयो।"

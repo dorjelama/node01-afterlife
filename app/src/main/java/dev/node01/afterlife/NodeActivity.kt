@@ -158,6 +158,9 @@ class NodeActivity : Activity() {
     private var replyUntilMs = 0L
     private var voiceAsleep = false
 
+    /** Told "be quiet": Claude's chirps and every unprompted line stay silent until "you can talk". */
+    private var quiet = false
+
     /** The language NODE listens for first and last answered in. */
     private var voiceLang = Lang.EN
 
@@ -729,14 +732,15 @@ class NodeActivity : Activity() {
 
     /**
      * A short spoken line for [moment], after any chirp has finished. Silent
-     * when talk is off, the room is dark, NODE is listening, or it spoke too
+     * when talk is off, NODE is listening, the room is dark (urgent lines
+     * excepted: Claude needing you or finishing speaks at night), or it spoke too
      * recently ([Chatter] decides). Small talk is dropped while something is
      * being said; an urgent line waits its turn. [instead], when given, is said
      * in place of the moment's own line, in English. True if it spoke.
      */
     private fun chat(moment: Moment, instead: String? = null): Boolean {
         val sp = speaker ?: return false
-        if (!TALK || dark || listening) return false
+        if (!TALK || quiet || listening || (dark && !moment.urgent)) return false
         if (sp.busy && !moment.urgent) return false
         // Nepali small talk needs a Nepali voice; English is installed on the phone.
         val lang = if (instead == null && sp.canSpeak(voiceLang)) voiceLang else Lang.EN
@@ -994,6 +998,7 @@ class NodeActivity : Activity() {
                 // Wall-clock, and in prefs, so it keeps counting through a screen off.
                 Command.StopwatchStart -> prefs.edit().putLong(KEY_STOPWATCH, wall).apply()
                 is Command.Volume -> adjustVolume(c.up)
+                is Command.Quiet -> quiet = c.on
                 Command.Sing -> {
                     face.play(Act.JOY)
                     chirp.sing()
@@ -1163,26 +1168,25 @@ class NodeActivity : Activity() {
         val now = SystemClock.elapsedRealtime()
         val entered = sessions.onEvent(fields, now)
         Log.d(TAG, "claude ${fields[ClaudeSessions.EVENT]} -> ${entered ?: "no change"}")
-        if (!dark) {
-            if (fields[ClaudeSessions.EVENT] == "PostToolUseFailure") winced(fields, now)
-            when (entered) {
-                ClaudeSessions.State.NEEDS_YOU -> {
-                    chirp.attention()
-                    // A permission request says what it is for: "Claude wants to delete the build folder."
-                    val asks = if (fields[ClaudeSessions.EVENT] != "PermissionRequest") null else Approval.describe(
-                        fields[ClaudeSessions.TOOL_NAME],
-                        fields[ClaudeSessions.TOOL_INPUT],
-                        fields[ClaudeSessions.CWD]?.let { ClaudeSessions.projectOf(it) }.orEmpty(),
-                    )
-                    chat(Moment.NEEDS_YOU, asks)
-                }
-                ClaudeSessions.State.DONE -> {
-                    chirp.done()
-                    face.play(Act.JOY)
-                    chat(Moment.DONE)
-                }
-                else -> Unit
+        // Dark room or not: work happens at night, and Claude finishing or waiting is worth a sound.
+        if (fields[ClaudeSessions.EVENT] == "PostToolUseFailure") winced(fields, now)
+        when (entered) {
+            ClaudeSessions.State.NEEDS_YOU -> {
+                if (!quiet) chirp.attention()
+                // A permission request says what it is for: "Claude wants to delete the build folder."
+                val asks = if (fields[ClaudeSessions.EVENT] != "PermissionRequest") null else Approval.describe(
+                    fields[ClaudeSessions.TOOL_NAME],
+                    fields[ClaudeSessions.TOOL_INPUT],
+                    fields[ClaudeSessions.CWD]?.let { ClaudeSessions.projectOf(it) }.orEmpty(),
+                )
+                chat(Moment.NEEDS_YOU, asks)
             }
+            ClaudeSessions.State.DONE -> {
+                if (!quiet) chirp.done()
+                face.play(Act.JOY)
+                chat(Moment.DONE)
+            }
+            else -> Unit
         }
         reevaluate()
     }

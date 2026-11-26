@@ -308,6 +308,13 @@ class AssistantTest {
         assertEquals(Command.StopwatchRead, parse("how long"))
         assertEquals(Command.Volume(true), parse("louder"))
         assertEquals(Command.Volume(false), parse("quieter"))
+        assertEquals(Command.Volume(false), parse("quiet down"))
+        assertEquals(Command.Quiet(true), parse("quiet"))
+        assertEquals(Command.Quiet(true), parse("be quiet"))
+        assertEquals(Command.Quiet(true), parse("silent mode"))
+        assertEquals(Command.Quiet(true), parse("mute"))
+        assertEquals(Command.Quiet(false), parse("unmute"))
+        assertEquals(Command.Quiet(false), parse("you can talk now"))
         assertEquals(Command.Sing, parse("sing me a song"))
 
         assertEquals("No stopwatch is running.", Assistant.reply(Command.StopwatchRead, Lang.EN, f))

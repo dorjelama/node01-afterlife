@@ -142,7 +142,7 @@ class Rephraser(private val server: String = SERVER, private val model: String =
             "set an alarm for 7 am", "remind me every 30 minutes to drink water", "take a note buy milk",
             "what is claude doing", "how much of my session is left", "when does my session reset",
             "6 plus 2", "6 minus 2", "6 times 2", "6 divided by 2", "5 km in miles", "20 celsius in fahrenheit",
-            "start a stopwatch", "how long", "louder", "quieter", "go to sleep", "wake up", "flip a coin",
+            "start a stopwatch", "how long", "louder", "quieter", "go to sleep", "wake up", "be quiet", "you can talk", "flip a coin",
             "pick a number between 1 and 10", "help", "sing", "dismiss",
         )
 
