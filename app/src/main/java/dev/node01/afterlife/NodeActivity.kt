@@ -84,6 +84,22 @@ class NodeActivity : Activity() {
     /** The aquarium NODE looks after; null until one is set up, on the page or by saying a job was done. */
     private var tank: Tank? = null
 
+    /** The rear camera, during a look at the tank; the front one is closed meanwhile. */
+    private var tankCam: TankCam? = null
+
+    /** What the rear camera last made of the tank, for the model's notes; null before the first look. */
+    private var tankSeen: String? = null
+
+    /** The camera's word that the water looks greener than last week; read by the page's thread too. */
+    @Volatile
+    private var tankGreener = false
+
+    /** Looks in a row with the fish unusually still: one alone could be a fish hiding behind a plant. */
+    private var stillLooks = 0
+
+    /** The face is up (not the webcam, not stopped): what a tank look hands the front camera back to. */
+    private var faceOn = false
+
     /** The task list is open over the face until this moment; every touch on it moves it on. */
     private var tasksUntilMs = 0L
 
@@ -308,8 +324,80 @@ class NodeActivity : Activity() {
         } else {
             problem = getString(R.string.status_no_permission)
         }
+        faceOn = true
+        statusView.postDelayed(lookAtTank, TANK_FIRST_MS)
         reevaluate()
     }
+
+    /**
+     * Every [TANK_EVERY_MS], with a tank set up: the front camera hands over to the rear one for a look at the tank
+     * ([TankCam], a few seconds), then takes back over. Put off a minute while you are talking to NODE or it is busy.
+     */
+    private val lookAtTank = object : Runnable {
+        override fun run() {
+            val free = tank != null && tankCam == null && presence != null && !listening && !thinking && hands == null &&
+                speaker?.busy != true
+            statusView.postDelayed(this, if (free) TANK_EVERY_MS else TANK_RETRY_MS)
+            if (!free) return
+            val now = SystemClock.elapsedRealtime()
+            // Still here through the look, rather than gone and back: the front camera is blind for a few seconds.
+            if (now - faceAtMs <= Mood.FACE_GRACE_MS) faceAtMs = now + TANK_LOOK_MS
+            statusView.removeCallbacks(retryCamera)
+            stopPresence()
+            val cam = TankCam(this@NodeActivity, displayDegrees(), ::onTankLook)
+            tankCam = cam
+            // The front camera lets go a moment after it is closed.
+            statusView.postDelayed({ if (tankCam === cam) cam.start() }, CAMERA_HANDOVER_MS)
+        }
+    }
+
+    /** A look at the tank is over: the front camera back, then the look measured and kept, off the main thread. */
+    private fun onTankLook(look: TankCam.Look?) {
+        tankCam = null
+        if (!faceOn) return
+        startPresence()
+        val dir = getExternalFilesDir(null)
+        if (look == null || look.frames.isEmpty() || dir == null) {
+            Log.d(TAG, "tank: no look")
+            return
+        }
+        thread(name = "node-tank-look", isDaemon = true) {
+            val now = LocalDateTime.now()
+            val stats = TankLook.Stats(TankLook.brightness(look.frames.first()), TankLook.green(look.argb), TankLook.motion(look.frames))
+            val past = File(dir, TANK_STATS).takeIf { it.isFile }?.let { runCatching { it.readLines() }.getOrNull() }.orEmpty()
+                .mapNotNull { TankLook.decode(it.drop(STAMP_CHARS)) }
+            val greener = TankLook.greener(stats, past)
+            val still = TankLook.still(stats, past)
+            AskedLog.add(dir, now, stats.encode(), TANK_STATS)
+            savePhoto(look.jpeg, now)
+            Log.d(TAG, "tank: look ${stats.encode()} greener=$greener still=$still")
+            mainExecutor.execute {
+                tankSeen = TankLook.describe(stats, greener, still)
+                tankGreener = greener
+                stillLooks = if (still) stillLooks + 1 else 0
+                if (stillLooks == STILL_LOOKS) {
+                    inbox.add(TANK_STILL_NOTE, 0L, System.currentTimeMillis(), Inbox.Kind.NOTE)
+                    saveInbox()
+                    tankLog("the fish looked unusually still")
+                    reevaluate()
+                }
+            }
+        }
+    }
+
+    /** The look's picture into the tank folder, as a week-long time-lapse; older pictures go. Blocking. */
+    private fun savePhoto(jpeg: ByteArray, now: LocalDateTime) {
+        val dir = getExternalFilesDir(TANK_PHOTOS) ?: return
+        runCatching {
+            File(dir, now.format(PHOTO_NAME) + ".jpg").writeBytes(jpeg)
+            val cutoff = System.currentTimeMillis() - TANK_PHOTO_DAYS * Tank.DAY_MS
+            dir.listFiles()?.filter { it.lastModified() < cutoff }?.forEach { it.delete() }
+        }.onFailure { Log.e(TAG, "tank: photo not kept: ${it.message}") }
+    }
+
+    /** The newest picture of the tank, for the page; on a server thread. */
+    private fun tankPhoto(): ByteArray? = getExternalFilesDir(TANK_PHOTOS)?.listFiles { f -> f.name.endsWith(".jpg") }
+        ?.maxByOrNull { it.name }?.let { runCatching { it.readBytes() }.getOrNull() }
 
     override fun onRequestPermissionsResult(
         requestCode: Int,
@@ -347,6 +435,10 @@ class NodeActivity : Activity() {
     }
 
     private fun stopFace() {
+        faceOn = false
+        statusView.removeCallbacks(lookAtTank)
+        tankCam?.cancel()
+        tankCam = null
         stopHands()
         stopPresence()
         senses?.stop()
@@ -1136,7 +1228,7 @@ class NodeActivity : Activity() {
      * up. Without an answer, the fixed one.
      */
     private fun tankStatus(question: String, model: Rephraser, facts: Assistant.Facts) {
-        val notes = facts.tank?.notes(facts.nowMs) ?: return say(Assistant.reply(Command.TankStatus, Lang.EN, facts), Lang.EN, speak = true)
+        val notes = facts.tank?.notes(facts.nowMs, camera = tankSeen, greener = tankGreener) ?: return say(Assistant.reply(Command.TankStatus, Lang.EN, facts), Lang.EN, speak = true)
         thinking = true
         reevaluate()
         thread(name = "node-tank", isDaemon = true) {
@@ -1189,7 +1281,7 @@ class NodeActivity : Activity() {
                     .put("last", t.lastMs[job] ?: JSONObject.NULL).put("due", t.dueMs(job))
             },
         )
-        val (risk, why) = t.risk(now)
+        val (risk, why) = t.risk(now, tankGreener)
         val log = getExternalFilesDir(null)?.let { File(it, TANK_LOG) }?.takeIf { it.isFile }
             ?.let { runCatching { it.readLines() }.getOrNull() }.orEmpty().takeLast(MAX_TANK_LINES)
         return JSONObject().put(
@@ -1522,7 +1614,8 @@ class NodeActivity : Activity() {
     // -- camera, sensors, server ---------------------------------------------
 
     private fun startPresence() {
-        if (presence != null) return
+        // Not while the rear camera looks at the tank: this phone cannot run both. The look hands back when done.
+        if (presence != null || tankCam != null) return
         presenceDegrees = displayDegrees()
         val p = Presence(this, presenceDegrees, ::onFace, ::reevaluate, ::restartPresence, camView)
         p.hands = hands
@@ -1643,6 +1736,7 @@ class NodeActivity : Activity() {
                     reevaluate()
                 }
             },
+            tankPhoto = ::tankPhoto,
         )
         server = http
         try {
@@ -1854,6 +1948,22 @@ class NodeActivity : Activity() {
         /** The aquarium's week: jobs done, reminders, and later what the camera made of it. */
         const val TANK_LOG = "tank.log"
         const val MAX_TANK_LINES = 30
+        /** Each look's brightness, green and movement, a week of them, for [TankLook] to compare against. */
+        const val TANK_STATS = "tank-stats.log"
+        /** The looks' pictures, under the app's files: a week-long time-lapse of the tank. */
+        const val TANK_PHOTOS = "tank"
+        const val TANK_PHOTO_DAYS = 7L
+        val PHOTO_NAME: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")
+        const val TANK_FIRST_MS = 60_000L
+        const val TANK_EVERY_MS = 10 * 60_000L
+        const val TANK_RETRY_MS = 60_000L
+        /** About how long a look keeps the front camera closed, with room to spare. */
+        const val TANK_LOOK_MS = 8_000L
+        const val CAMERA_HANDOVER_MS = 400L
+        const val STILL_LOOKS = 2
+        const val TANK_STILL_NOTE = "The fish look unusually still. Check on them?"
+        /** `2026-11-26 10:42:05  ` before each log line's own words. */
+        const val STAMP_CHARS = 21
 
         /** An activity counts while your face was seen this recently: a cup at your mouth can hide it. */
         const val ACTIVITY_PRESENT_MS = 10_000L

@@ -25,7 +25,8 @@
   textarea.field { height: 80px; background: #000; color: inherit; border: 1px solid #555; padding: 8px 12px;
                    font: inherit; }
   .said { min-height: 1.5em; color: #ffb000; }
-  #cam { display: block; width: 480px; max-width: 100%; margin-top: 8px; background: #0b0b0b; }
+  #cam, #tank-photo { display: block; width: 480px; max-width: 100%; margin-top: 8px; background: #0b0b0b; }
+  #tank-photo[hidden] { display: none; }
   code { color: #e8e8e8; }
   #watch { flex-direction: column; align-items: flex-start; }
   #watch label { display: flex; gap: 8px; align-items: center; cursor: pointer; }
@@ -108,6 +109,7 @@ reacts, chirps and adds a line here. The log stays on the phone for a week.</p>
 
 <h2>AQUARIUM</h2>
 <p id="tank-state" class="said" role="status"></p>
+<img id="tank-photo" alt="The tank, as the rear camera last saw it" hidden>
 <div id="tank-jobs"></div>
 <ul id="tank-log" aria-label="The aquarium's week"></ul>
 <form id="tank-form">
@@ -378,6 +380,11 @@ const loadTank = async () => {
       state.textContent = 'No tank yet: fill this in, or tell NODE when you feed the fish.';
       return;
     }
+    // The newest look, if there is one yet; a 404 before the first keeps it hidden.
+    const photo = document.getElementById('tank-photo');
+    photo.onload = () => { photo.hidden = false; };
+    photo.onerror = () => { photo.hidden = true; };
+    photo.src = 'tank/photo?' + Date.now();
     state.textContent = 'Water, going by your care: ' + tank.risk
       + (tank.why.length ? ' (' + tank.why.join('; ') + ')' : '') + '.';
     document.getElementById('tank-jobs').replaceChildren(...tank.jobs.map((j) => {

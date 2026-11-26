@@ -97,9 +97,9 @@ data class Tank(
 
     /**
      * What NODE knows about the tank, as notes for the model to answer "how is the tank?" from. [camera] is what the
-     * rear camera last made of it, if anything.
+     * rear camera last made of it, if anything, and [greener] its word that the water is turning green.
      */
-    fun notes(nowMs: Long, zone: ZoneId = ZoneId.systemDefault(), camera: String? = null): String {
+    fun notes(nowMs: Long, zone: ZoneId = ZoneId.systemDefault(), camera: String? = null, greener: Boolean = false): String {
         val about = listOfNotNull(
             kind.ifBlank { null },
             litres.takeIf { it > 0 }?.let { "$it litres" },
@@ -111,7 +111,7 @@ data class Tank(
             val last = lastMs[job]?.let { "${daysSince(job, nowMs)} days ago" } ?: "not recorded yet"
             "${JOB_NAMES.getValue(job)}: last $last, due every ${every(job)} days."
         }
-        val (risk, why) = risk(nowMs)
+        val (risk, why) = risk(nowMs, greener)
         return listOfNotNull(
             "The aquarium: $about.",
             if (fedToday.isEmpty()) "Not fed yet today." else "Fed today at ${fedToday.joinToString(" and ")}.",

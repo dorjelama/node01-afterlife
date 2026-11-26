@@ -363,7 +363,7 @@ class Camcorder(
  * strides: this phone's Qualcomm HAL pads rows and interleaves chroma
  * (pixelStride 2), other vendors hand back planar chroma (pixelStride 1).
  */
-private fun nv21(image: Image): ByteArray {
+internal fun nv21(image: Image): ByteArray {
     val w = image.width
     val h = image.height
     val out = ByteArray(w * h * 3 / 2)
