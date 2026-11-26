@@ -47,6 +47,28 @@ class TankLookTest {
     }
 
     @Test
+    fun aFeedingIsABurstOfMovement() {
+        val spot = TankLook.FeedSpotter()
+        repeat(19) { assertFalse(spot.minute(5.0)) }
+        assertFalse("too little known yet", spot.minute(20.0))
+        repeat(5) { spot.minute(5.0) }
+        assertTrue(spot.minute(12.0))
+        assertFalse("the same frenzy", spot.minute(15.0))
+        repeat(30) { spot.minute(5.0) }
+        assertTrue("another, later", spot.minute(11.0))
+    }
+
+    @Test
+    fun aRestlessMinuteIsNoFeeding() {
+        val spot = TankLook.FeedSpotter()
+        repeat(30) { spot.minute(5.0) }
+        assertFalse("half again, not twice", spot.minute(7.5))
+        val busy = TankLook.FeedSpotter()
+        repeat(30) { busy.minute(1.0) }
+        assertFalse("twice almost nothing is still almost nothing", busy.minute(2.5))
+    }
+
+    @Test
     fun keptAsALogLine() {
         val s = Stats(118, 0.412, 3.07)
         assertEquals("118 0.412 3.07", s.encode())

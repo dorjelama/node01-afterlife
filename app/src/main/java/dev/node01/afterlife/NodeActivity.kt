@@ -96,6 +96,9 @@ class NodeActivity : Activity() {
     private var watchedMinutes = 0
     private var darkMinutes = 0
 
+    /** Feedings seen in the watch's minutes of movement; a new one with each watch. */
+    private var feedSpotter = TankLook.FeedSpotter()
+
     /** What the rear camera last made of the tank, for the model's notes; null before the first look. */
     private var tankSeen: String? = null
 
@@ -424,6 +427,7 @@ class NodeActivity : Activity() {
         tankWatch = watch
         darkMinutes = 0
         watchedMinutes = 0
+        feedSpotter = TankLook.FeedSpotter()
         try {
             watch.start()
             Log.d(TAG, "tank: watching")
@@ -446,6 +450,7 @@ class NodeActivity : Activity() {
      */
     private fun onTankMinute(look: TankCam.Look) {
         watchedMinutes++
+        if (feedSpotter.minute(TankLook.motion(look.frames))) onFeedingSeen()
         measure(look, compare = watchedMinutes % COMPARE_EVERY == 0)
         darkMinutes = if (TankLook.brightness(look.frames.first()) < TankLook.LIGHTS_ON) darkMinutes + 1 else 0
         if (darkMinutes >= DARK_MINUTES) {
@@ -1480,8 +1485,26 @@ class NodeActivity : Activity() {
         }
     }
 
+    /**
+     * A burst of movement that looks like the fish being fed: logged as a feeding unless one was just logged, and
+     * a word about overfeeding if they were already fed in the last few hours.
+     */
+    private fun onFeedingSeen() {
+        val wall = System.currentTimeMillis()
+        val t = tank ?: return
+        if (t.sameFeeding(wall)) return tankLog("feeding seen on video too")
+        val earlier = t.fedWithin(wall)
+        tankDone(Tank.Job.FEED, wall, how = "seen on video")
+        if (earlier != null) {
+            val at = java.time.Instant.ofEpochMilli(earlier).atZone(ZoneId.systemDefault()).toLocalTime()
+            inbox.add(String.format(TANK_FED_AGAIN, Assistant.clockEn(at.hour, at.minute)), 0L, wall, Inbox.Kind.NOTE)
+            saveInbox()
+            reevaluate()
+        }
+    }
+
     /** An aquarium job done, said or ticked on the page: logged, and its reminder cleared if it is showing. */
-    private fun tankDone(job: Tank.Job, wall: Long) {
+    private fun tankDone(job: Tank.Job, wall: Long, how: String = "done") {
         tank = (tank ?: Tank.start(wall)).done(job, wall)
         saveTank()
         val showing = inbox.due(wall)?.text
@@ -1489,7 +1512,7 @@ class NodeActivity : Activity() {
             inbox.dismiss(wall)
             saveInbox()
         }
-        tankLog(Tank.JOB_NAMES.getValue(job).lowercase() + " done")
+        tankLog(Tank.JOB_NAMES.getValue(job).lowercase() + " " + how)
     }
 
     private fun saveTank() {
@@ -2242,6 +2265,7 @@ class NodeActivity : Activity() {
         const val KEY_LIGHT_STATE = "tank_light_state"
         const val KEY_LIGHT_LATE = "tank_light_late"
         const val KEY_LIGHT_LONG = "tank_light_long"
+        const val TANK_FED_AGAIN = "The fish look fed again: they were fed at %s. Go easy, leftover food fouls the water."
         const val TANK_LIGHT_LATE = "The tank light hasn't come on today. Timer or bulb?"
         const val TANK_LIGHT_LONG = "The tank light has been on much longer than usual. Is its timer stuck?"
         /** Your latest word on the tank from the page's TRAINING section, `2026-11-26 17:20  words`. */

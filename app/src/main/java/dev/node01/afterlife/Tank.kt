@@ -44,13 +44,23 @@ data class Tank(
     /** Whole days since [job] was last done, or since NODE started keeping the tank. */
     fun daysSince(job: Job, nowMs: Long): Int = ((nowMs - (lastMs[job] ?: startMs)) / DAY_MS).toInt().coerceAtLeast(0)
 
-    fun done(job: Job, nowMs: Long): Tank = copy(
-        lastMs = lastMs + (job to nowMs),
-        feeds = if (job == Job.FEED) feeds.filter { nowMs - it < KEEP_FEEDS_MS } + nowMs else feeds,
-    )
+    fun done(job: Job, nowMs: Long): Tank = when {
+        // Said and seen on video, or said twice: within [FEED_SAME_MS] it is the one feeding.
+        job == Job.FEED && sameFeeding(nowMs) -> this
+        else -> copy(
+            lastMs = lastMs + (job to nowMs),
+            feeds = if (job == Job.FEED) feeds.filter { nowMs - it < KEEP_FEEDS_MS } + nowMs else feeds,
+        )
+    }
 
-    /** The feeding within [FEED_GAP_MS] before [nowMs], or null: another one so soon is likely too much food. */
-    fun fedWithin(nowMs: Long): Long? = feeds.lastOrNull()?.takeIf { nowMs - it in 0 until FEED_GAP_MS }
+    /** Whether a feeding at [nowMs] is the one already logged just before it. */
+    fun sameFeeding(nowMs: Long): Boolean = feeds.lastOrNull()?.let { nowMs - it in 0 until FEED_SAME_MS } == true
+
+    /**
+     * An earlier feeding within [FEED_GAP_MS] before [nowMs], or null: another one so soon is likely too much food.
+     * One within [FEED_SAME_MS] is this same feeding, not an earlier one.
+     */
+    fun fedWithin(nowMs: Long): Long? = feeds.lastOrNull()?.takeIf { nowMs - it in FEED_SAME_MS until FEED_GAP_MS }
 
     /** Jobs past due, the one due longest ago first. */
     fun overdue(nowMs: Long): List<Job> = Job.entries.filter { dueMs(it) <= nowMs }.sortedBy { dueMs(it) }
@@ -155,6 +165,9 @@ data class Tank(
 
         /** A second feeding sooner than this gets a word about overfeeding. */
         const val FEED_GAP_MS = 4 * 3_600_000L
+
+        /** A feeding said and seen on video, or said twice, within this is the one feeding. */
+        const val FEED_SAME_MS = 20 * 60_000L
         private const val KEEP_FEEDS_MS = 7 * DAY_MS
         private const val FEED_WINDOW_MS = 3 * DAY_MS
         private const val MAX_FEEDS_A_DAY = 2.0

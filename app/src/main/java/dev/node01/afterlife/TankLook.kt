@@ -80,6 +80,40 @@ object TankLook {
         if (s.size % 2 == 1) s[s.size / 2] else (s[s.size / 2 - 1] + s[s.size / 2]) / 2
     }
 
+    /**
+     * A feeding, spotted in the minutes' movement: a minute moving at least [BURST_TIMES] the last hour's usual,
+     * and [BURST_OVER] more, once [BASELINE_MINUTES] of it are known. A hand at the glass looks the same, so what it
+     * finds is "seen on video", not certain. Then quiet for [QUIET_MINUTES]: a frenzy lasts a few minutes.
+     * One minute at a time, on the main thread.
+     */
+    class FeedSpotter {
+        private val recent = ArrayDeque<Double>()
+        private var quietFor = 0
+
+        /** The minute's [motion]; true if a feeding starts in it. */
+        fun minute(motion: Double): Boolean {
+            val usual = if (recent.size >= BASELINE_MINUTES) median(recent.toList()) else null
+            if (quietFor > 0) quietFor--
+            val burst = usual != null && quietFor == 0 && motion >= usual * BURST_TIMES && motion >= usual + BURST_OVER
+            if (burst) {
+                quietFor = QUIET_MINUTES
+            } else {
+                // A burst is no part of the usual it is measured against.
+                recent.addLast(motion)
+                if (recent.size > HOUR) recent.removeFirst()
+            }
+            return burst
+        }
+
+        private companion object {
+            const val HOUR = 60
+            const val BASELINE_MINUTES = 20
+            const val BURST_TIMES = 2.0
+            const val BURST_OVER = 2.0
+            const val QUIET_MINUTES = 30
+        }
+    }
+
     // shortcut: thresholds picked by reasoning, not yet from real looks at the tank; tune them from the stats log.
     /** Mean luma at or above which the tank's light counts as on. */
     const val LIGHTS_ON = 60

@@ -50,6 +50,16 @@ class TankTest {
     }
 
     @Test
+    fun saidAndSeenIsOneFeeding() {
+        val seen = Tank.start(start).done(Job.FEED, noon - 10 * 60_000L)
+        val said = seen.done(Job.FEED, noon)
+        assertEquals(listOf(noon - 10 * 60_000L), said.feeds)
+        assertTrue(seen.sameFeeding(noon))
+        assertNull("the same feeding, not an earlier one", seen.fedWithin(noon))
+        assertEquals(2, seen.done(Job.FEED, noon + 3 * hour).feeds.size)
+    }
+
+    @Test
     fun anOverdueJobIsBroughtUpOnceADay() {
         val t = Tank.start(start)
         assertEquals(Job.FEED, t.toRaise(noon, utc))
