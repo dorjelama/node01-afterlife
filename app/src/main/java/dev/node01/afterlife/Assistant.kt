@@ -1,7 +1,9 @@
 package dev.node01.afterlife
 
+import java.time.Instant
 import java.time.LocalDateTime
 import java.time.LocalTime
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.random.Random
@@ -96,6 +98,15 @@ sealed interface Command {
 
     /** "Will it rain tomorrow", "what's the weather": the forecast, looked up online. */
     data class Weather(val tomorrow: Boolean) : Command
+
+    /** "I fed the fish", "water change done": an aquarium job done, logged. */
+    data class TankDone(val job: Tank.Job) : Command
+
+    /** "When did I last change the water?" */
+    data class TankLast(val job: Tank.Job) : Command
+
+    /** "How is the tank?", "are the fish OK?": answered from what NODE knows of the tank. */
+    data object TankStatus : Command
     data object Unknown : Command
 }
 
@@ -157,7 +168,11 @@ object Assistant {
         val random: Random = Random.Default,
         /** How long the stopwatch has been running, or null if none is. */
         val stopwatchMs: Long? = null,
-    )
+        /** The aquarium as it was before this command, or null if none has been set up. */
+        val tank: Tank? = null,
+    ) {
+        val nowMs: Long get() = now.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+    }
 
     const val FOCUS_MS = 25 * 60_000L
 
@@ -249,6 +264,7 @@ object Assistant {
         val spelled by lazy { said(t, SPELL_EN, SPELL_NE) }
         val echoed by lazy { said(t, ECHO_EN) }
         val echoedNe by lazy { said(t, ECHO_NE) }
+        val aquarium by lazy { tank(t) }
         fun has(vararg words: String) = words.any { t.contains(it) }
 
         /** Whole words only: short romanized Nepali like "sut" must not match inside English. */
@@ -286,6 +302,10 @@ object Assistant {
 
             Regex("""^(take a note|note|write down|remember)\b""").containsMatchIn(t) || has("नोट") ->
                 Command.Note(noteText(t))
+
+            // Before the stopwatch, the weather and the date: "how long since I fed them", "the tank's temperature",
+            // "did I feed the fish today" are all about the tank.
+            aquarium != null -> aquarium!!
 
             // Before Claude's own state: "when does my Claude session reset" asks about the window,
             // and so does "how much do I have left on Claude".
@@ -350,6 +370,108 @@ object Assistant {
             greeting != null -> Command.Greet(greeting)
             else -> Command.Unknown
         }
+    }
+
+    /**
+     * An aquarium command in [t], already normalised, or null. A job needs its
+     * own words -- "fed", "water change", "filter" -- and a sentence with none
+     * needs the tank or the fish in it, so "I cleaned my room" and "fish and
+     * chips" are left alone.
+     */
+    private fun tank(t: String): Command? {
+        fun has(vararg words: String) = words.any { t.contains(it) }
+        fun word(vararg words: String) = words.any { Regex("\\b" + Regex.escape(it) + "\\b").containsMatchIn(t) }
+        val fishy = word("fish", "fishes", "tank", "aquarium", "shrimp", "snails", "flakes", "pellets") ||
+            has("माछा", "एक्वेरियम", "machha", "macha")
+        val job = when {
+            has("water change", "change the water", "changed the water", "changed water", "change water",
+                "पानी फेर", "पानी बदल") -> Tank.Job.WATER_CHANGE
+            has("filter", "फिल्टर") && (fishy || has("clean", "rinse", "wash", "सफा")) -> Tank.Job.FILTER
+            has("fertili", "root tab", "plant food", "मल हाल", "मल दि") -> Tank.Job.FERTILIZE
+            has("trim", "prune", "cut the plants", "छाँट") && has("plant", "बिरुवा") -> Tank.Job.TRIM
+            (word("fed", "feed", "food") || has("खाना", "दाना", "खुवा")) && (fishy || has("fed them")) -> Tank.Job.FEED
+            else -> null
+        }
+        if (job == null && !fishy) return null
+        // "Did I feed the fish?" asks when, it does not say so; "should I feed them?" asks how things are.
+        val asksWhen = has("when did", "when was", "last time", "how long since", "how long ago", "कहिले") ||
+            Regex("""^(did|have|has) (i|you|we|anyone)\b""").containsMatchIn(t)
+        val asks = Regex("""^(should|shall|do|does|is|are|can|could|will|would)\b""").containsMatchIn(t)
+        val did = !asks && word(
+            "fed", "did", "done", "changed", "cleaned", "rinsed", "washed", "trimmed", "pruned", "added", "gave",
+            "dosed", "finished",
+        ) || !asks && has("दिएँ", "दिए", "गरें", "गरेँ", "गरे", "फेरें", "फेरेँ", "फेरे", "खुवाएँ", "खुवाए", "हालें", "हालेँ", "छाँटें")
+        return when {
+            job != null && asksWhen -> Command.TankLast(job)
+            job != null && did -> Command.TankDone(job)
+            job != null || asksWhen || asks ||
+                word("how", "what", "status", "check", "doing", "ok", "okay", "alright", "healthy", "temperature") ||
+                has("कस्तो", "ठिक", "ठीक", "सन्चै") -> Command.TankStatus
+            else -> null
+        }
+    }
+
+    /** Shown and spoken when an aquarium [job] comes due. */
+    fun tankDue(job: Tank.Job, lang: Lang): String = if (lang == Lang.NE) {
+        when (job) {
+            Tank.Job.FEED -> "माछालाई खाना दिने बेला भयो।"
+            Tank.Job.WATER_CHANGE -> "एक्वेरियमको पानी फेर्ने बेला भयो।"
+            Tank.Job.FERTILIZE -> "बिरुवालाई मल हाल्ने बेला भयो।"
+            Tank.Job.TRIM -> "बिरुवा छाँट्ने बेला भयो।"
+            Tank.Job.FILTER -> "फिल्टर सफा गर्ने बेला भयो।"
+        }
+    } else {
+        when (job) {
+            Tank.Job.FEED -> "Time to feed the fish."
+            Tank.Job.WATER_CHANGE -> "Time for a water change."
+            Tank.Job.FERTILIZE -> "Time to fertilise the plants."
+            Tank.Job.TRIM -> "Time to trim the plants."
+            Tank.Job.FILTER -> "Time to clean the filter."
+        }
+    }
+
+    /** "changed the water", for "You last changed the water 3 days ago". */
+    private fun pastEn(job: Tank.Job) = when (job) {
+        Tank.Job.FEED -> "fed the fish"
+        Tank.Job.WATER_CHANGE -> "changed the water"
+        Tank.Job.FERTILIZE -> "fertilised the plants"
+        Tank.Job.TRIM -> "trimmed the plants"
+        Tank.Job.FILTER -> "cleaned the filter"
+    }
+
+    /** "3 hours ago", "yesterday", "5 days ago". */
+    private fun agoEn(ms: Long): String = when {
+        ms < MINUTE -> "just now"
+        ms < HOUR -> "${durationEn(ms / MINUTE * MINUTE)} ago"
+        ms < Tank.DAY_MS -> "${durationEn(ms / HOUR * HOUR)} ago"
+        ms < 2 * Tank.DAY_MS -> "yesterday"
+        else -> "${ms / Tank.DAY_MS} days ago"
+    }
+
+    private fun agoNe(ms: Long): String = when {
+        ms < MINUTE -> "भर्खरै"
+        ms < HOUR -> "${durationNe(ms / MINUTE * MINUTE)} अगाडि"
+        ms < Tank.DAY_MS -> "${durationNe(ms / HOUR * HOUR)} अगाडि"
+        ms < 2 * Tank.DAY_MS -> "हिजो"
+        else -> "${Bs.neDigits((ms / Tank.DAY_MS).toInt())} दिन अगाडि"
+    }
+
+    private fun clockAt(ms: Long) = Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).toLocalTime()
+
+    /** Without the model: what is overdue, and the water's likely state. */
+    private fun tankStatusEn(f: Facts): String {
+        val tank = f.tank ?: return "Tell me when you feed the fish or change the water, and I'll keep track."
+        val overdue = tank.overdue(f.nowMs)
+        val risk = tank.risk(f.nowMs).first
+        val jobs = if (overdue.isEmpty()) "Everything's on time." else
+            overdue.joinToString(" ") { tankDue(it, Lang.EN) }
+        return "$jobs Water quality, going by your care: ${risk.name.lowercase()}."
+    }
+
+    private fun tankStatusNe(f: Facts): String {
+        val tank = f.tank ?: return "माछालाई खाना दिँदा वा पानी फेर्दा मलाई भन्नुहोस्, म हिसाब राख्छु।"
+        val overdue = tank.overdue(f.nowMs)
+        return if (overdue.isEmpty()) "सबै समयमै छ।" else overdue.joinToString(" ") { tankDue(it, Lang.NE) }
     }
 
     /** Small talk in [t], already normalised, or null. */
@@ -849,6 +971,17 @@ object Assistant {
         // Said only when the lookup failed: what it found is read out instead.
         is Command.News -> "I couldn't get the news right now."
         is Command.Weather -> "I couldn't get the forecast right now."
+        is Command.TankDone -> when {
+            c.job == Tank.Job.FEED -> f.tank?.fedWithin(f.nowMs)?.let {
+                val at = clockAt(it)
+                "Noted, but they were already fed at ${clockEn(at.hour, at.minute)}. Go easy: leftover food fouls the water."
+            } ?: "Noted: fish fed."
+            else -> "Noted: ${pastEn(c.job)}. " +
+                "Next in ${f.tank?.every(c.job) ?: c.job.defaultDays} days."
+        }
+        is Command.TankLast -> f.tank?.lastMs?.get(c.job)?.let { "You last ${pastEn(c.job)} ${agoEn(f.nowMs - it)}." }
+            ?: "I have no record of that yet. Tell me when you do it."
+        Command.TankStatus -> tankStatusEn(f)
         Command.Unknown -> "Sorry, I didn't catch that. Say help to hear what I can do."
     }
 
@@ -919,6 +1052,16 @@ object Assistant {
         }
         is Command.News -> "अहिले समाचार ल्याउन सकिनँ।"
         is Command.Weather -> "अहिले मौसमको जानकारी ल्याउन सकिनँ।"
+        is Command.TankDone -> when {
+            c.job == Tank.Job.FEED -> f.tank?.fedWithin(f.nowMs)?.let {
+                val at = clockAt(it)
+                "नोट गरें, तर ${clockNe(at.hour, at.minute)} मै खाना दिइसक्नुभएको छ। धेरै खानाले पानी बिगार्छ।"
+            } ?: "नोट गरें: माछालाई खाना दिइयो।"
+            else -> "नोट गरें। अर्को पटक ${Bs.neDigits(f.tank?.every(c.job) ?: c.job.defaultDays)} दिनपछि।"
+        }
+        is Command.TankLast -> f.tank?.lastMs?.get(c.job)?.let { "अन्तिम पटक ${agoNe(f.nowMs - it)}।" }
+            ?: "अहिलेसम्म रेकर्ड छैन। गर्दा मलाई भन्नुहोस्।"
+        Command.TankStatus -> tankStatusNe(f)
         Command.Unknown -> "माफ गर्नुहोस्, बुझिनँ। मद्दत भन्नुहोस्।"
     }
 

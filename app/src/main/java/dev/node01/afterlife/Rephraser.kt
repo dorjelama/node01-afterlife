@@ -144,6 +144,8 @@ class Rephraser(private val server: String = SERVER, private val model: String =
             "6 plus 2", "6 minus 2", "6 times 2", "6 divided by 2", "5 km in miles", "20 celsius in fahrenheit",
             "start a stopwatch", "how long", "louder", "quieter", "go to sleep", "wake up", "be quiet", "you can talk", "flip a coin",
             "pick a number between 1 and 10", "help", "sing", "dismiss",
+            "i fed the fish", "water change done", "i cleaned the filter", "i trimmed the plants",
+            "i added fertiliser", "how is the tank", "when did i last change the water",
         )
 
         /** Said, and what NODE should hear. Each said one must get past the keywords: RephraserTest checks. */
@@ -172,6 +174,10 @@ class Rephraser(private val server: String = SERVER, private val model: String =
             "and what's its population" to "ASK",
             // "Stop" got a chatty reply instead of quieting what was ringing.
             "stop" to "dismiss",
+            // The aquarium, worded loosely.
+            "just gave them some flakes" to "i fed the fish",
+            "swapped out some of the tank water" to "water change done",
+            "should i be worried about the water" to "how is the tank",
         )
 
         // A question is answered "ASK" alone, not repeated: every word the model writes costs half a second here.

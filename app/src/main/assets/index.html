@@ -30,7 +30,12 @@
   #watch { flex-direction: column; align-items: flex-start; }
   #watch label { display: flex; gap: 8px; align-items: center; cursor: pointer; }
   #watch input { flex: none; width: 18px; height: 18px; margin: 0; accent-color: #ffb000; }
-  #activity-log { margin: 8px 0; padding-left: 20px; color: #9a9a9a; }
+  #activity-log, #tank-log { margin: 8px 0; padding-left: 20px; color: #9a9a9a; }
+  #tank-jobs .row { margin: 4px 0; }
+  #tank-jobs .job { flex: 1 1 260px; }
+  #tank-jobs .late { color: #ffb000; }
+  #tank-every label { display: flex; gap: 6px; align-items: center; }
+  #tank-every input { flex: none; width: 64px; }
 </style>
 </head>
 <body>
@@ -100,6 +105,26 @@ that anyone is watching.</p>
 <p>Off until you tick one. Then NODE looks at about one camera frame a second, on the phone, only
 for these, and only while you are at the desk; no frame is kept or sent. When one happens it
 reacts, chirps and adds a line here. The log stays on the phone for a week.</p>
+
+<h2>AQUARIUM</h2>
+<p id="tank-state" class="said" role="status"></p>
+<div id="tank-jobs"></div>
+<ul id="tank-log" aria-label="The aquarium's week"></ul>
+<form id="tank-form">
+  <input name="name" maxlength="140" autocomplete="off" placeholder="Name: desk tank" aria-label="Tank name">
+  <input name="litres" type="number" min="0" max="10000" placeholder="Litres" aria-label="Litres" style="flex: 0 1 120px">
+  <input name="kind" maxlength="140" autocomplete="off" placeholder="Kind: low-tech planted" aria-label="Kind of tank">
+  <input name="livestock" maxlength="140" autocomplete="off" placeholder="Fish: 6 neon tetras, 3 cherry shrimp"
+         aria-label="Fish and other livestock">
+  <div class="row" id="tank-every"></div>
+  <button type="submit">Save</button>
+</form>
+<p class="said" id="tank-said" role="status"></p>
+<p>Say "I fed the fish", "water change done", "cleaned the filter", "trimmed the plants" or
+"added fertiliser", or press Done here. An overdue job shows in amber and is read out once a
+day while you are at the desk; "dismiss" puts it off until tomorrow. "How is the tank?" gets an
+answer from all of this. The water's state is a guess from your care habits: with no test kit,
+NODE never knows ammonia or nitrate. The log stays on the phone for a week.</p>
 
 <h2>SAY IT</h2>
 <form id="say">
@@ -333,6 +358,78 @@ for (const b of watchBoxes) {
 }
 loadActivity();
 setInterval(() => { if (!document.hidden) loadActivity(); }, 30000);
+
+// -- aquarium -------------------------------------------------------------
+const tankSaid = document.getElementById('tank-said');
+const tankForm = document.getElementById('tank-form');
+const DAY = 86400000;
+const ago = (ms) => {
+  const days = Math.floor((Date.now() - ms) / DAY);
+  if (days < 1) return 'today, ' + new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return days === 1 ? 'yesterday' : days + ' days ago';
+};
+const loadTank = async () => {
+  try {
+    const res = await fetch('tank');
+    if (!res.ok) throw new Error(res.status);
+    const { tank, log } = await res.json();
+    const state = document.getElementById('tank-state');
+    if (!tank) {
+      state.textContent = 'No tank yet: fill this in, or tell NODE when you feed the fish.';
+      return;
+    }
+    state.textContent = 'Water, going by your care: ' + tank.risk
+      + (tank.why.length ? ' (' + tank.why.join('; ') + ')' : '') + '.';
+    document.getElementById('tank-jobs').replaceChildren(...tank.jobs.map((j) => {
+      const row = Object.assign(document.createElement('div'), { className: 'row' });
+      const late = j.due <= Date.now();
+      const text = j.name + ': ' + (j.last ? ago(j.last) : 'no record') + ', every ' + j.every
+        + (j.every === 1 ? ' day' : ' days') + (late ? ' · due' : '');
+      const done = Object.assign(document.createElement('button'), { type: 'button', textContent: 'Done' });
+      done.onclick = async () => {
+        try {
+          const r = await fetch('tank/done', { method: 'POST', body: new URLSearchParams({ job: j.job }) });
+          if (!r.ok) throw new Error(r.status);
+          setTimeout(loadTank, 300);
+        } catch (err) {
+          tankSaid.textContent = 'Not sent: is NODE Companion open on the phone?';
+        }
+      };
+      row.append(Object.assign(document.createElement('span'), { className: 'job' + (late ? ' late' : ''), textContent: text }), done);
+      return row;
+    }));
+    // Leave the form alone while it is being typed in.
+    if (!tankForm.contains(document.activeElement)) {
+      for (const k of ['name', 'litres', 'kind', 'livestock']) tankForm.elements[k].value = tank[k] || '';
+      document.getElementById('tank-every').replaceChildren(...tank.jobs.map((j) => {
+        const label = document.createElement('label');
+        label.append(j.name + ' every', Object.assign(document.createElement('input'), {
+          type: 'number', min: 1, max: 365, name: 'every.' + j.job, value: j.every, ariaLabel: j.name + ', days',
+        }), 'd');
+        return label;
+      }));
+    }
+    // "2026-11-22 10:42:05  feeding done": newest first, with the date.
+    const lines = log.slice().reverse().map((l) => logLine(l.slice(5, 16) + '  ' + l.slice(21)));
+    document.getElementById('tank-log').replaceChildren(...(lines.length ? lines : [logLine('Nothing logged yet.')]));
+  } catch (err) {
+    tankSaid.textContent = 'Not loaded: is NODE Companion open on the phone?';
+  }
+};
+tankForm.onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    const res = await fetch('tank', { method: 'POST', body: new URLSearchParams(new FormData(tankForm)) });
+    if (!res.ok) throw new Error(res.status);
+    tankSaid.textContent = 'Saved.';
+    document.activeElement.blur();
+    setTimeout(loadTank, 300);
+  } catch (err) {
+    tankSaid.textContent = 'Not sent: is NODE Companion open on the phone?';
+  }
+};
+loadTank();
+setInterval(() => { if (!document.hidden) loadTank(); }, 30000);
 
 // -- say it ---------------------------------------------------------------
 const saySaid = document.getElementById('say-said');

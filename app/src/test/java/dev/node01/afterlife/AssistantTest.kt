@@ -648,6 +648,58 @@ class AssistantTest {
         assertNull("the news is looked up, one at a time", Assistant.split("what time is it and what's the news"))
     }
 
+    @Test
+    fun aquariumJobsSaidDone() {
+        assertEquals(Command.TankDone(Tank.Job.FEED), parse("I fed the fish"))
+        assertEquals(Command.TankDone(Tank.Job.FEED), parse("just fed them"))
+        assertEquals(Command.TankDone(Tank.Job.WATER_CHANGE), parse("water change done"))
+        assertEquals(Command.TankDone(Tank.Job.WATER_CHANGE), parse("I changed the water"))
+        assertEquals(Command.TankDone(Tank.Job.FILTER), parse("cleaned the filter"))
+        assertEquals(Command.TankDone(Tank.Job.TRIM), parse("I trimmed the plants"))
+        assertEquals(Command.TankDone(Tank.Job.FERTILIZE), parse("added fertilizer"))
+        assertEquals(Command.TankDone(Tank.Job.FEED), parse("माछालाई खाना दिएँ"))
+    }
+
+    @Test
+    fun aquariumQuestions() {
+        assertEquals(Command.TankLast(Tank.Job.WATER_CHANGE), parse("when did I last change the water"))
+        assertEquals("asks, does not log", Command.TankLast(Tank.Job.FEED), parse("did I feed the fish today"))
+        assertEquals(Command.TankLast(Tank.Job.FEED), parse("how long since I fed the fish"))
+        assertEquals(Command.TankStatus, parse("how is the tank"))
+        assertEquals(Command.TankStatus, parse("are the fish ok"))
+        assertEquals("a question, not a feeding", Command.TankStatus, parse("should I feed the fish"))
+        assertEquals("the tank's, not the weather's", Command.TankStatus, parse("what's the tank temperature"))
+        assertEquals(Command.TankStatus, parse("माछा कस्तो छ"))
+    }
+
+    @Test
+    fun notTheAquarium() {
+        assertEquals(Command.Unknown, parse("I cleaned my room"))
+        assertEquals(Command.Unknown, parse("I'm fed up"))
+        assertTrue(parse("remind me in 10 minutes to feed the fish") is Command.Remind)
+        assertTrue(parse("set a timer for 5 minutes") is Command.Timer)
+        assertEquals(Command.StopwatchRead, parse("how long"))
+    }
+
+    @Test
+    fun aquariumReplies() {
+        val now = LocalDateTime.of(2026, 11, 26, 18, 0)
+        val f = facts(now)
+        val ms = f.nowMs
+        val fed = Tank.start(ms - 10 * Tank.DAY_MS).done(Tank.Job.FEED, ms - 2 * 3_600_000L)
+        assertEquals("Noted: fish fed.", Assistant.reply(Command.TankDone(Tank.Job.FEED), Lang.EN, f))
+        assertTrue(
+            Assistant.reply(Command.TankDone(Tank.Job.FEED), Lang.EN, f.copy(tank = fed)).startsWith("Noted, but they were already fed at 4:00 PM"),
+        )
+        assertEquals(
+            "Noted: changed the water. Next in 7 days.",
+            Assistant.reply(Command.TankDone(Tank.Job.WATER_CHANGE), Lang.EN, f.copy(tank = fed)),
+        )
+        assertEquals("You last fed the fish 2 hours ago.", Assistant.reply(Command.TankLast(Tank.Job.FEED), Lang.EN, f.copy(tank = fed)))
+        assertTrue(Assistant.reply(Command.TankLast(Tank.Job.FILTER), Lang.EN, f.copy(tank = fed)).startsWith("I have no record"))
+        assertTrue(Assistant.reply(Command.TankStatus, Lang.EN, f.copy(tank = fed)).contains("Time for a water change."))
+    }
+
     private fun facts(now: LocalDateTime) =
         Assistant.Facts(now = now, claude = null, timerRunning = false, noteDue = false, address = null)
 }

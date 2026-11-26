@@ -81,6 +81,9 @@ class NodeActivity : Activity() {
     private val inbox by lazy { Inbox.decode(prefs.getString(KEY_INBOX, null)) }
     private val tasks by lazy { Tasks.decode(prefs.getString(KEY_TASKS, null)) }
 
+    /** The aquarium NODE looks after; null until one is set up, on the page or by saying a job was done. */
+    private var tank: Tank? = null
+
     /** The task list is open over the face until this moment; every touch on it moves it on. */
     private var tasksUntilMs = 0L
 
@@ -232,6 +235,7 @@ class NodeActivity : Activity() {
         configureWindow()
         kiosk()
         loadRephraser()
+        tank = Tank.decode(prefs.getString(KEY_TANK, null))
     }
 
     /**
@@ -506,6 +510,16 @@ class NodeActivity : Activity() {
             inbox.dismiss(System.currentTimeMillis())
             saveInbox()
             note = inbox.due(System.currentTimeMillis())
+        }
+        // An overdue aquarium job, once a day, as a note: only while you are here to see it, and never over another.
+        val wall = System.currentTimeMillis()
+        if (note == null && present && !dark) tank?.toRaise(wall)?.let { job ->
+            tank = tank?.raised(job, wall)
+            saveTank()
+            inbox.add(Assistant.tankDue(job, voiceLang), 0L, wall, Inbox.Kind.NOTE)
+            saveInbox()
+            tankLog("reminded: " + Tank.JOB_NAMES.getValue(job).lowercase())
+            note = inbox.due(wall)
         }
         if (note != null && note != shownNote) announce(note)
         shownNote = note
@@ -980,7 +994,11 @@ class NodeActivity : Activity() {
             usagePercent = usage?.shownAt(wall),
             usageResetsInMs = usage?.resetsAtMs?.minus(wall)?.takeIf { it > 0 },
             stopwatchMs = prefs.getLong(KEY_STOPWATCH, 0L).takeIf { it > 0 }?.let { wall - it }?.takeIf { it >= 0 },
+            tank = tank,
         )
+        if (said.size == 1 && command == Command.TankStatus && lang == Lang.EN && model != null && !thinking) {
+            return tankStatus(text, model, facts)
+        }
         val replies = commands.map { c ->
             when (c) {
                 is Command.Timer -> c.ms?.let { inbox.add(Assistant.timeUp(lang), it, wall, Inbox.Kind.TIMER) }
@@ -1010,6 +1028,7 @@ class NodeActivity : Activity() {
                     shownNote = inbox.due(wall)
                 }
                 Command.Dismiss -> inbox.dismiss(wall)
+                is Command.TankDone -> tankDone(c.job, wall)
                 Command.Sleep -> voiceAsleep = true
                 Command.Wake -> voiceAsleep = false
                 Command.Thanks -> {
@@ -1112,6 +1131,74 @@ class NodeActivity : Activity() {
     }
 
     /** The news or the weather, fetched on a thread of its own with the thinking face up, then read out. */
+    /**
+     * "How is the tank?", with the model: one or two sentences written from [Tank.notes], with the thinking face
+     * up. Without an answer, the fixed one.
+     */
+    private fun tankStatus(question: String, model: Rephraser, facts: Assistant.Facts) {
+        val notes = facts.tank?.notes(facts.nowMs) ?: return say(Assistant.reply(Command.TankStatus, Lang.EN, facts), Lang.EN, speak = true)
+        thinking = true
+        reevaluate()
+        thread(name = "node-tank", isDaemon = true) {
+            val words = model.answer(question, notes)
+            mainExecutor.execute {
+                thinking = false
+                if (isDestroyed) return@execute
+                say(words ?: Assistant.reply(Command.TankStatus, Lang.EN, facts), Lang.EN, speak = true)
+                reevaluate()
+            }
+        }
+    }
+
+    /** An aquarium job done, said or ticked on the page: logged, and its reminder cleared if it is showing. */
+    private fun tankDone(job: Tank.Job, wall: Long) {
+        tank = (tank ?: Tank.start(wall)).done(job, wall)
+        saveTank()
+        val showing = inbox.due(wall)?.text
+        if (showing == Assistant.tankDue(job, Lang.EN) || showing == Assistant.tankDue(job, Lang.NE)) {
+            inbox.dismiss(wall)
+            saveInbox()
+        }
+        tankLog(Tank.JOB_NAMES.getValue(job).lowercase() + " done")
+    }
+
+    private fun saveTank() {
+        prefs.edit().putString(KEY_TANK, tank?.encode()).apply()
+    }
+
+    /** A line in the week-long tank.log, off the main thread. */
+    private fun tankLog(line: String) {
+        val dir = getExternalFilesDir(null) ?: return
+        thread(name = "node-tank-log", isDaemon = true) { AskedLog.add(dir, LocalDateTime.now(), line, TANK_LOG) }
+    }
+
+    /** From the page: the tank's details and how often each job comes round. Sets the tank up if there was none. */
+    private fun onTankSetUp(form: Map<String, String>) {
+        tank = (tank ?: Tank.start(System.currentTimeMillis())).setUp(form)
+        saveTank()
+        Log.d(TAG, "tank: set up")
+    }
+
+    /** For the page, on a server thread: the tank, its jobs and the last week's log, as JSON; read from prefs. */
+    private fun tankJson(): String {
+        val t = Tank.decode(prefs.getString(KEY_TANK, null)) ?: return JSONObject().put("tank", JSONObject.NULL).toString()
+        val now = System.currentTimeMillis()
+        val jobs = JSONArray(
+            Tank.Job.entries.map { job ->
+                JSONObject().put("job", job.name).put("name", Tank.JOB_NAMES.getValue(job)).put("every", t.every(job))
+                    .put("last", t.lastMs[job] ?: JSONObject.NULL).put("due", t.dueMs(job))
+            },
+        )
+        val (risk, why) = t.risk(now)
+        val log = getExternalFilesDir(null)?.let { File(it, TANK_LOG) }?.takeIf { it.isFile }
+            ?.let { runCatching { it.readLines() }.getOrNull() }.orEmpty().takeLast(MAX_TANK_LINES)
+        return JSONObject().put(
+            "tank",
+            JSONObject().put("name", t.name).put("litres", t.litres).put("kind", t.kind).put("livestock", t.livestock)
+                .put("jobs", jobs).put("risk", risk.name.lowercase()).put("why", JSONArray(why)),
+        ).put("log", JSONArray(log)).toString()
+    }
+
     private fun lookUp(command: Command, lang: Lang) {
         thinking = true
         reevaluate()
@@ -1545,6 +1632,17 @@ class NodeActivity : Activity() {
             onMode = { to -> mainExecutor.execute { if (server === http) onMode(to) } },
             activity = ::activityJson,
             onWatch = { watch -> mainExecutor.execute { if (server === http) onWatch(watch) } },
+            tank = ::tankJson,
+            onTank = { form -> mainExecutor.execute { if (server === http) onTankSetUp(form) } },
+            onTankDone = { job ->
+                mainExecutor.execute {
+                    if (server !== http) return@execute
+                    val done = Tank.Job.entries.firstOrNull { it.name == job } ?: return@execute
+                    tankDone(done, System.currentTimeMillis())
+                    face.play(Act.JOY)
+                    reevaluate()
+                }
+            },
         )
         server = http
         try {
@@ -1752,6 +1850,10 @@ class NodeActivity : Activity() {
         /** The camera activities noticed, a week of them, beside asked.log; the page shows today's. */
         const val ACTIVITY_LOG = "activity.log"
         const val MAX_ACTIVITY_LINES = 50
+        const val KEY_TANK = "tank"
+        /** The aquarium's week: jobs done, reminders, and later what the camera made of it. */
+        const val TANK_LOG = "tank.log"
+        const val MAX_TANK_LINES = 30
 
         /** An activity counts while your face was seen this recently: a cup at your mouth can hide it. */
         const val ACTIVITY_PRESENT_MS = 10_000L
