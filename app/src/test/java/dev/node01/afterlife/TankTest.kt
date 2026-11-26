@@ -60,6 +60,13 @@ class TankTest {
     }
 
     @Test
+    fun feedingsLoggedSecondsApartLoadAsOne() {
+        // As kept before feedings were merged: Done pressed three times in three seconds.
+        val stored = Tank.start(start).copy(feeds = listOf(noon, noon + 2_000L, noon + 3_000L, noon + 5 * hour)).encode()
+        assertEquals(listOf(noon, noon + 5 * hour), Tank.decode(stored)!!.feeds)
+    }
+
+    @Test
     fun anOverdueJobIsBroughtUpOnceADay() {
         val t = Tank.start(start)
         assertEquals(Job.FEED, t.toRaise(noon, utc))

@@ -206,8 +206,14 @@ data class Tank(
                 everyDays = perJob("every") { it.toIntOrNull() },
                 lastMs = perJob("last") { it.toLongOrNull() },
                 raisedMs = perJob("raised") { it.toLongOrNull() },
-                feeds = fields["feeds"].orEmpty().split(',').mapNotNull { it.toLongOrNull() },
+                feeds = oneEach(fields["feeds"].orEmpty().split(',').mapNotNull { it.toLongOrNull() }),
             )
+        }
+
+        /** [feeds] in order, each within [FEED_SAME_MS] of the one before it dropped: one feeding, logged twice. */
+        internal fun oneEach(feeds: List<Long>): List<Long> = feeds.sorted().fold(mutableListOf<Long>()) { kept, at ->
+            if (kept.isEmpty() || at - kept.last() >= FEED_SAME_MS) kept += at
+            kept
         }
 
         private fun day(ms: Long, zone: ZoneId): LocalDate = Instant.ofEpochMilli(ms).atZone(zone).toLocalDate()
