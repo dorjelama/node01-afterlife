@@ -91,13 +91,15 @@ class ClaudeSessionsTest {
     }
 
     @Test
-    fun doneLingersBrieflyOnceSeen() {
+    fun doneShowsForItsTimeSeenOrNot() {
         sessions.onEvent(event("Stop"), 0)
-        assertFalse(sessions.summary(60_000)!!.seen)
-        sessions.acknowledge(60_000, inViewSinceMs = 0)
-        assertTrue(sessions.summary(60_000)!!.seen)
-        assertEquals(State.DONE, sessions.summary(60_000 + ClaudeSessions.DONE_LINGER_MS)?.state)
-        assertNull(sessions.summary(60_001 + ClaudeSessions.DONE_LINGER_MS))
+        assertEquals("never seen", State.DONE, sessions.summary(ClaudeSessions.DONE_SHOW_MS)?.state)
+        assertNull(sessions.summary(ClaudeSessions.DONE_SHOW_MS + 1))
+
+        sessions.onEvent(event("Stop"), 0)
+        sessions.acknowledge(ClaudeSessions.LOOK_MS, inViewSinceMs = 0)
+        assertEquals("seen at once, still up", State.DONE, sessions.summary(ClaudeSessions.DONE_SHOW_MS)?.state)
+        assertNull(sessions.summary(ClaudeSessions.DONE_SHOW_MS + 1))
     }
 
     @Test

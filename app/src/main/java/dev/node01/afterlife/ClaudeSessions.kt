@@ -113,8 +113,8 @@ class ClaudeSessions {
     private fun expired(s: Session, nowMs: Long): Boolean = when (s.state) {
         // No event for this long: the session was closed or the PC slept.
         State.WORKING -> nowMs - s.changedMs > WORKING_EXPIRY_MS
-        // Seen, and the caption has had its moment.
-        State.DONE -> s.seenMs?.let { nowMs - it > DONE_LINGER_MS } ?: (nowMs - s.changedMs > STALE_MS)
+        // Its moment, seen or not: in a dark room the camera never sees you.
+        State.DONE -> nowMs - s.changedMs > DONE_SHOW_MS
         State.NEEDS_YOU -> nowMs - s.changedMs > STALE_MS
     }
 
@@ -149,8 +149,8 @@ class ClaudeSessions {
         /** In view this long after a change, and it counts as seen. */
         const val LOOK_MS = 2_000L
 
-        /** How long "done" stays on screen after you have seen it. */
-        const val DONE_LINGER_MS = 10_000L
+        /** How long "done" stays on screen, from when Claude finished. */
+        const val DONE_SHOW_MS = 2 * 60_000L
 
         /** Nothing is claimed for longer than this, seen or not. */
         const val STALE_MS = 12 * 60 * 60_000L

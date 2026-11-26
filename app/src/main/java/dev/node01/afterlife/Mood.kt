@@ -120,7 +120,8 @@ object Mood {
             amber -> Expression.WIDE to atYou
             i.petAgoMs < PET_MS -> Expression.HAPPY to atYou
             i.voiceAsleep -> Expression.CLOSED to RESTING
-            c?.state == ClaudeSessions.State.DONE && !c.seen ->
+            // For as long as "done" is up: a couple of minutes, seen or not.
+            c?.state == ClaudeSessions.State.DONE ->
                 Expression.HAPPY to (if (i.present) face else Gaze.Wander)
             i.present && i.presentForMs < GREET_MS && i.lastAbsenceMs >= SEARCH_MS -> Expression.WIDE to face
             c?.state == ClaudeSessions.State.WORKING ->

@@ -142,14 +142,21 @@ class MoodTest {
     }
 
     @Test
-    fun doneIsHappyUntilSeenThenJustACaption() {
+    fun doneIsHappySeenOrNot() {
         val unseen = Mood.decide(sitting.copy(claude = Summary(State.DONE, "node01", 0, seen = false)))
         assertEquals(Expression.HAPPY, unseen.expression)
         assertEquals(Caption.Done(0), unseen.caption)
         assertFalse(unseen.amber)
         val seen = Mood.decide(sitting.copy(claude = Summary(State.DONE, "node01", 0, seen = true)))
-        assertEquals(Expression.NEUTRAL, seen.expression)
+        assertEquals(Expression.HAPPY, seen.expression)
         assertEquals(Caption.Done(0), seen.caption)
+    }
+
+    @Test
+    fun doneIsHappyInTheDarkToo() {
+        val dark = Mood.decide(away(Mood.SLEEP_MS).copy(dark = true, claude = Summary(State.DONE, "node01", 0, false)))
+        assertEquals(Expression.HAPPY, dark.expression)
+        assertEquals(Caption.Done(0), dark.caption)
     }
 
     @Test
