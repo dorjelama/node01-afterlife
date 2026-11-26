@@ -139,6 +139,7 @@ class NodeActivity : Activity() {
     private var webcam = false
     private var camcorder: Camcorder? = null
     private val webcamPage by lazy { assets.open("webcam.html").use { it.readBytes() } }
+    private val aquariumPage by lazy { assets.open("aquarium.html").use { it.readBytes() } }
     private val recorder by lazy {
         LoopRecorder(getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: File(filesDir, "clips"))
     }
@@ -2062,6 +2063,7 @@ class NodeActivity : Activity() {
             onPc = { stats -> mainExecutor.execute { if (server === http) onPc(stats) } },
             cam = camView,
             webcamPage = webcamPage,
+            aquariumPage = aquariumPage,
             recorder = recorder,
             video = webcamVideo,
             audio = webcamAudio,

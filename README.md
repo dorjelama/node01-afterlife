@@ -296,7 +296,7 @@ does the searches and picks the notes.
 
 Put the phone on the desk between you and the tank, its screen to you and its rear camera
 to the glass. The face carries on as before; the aquarium is extra. Fill in the page's
-**AQUARIUM** section (litres, the fish, how often each job comes round), or just tell NODE the
+**AQUARIUM** tab (`…/aquarium`, beside **NODE** at the top: litres, the fish, how often each job comes round), or just tell NODE the
 first time you feed them: either sets the tank up.
 
 **Jobs.** Five, with defaults for a low-tech planted tank: feeding (every day), a water change
@@ -366,7 +366,7 @@ For a model of your own later, NODE keeps, under `Android/data/dev.node01.compan
 a folder a day of the minute pictures while the tank is lit (`HHmmss.jpg`, about 200 KB each,
 kept 60 days), a `minutes.csv` beside them with each picture's light, green and movement, and
 `labels.jsonl`, one line per description of a picture: the AI's (`"from":"ai"`) and yours
-(`"from":"you"`). Yours come from the page's **TRAINING** section: write what is really in the
+(`"from":"you"`). Yours come from the **TRAINING** section of the page's **AQUARIUM** tab: write what is really in the
 newest picture, or what is wrong with it — "no yellow fish; a loach on the sand" — and it is kept
 beside that picture. The latest is also handed to "how is the tank?", to be believed over the AI.
 The video, at 1.2 Mbps, is about 6.5 GB a day of a tank lit twelve hours; the phone keeps about a
@@ -641,7 +641,8 @@ app/src/main/java/dev/node01/afterlife/
 app/src/main/assets/
 ├── efficientdet_lite0.tflite  the object detector for camera activities (MediaPipe, COCO)
 ├── webcam.html        the webcam's page: live view, sound, recordings
-└── index.html         the page: desk notes, tasks, camera view and activities, the aquarium, lines to say, Claude Code and PC load setup, test buttons
+├── aquarium.html      the aquarium's tab: care, days, live view, training labels
+└── index.html         the page: desk notes, tasks, camera view and activities, lines to say, Claude Code and PC load setup, test buttons
 ```
 
 ## Notes

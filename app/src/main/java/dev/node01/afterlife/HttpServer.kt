@@ -30,6 +30,7 @@ import kotlin.concurrent.thread
  * - `GET  /<key>/webcam`  the webcam's page: `video` (MJPEG), `audio` (PCM) and `rec/` (clips) beside it
  * - `GET  /<key>/activity` the camera activities allowed, and today's log of them, as JSON
  * - `POST /<key>/activity` which camera activities NODE may notice, as a form: `watch` (comma-separated)
+ * - `GET  /<key>/aquarium` the aquarium's page: its care, its days, the live view and training
  * - `GET  /<key>/tank`     the aquarium: its details, jobs, likely water state and the week's log, as JSON
  * - `POST /<key>/tank`     the aquarium's details, as a form: `name`, `litres`, `kind`, `livestock`, `every.<JOB>` (days)
  * - `POST /<key>/tank/done` an aquarium job done, as a form: `job` (`FEED`, `WATER_CHANGE`, ...)
@@ -66,6 +67,8 @@ class HttpServer(
     /** JPEG frames for the camera view, filled by [Presence] only while someone is watching. */
     private val cam: Hub,
     private val webcamPage: ByteArray,
+    /** The aquarium's own page, beside the main one. */
+    private val aquariumPage: ByteArray,
     private val recorder: LoopRecorder,
     private val video: Hub,
     private val audio: Hub,
@@ -169,6 +172,7 @@ class HttpServer(
                         onMode(form["to"].orEmpty())
                     }
                     Route.Webcam -> send(out, 200, "text/html; charset=utf-8", webcamPage)
+                    Route.Aquarium -> send(out, 200, "text/html; charset=utf-8", aquariumPage)
                     Route.Video -> streamJpeg(out, video)
                     Route.Audio -> {
                         // Raw signed 16-bit little-endian mono PCM at 48 kHz; the page plays it with Web Audio.
@@ -348,6 +352,7 @@ class HttpServer(
         data object Cam : Route
         data object Mode : Route
         data object Webcam : Route
+        data object Aquarium : Route
         data object Video : Route
         data object Audio : Route
         data object Activity : Route
@@ -422,6 +427,7 @@ class HttpServer(
                 method == "GET" && rest == "cam" -> Route.Cam
                 method == "POST" && rest == "mode" -> Route.Mode
                 method == "GET" && rest == "webcam" -> Route.Webcam
+                method == "GET" && rest == "aquarium" -> Route.Aquarium
                 method == "GET" && rest == "video" -> Route.Video
                 method == "GET" && rest == "audio" -> Route.Audio
                 method == "GET" && rest == "activity" -> Route.Activity

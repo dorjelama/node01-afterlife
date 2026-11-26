@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NODE Aquarium</title>
+<!-- Empty icon: the browser's own /favicon.ico request would only hit a 404. -->
+<link rel="icon" href="data:,">
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; background: #000; color: #c4c4c4;
+               font: 14px/1.5 ui-monospace, Menlo, Consolas, monospace; }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 16px; letter-spacing: .12em; color: #e8e8e8; margin: 0 0 4px; }
+  h2 { font-size: 13px; letter-spacing: .12em; color: #e8e8e8; margin: 36px 0 8px; }
+  p { margin: 8px 0; color: #9a9a9a; }
+  form, .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  input, select, button { font: inherit; color: inherit; background: #000; border: 1px solid #555;
+                          border-radius: 0; padding: 8px 12px; }
+  input { flex: 1 1 260px; min-width: 0; }
+  button { cursor: pointer; }
+  button:hover, button:focus-visible { border-color: #ffb000; color: #ffb000; outline: none; }
+  textarea { width: 100%; box-sizing: border-box; height: 300px; resize: vertical; background: #0b0b0b;
+             color: #c4c4c4; border: 1px solid #333; padding: 12px; font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace; }
+  textarea.field { height: 80px; background: #000; color: inherit; border: 1px solid #555; padding: 8px 12px;
+                   font: inherit; }
+  .said { min-height: 1.5em; color: #ffb000; }
+  #cam, #tank-photo, #tank-live { display: block; width: 480px; max-width: 100%; margin-top: 8px; background: #0b0b0b; }
+  #tank-photo, #tank-live { width: auto; max-height: 480px; }
+  #tank-photo[hidden], #tank-live[hidden] { display: none; }
+  #labels { margin: 8px 0; padding-left: 20px; color: #9a9a9a; }
+  code { color: #e8e8e8; }
+  #watch { flex-direction: column; align-items: flex-start; }
+  #watch label { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+  #watch input { flex: none; width: 18px; height: 18px; margin: 0; accent-color: #ffb000; }
+  #activity-log, #tank-log, #tank-days { margin: 8px 0; padding-left: 20px; color: #9a9a9a; }
+  #tank-jobs .row { margin: 4px 0; }
+  #tank-jobs .job { flex: 1 1 260px; }
+  #tank-jobs .late { color: #ffb000; }
+  #tank-every label { display: flex; gap: 6px; align-items: center; }
+  #tank-every input { flex: none; width: 64px; }
+  nav.tabs { display: flex; gap: 0; margin: 0 0 20px; border-bottom: 1px solid #333; }
+  nav.tabs a { padding: 8px 16px; color: #9a9a9a; text-decoration: none; letter-spacing: .12em; font-size: 13px;
+               border: 1px solid transparent; border-bottom: none; margin-bottom: -1px; }
+  nav.tabs a:hover, nav.tabs a:focus-visible { color: #ffb000; outline: none; }
+  nav.tabs a[aria-current="page"] { color: #e8e8e8; border-color: #333; background: #000; }
+</style>
+</head>
+<body>
+<main>
+<nav class="tabs" aria-label="Pages"><a href="./">NODE</a><a href="aquarium" aria-current="page">AQUARIUM</a></nav>
+<h1>NODE AQUARIUM</h1>
+<p>Your tank, as the phone's rear camera watches it: its care, its days, and what it collects for training.</p>
+
+<h2>CARE</h2>
+<p id="tank-state" class="said" role="status"></p>
+<img id="tank-photo" alt="The tank, as the rear camera last saw it" hidden>
+<p id="tank-described"></p>
+<div class="row">
+  <button type="button" id="tank-live-toggle" aria-controls="tank-live">Live view</button>
+  <button type="button" id="tank-describe">Capture and describe</button>
+  <span class="said" id="tank-live-said" role="status"></span>
+</div>
+<img id="tank-live" alt="The tank, live from the rear camera" hidden>
+<div id="tank-jobs"></div>
+<p>Day by day, as the rear camera measured it (moving at once is at most the fish seen together, not a count):</p>
+<ul id="tank-days" aria-label="The tank, day by day"></ul>
+<ul id="tank-log" aria-label="The aquarium's week"></ul>
+<form id="tank-form">
+  <input name="name" maxlength="140" autocomplete="off" placeholder="Name: desk tank" aria-label="Tank name">
+  <input name="litres" type="number" min="0" max="10000" placeholder="Litres" aria-label="Litres" style="flex: 0 1 120px">
+  <input name="kind" maxlength="140" autocomplete="off" placeholder="Kind: low-tech planted" aria-label="Kind of tank">
+  <input name="livestock" maxlength="140" autocomplete="off" placeholder="Fish: 6 neon tetras, 3 cherry shrimp"
+         aria-label="Fish and other livestock">
+  <input name="plants" maxlength="140" autocomplete="off" placeholder="Plants: hornwort, hairgrass, java fern"
+         aria-label="Plants">
+  <div class="row" id="tank-every"></div>
+  <button type="submit">Save</button>
+</form>
+<p class="said" id="tank-said" role="status"></p>
+<p>Say "I fed the fish", "water change done", "cleaned the filter", "trimmed the plants" or
+"added fertiliser", or press Done here. An overdue job shows in amber and is read out once a
+day while you are at the desk; "dismiss" puts it off until tomorrow. "How is the tank?" gets an
+answer from all of this. The water's state is a guess from your care habits: with no test kit,
+NODE never knows ammonia or nitrate. The log stays on the phone for a week.</p>
+<p>While the tank's light is on, the rear camera watches it the whole time, beside the face's camera:
+a picture and its numbers every minute, and video with no sound. <strong>Live view</strong>
+shows it here while this tab is in view. When the light has been off a few minutes the rear
+camera stops, and a quick look every 10 minutes notices it coming back on.</p>
+
+<h2>TRAINING</h2>
+<p>What NODE keeps for training a model of your own later: a picture a minute while the tank is
+lit (60 days), its numbers, the AI's descriptions, and what you write here about the newest
+picture, above. Say what is really there or what is wrong: "no yellow fish; a loach on the
+sand, two neon tetras; the water is clear". It is kept beside that picture, and the latest one
+is what "how is the tank?" believes over the AI.</p>
+<form id="label-form">
+  <textarea id="label-text" class="field" name="text" maxlength="500" required
+            placeholder="What is really in the newest picture, or what is wrong" aria-label="Your label"></textarea>
+  <button type="submit">Save</button>
+</form>
+<p class="said" id="label-said" role="status"></p>
+<ul id="labels" aria-label="Recent labels"></ul>
+<p>On the phone: <code>Android/data/dev.node01.companion/files/training/</code> (a folder a day,
+<code>minutes.csv</code>, <code>labels.jsonl</code>) and <code>files/tank-video/</code> (about the
+last three days). Copy them off with <code>adb pull</code>.</p>
+
+</main>
+
+<script>
+const logLine = (text) => Object.assign(document.createElement('li'), { textContent: text });
+
+// -- aquarium -------------------------------------------------------------
+const tankSaid = document.getElementById('tank-said');
+const tankForm = document.getElementById('tank-form');
+const DAY = 86400000;
+const ago = (ms) => {
+  const days = Math.floor((Date.now() - ms) / DAY);
+  if (days < 1) return 'today, ' + new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return days === 1 ? 'yesterday' : days + ' days ago';
+};
+const loadTank = async () => {
+  try {
+    const res = await fetch('tank');
+    if (!res.ok) throw new Error(res.status);
+    const { tank, log } = await res.json();
+    const state = document.getElementById('tank-state');
+    if (!tank) {
+      state.textContent = 'No tank yet: fill this in, or tell NODE when you feed the fish.';
+      return;
+    }
+    // The newest look, if there is one yet; a 404 before the first keeps it hidden.
+    const photo = document.getElementById('tank-photo');
+    photo.onload = () => { photo.hidden = false; };
+    photo.onerror = () => { photo.hidden = true; };
+    photo.src = 'tank/photo?' + Date.now();
+    const days = (tank.days || []).map((d) => logLine(d));
+    document.getElementById('tank-days').replaceChildren(...(days.length ? days : [logLine('No days yet: the first comes after ten minutes of watching.')]));
+    // Newest first: who said it, when, and what.
+    const labels = (tank.labels || []).slice().reverse().map((l) =>
+      logLine((l.from === 'you' ? 'You' : 'AI') + ', ' + l.at.slice(5) + ' (' + l.photo + '): ' + l.text));
+    document.getElementById('labels').replaceChildren(...(labels.length ? labels : [logLine('No labels yet.')]));
+    // "2026-11-26 12:10  A planted aquarium with...": when, then the words.
+    document.getElementById('tank-described').textContent = tank.described
+      ? 'The AI on your server, ' + tank.described.slice(5, 16) + ' (it can be wrong): ' + tank.described.slice(18) : '';
+    const light = tank.lightOn ? ' Light: usually on at ' + tank.lightOn
+      + (tank.lightHours ? ' for ' + Math.round(tank.lightHours * 10) / 10 + ' hours' : '') + '.' : '';
+    state.textContent = (tank.watching ? 'Watching. ' : 'Not watching: the light looks off. ') + 'Water, going by your care: ' + tank.risk
+      + (tank.why.length ? ' (' + tank.why.join('; ') + ')' : '') + '.' + light;
+    document.getElementById('tank-jobs').replaceChildren(...tank.jobs.map((j) => {
+      const row = Object.assign(document.createElement('div'), { className: 'row' });
+      const late = j.due <= Date.now();
+      const text = j.name + ': ' + (j.last ? ago(j.last) : 'no record') + ', every ' + j.every
+        + (j.every === 1 ? ' day' : ' days') + (late ? ' · due' : '');
+      const done = Object.assign(document.createElement('button'), { type: 'button', textContent: 'Done' });
+      done.onclick = async () => {
+        try {
+          const r = await fetch('tank/done', { method: 'POST', body: new URLSearchParams({ job: j.job }) });
+          if (!r.ok) throw new Error(r.status);
+          setTimeout(loadTank, 300);
+        } catch (err) {
+          tankSaid.textContent = 'Not sent: is NODE Companion open on the phone?';
+        }
+      };
+      row.append(Object.assign(document.createElement('span'), { className: 'job' + (late ? ' late' : ''), textContent: text }), done);
+      return row;
+    }));
+    // Leave the form alone while it is being typed in.
+    if (!tankForm.contains(document.activeElement)) {
+      for (const k of ['name', 'litres', 'kind', 'livestock', 'plants']) tankForm.elements[k].value = tank[k] || '';
+      document.getElementById('tank-every').replaceChildren(...tank.jobs.map((j) => {
+        const label = document.createElement('label');
+        label.append(j.name + ' every', Object.assign(document.createElement('input'), {
+          type: 'number', min: 1, max: 365, name: 'every.' + j.job, value: j.every, ariaLabel: j.name + ', days',
+        }), 'd');
+        return label;
+      }));
+    }
+    // "2026-11-22 10:42:05  feeding done": newest first, with the date.
+    const lines = log.slice().reverse().map((l) => logLine(l.slice(5, 16) + '  ' + l.slice(21)));
+    document.getElementById('tank-log').replaceChildren(...(lines.length ? lines : [logLine('Nothing logged yet.')]));
+  } catch (err) {
+    tankSaid.textContent = 'Not loaded: is NODE Companion open on the phone?';
+  }
+};
+// The tank, live: the rear camera's MJPEG while the light is on and this tab is in view; dropping src hangs up.
+const tankLive = document.getElementById('tank-live');
+const tankLiveToggle = document.getElementById('tank-live-toggle');
+const tankLiveSaid = document.getElementById('tank-live-said');
+let tankLiveOn = false;
+const showTankLive = (on) => {
+  tankLiveOn = on;
+  tankLiveToggle.textContent = on ? 'Hide live view' : 'Live view';
+  tankLiveToggle.setAttribute('aria-expanded', on);
+  tankLive.hidden = !on;
+  if (on) {
+    tankLiveSaid.textContent = 'Shows while the tank\'s light is on and the rear camera is watching.';
+    tankLive.src = 'video?' + Date.now();
+  } else {
+    tankLive.removeAttribute('src');
+  }
+};
+tankLiveToggle.onclick = () => showTankLive(!tankLiveOn);
+document.addEventListener('visibilitychange', () => { if (document.hidden && tankLiveOn) showTankLive(false); });
+tankLive.onerror = () => {
+  if (!tankLiveOn) return;
+  showTankLive(false);
+  tankLiveSaid.textContent = 'No picture: is NODE Companion open on the phone?';
+};
+
+document.getElementById('label-form').onsubmit = async (e) => {
+  e.preventDefault();
+  const text = document.getElementById('label-text').value.trim();
+  if (!text) return;
+  try {
+    const res = await fetch('tank/label', { method: 'POST', body: new URLSearchParams({ text }) });
+    if (!res.ok) throw new Error(res.status);
+    document.getElementById('label-said').textContent = 'Kept with the newest picture.';
+    document.getElementById('label-text').value = '';
+    setTimeout(loadTank, 500);
+  } catch (err) {
+    document.getElementById('label-said').textContent = 'Not sent: is NODE Companion open on the phone?';
+  }
+};
+
+document.getElementById('tank-describe').onclick = async () => {
+  try {
+    const res = await fetch('tank/describe', { method: 'POST' });
+    if (!res.ok) throw new Error(res.status);
+    tankSaid.textContent = 'Taking a picture now. The AI on your server describes it in about two minutes; '
+      + 'write your own label for it under TRAINING meanwhile.';
+    setTimeout(loadTank, 3000);
+  } catch (err) {
+    tankSaid.textContent = 'Not sent: is NODE Companion open on the phone?';
+  }
+};
+tankForm.onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    const res = await fetch('tank', { method: 'POST', body: new URLSearchParams(new FormData(tankForm)) });
+    if (!res.ok) throw new Error(res.status);
+    tankSaid.textContent = 'Saved.';
+    document.activeElement.blur();
+    setTimeout(loadTank, 300);
+  } catch (err) {
+    tankSaid.textContent = 'Not sent: is NODE Companion open on the phone?';
+  }
+};
+loadTank();
+setInterval(() => { if (!document.hidden) loadTank(); }, 30000);
+</script>
+</body>
+</html>
