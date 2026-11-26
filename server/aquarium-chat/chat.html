@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aquarium Chat</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { color-scheme: dark; --bg: #0b0d0e; --panel: #121517; --line: #23282b; --text: #d8dcdf; --dim: #8b9499;
+          --accent: #3fd5c9; --warn: #ffb000; --user: #1b2226; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+               font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  button, input, textarea { font: inherit; color: inherit; }
+  button { background: none; border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+  button:hover, button:focus-visible { border-color: var(--accent); color: var(--accent); outline: none; }
+  .app { display: flex; height: 100%; }
+  aside { width: 260px; flex: none; background: var(--panel); border-right: 1px solid var(--line); display: flex;
+          flex-direction: column; padding: 12px; gap: 8px; }
+  aside h1 { font-size: 15px; margin: 4px 4px 8px; letter-spacing: .04em; }
+  #chats { flex: 1; overflow-y: auto; list-style: none; margin: 0; padding: 0; }
+  #chats li { display: flex; align-items: center; border-radius: 8px; }
+  #chats li.current, #chats li:hover { background: #1a1f22; }
+  #chats a { flex: 1; padding: 8px; color: var(--text); text-decoration: none; overflow: hidden; white-space: nowrap;
+             text-overflow: ellipsis; font-size: 14px; }
+  #chats .del { border: none; color: var(--dim); padding: 4px 8px; visibility: hidden; }
+  #chats li:hover .del { visibility: visible; }
+  main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #log { flex: 1; overflow-y: auto; padding: 24px 16px; }
+  .msg { max-width: 760px; margin: 0 auto 20px; }
+  .msg.user .body { background: var(--user); border-radius: 12px; padding: 10px 14px; display: inline-block;
+                    white-space: pre-wrap; }
+  .msg.user { text-align: right; }
+  .msg.user .body { text-align: left; }
+  .meta { font-size: 12px; color: var(--dim); margin-bottom: 4px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .badge { border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; }
+  .badge.t0 { color: var(--accent); border-color: var(--accent); }
+  .badge.t3 { color: var(--warn); border-color: var(--warn); }
+  .body p { margin: 0 0 8px; }
+  .body ul, .body ol { margin: 0 0 8px; padding-left: 22px; }
+  .body code { background: #1a1f22; padding: 1px 4px; border-radius: 4px; }
+  .waiting { color: var(--dim); font-style: italic; }
+  .remembered { font-size: 13px; color: var(--dim); margin-top: 6px; }
+  .remembered button { border: none; color: var(--accent); padding: 0 4px; }
+  .actions { margin-top: 6px; }
+  .actions button { font-size: 13px; padding: 3px 10px; }
+  form#ask { border-top: 1px solid var(--line); padding: 12px 16px; }
+  form#ask .box { max-width: 760px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-end; }
+  form#ask textarea { flex: 1; resize: none; background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+                      padding: 10px 14px; max-height: 200px; }
+  form#ask textarea:focus { outline: none; border-color: var(--accent); }
+  .hint { max-width: 760px; margin: 6px auto 0; font-size: 12px; color: var(--dim); }
+  .empty { max-width: 640px; margin: 10vh auto 0; text-align: center; color: var(--dim); }
+  .empty h2 { color: var(--text); font-weight: 600; }
+  .empty button { margin: 4px; font-size: 14px; }
+  dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 12px;
+           width: min(680px, 92vw); padding: 16px; }
+  dialog::backdrop { background: rgba(0, 0, 0, .6); }
+  dialog h2 { margin: 0 0 8px; font-size: 16px; }
+  dialog p { color: var(--dim); font-size: 14px; margin: 0 0 12px; }
+  #facts { list-style: none; padding: 0; margin: 0 0 12px; max-height: 50vh; overflow-y: auto; }
+  #facts li { display: flex; gap: 6px; margin-bottom: 6px; }
+  #facts input, #new-fact { flex: 1; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+  #sheet { width: 100%; height: 50vh; background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+           padding: 10px; font: 13px/1.5 ui-monospace, Consolas, monospace; }
+  .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+  #menu { display: none; }
+  @media (max-width: 720px) {
+    aside { position: fixed; inset: 0 auto 0 0; z-index: 2; transform: translateX(-100%); transition: transform .2s; }
+    aside.open { transform: none; }
+    #menu { display: inline-block; margin: 8px; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside id="side">
+    <h1>🐟 Aquarium Chat</h1>
+    <button type="button" id="new">+ New chat</button>
+    <ul id="chats" aria-label="Your chats"></ul>
+    <button type="button" id="open-memory">Memory</button>
+    <button type="button" id="open-sheet">Care sheet</button>
+  </aside>
+  <main>
+    <div><button type="button" id="menu" aria-controls="side">☰ Chats</button></div>
+    <div id="log" aria-live="polite"></div>
+    <form id="ask">
+      <div class="box">
+        <textarea id="text" rows="1" maxlength="2000" placeholder="Ask about your tank…" aria-label="Your question"></textarea>
+        <button type="submit" id="send">Send</button>
+      </div>
+      <p class="hint">Answers come from your tank's data first; deep questions take the big model a minute or two.
+        Local only: nothing leaves your network.</p>
+    </form>
+  </main>
+</div>
+
+<dialog id="memory">
+  <h2>Memory</h2>
+  <p>Lasting facts about your tank, picked from what you said in chats or added here. Every answer uses them.
+    Edit or delete any that are wrong.</p>
+  <ul id="facts"></ul>
+  <div class="row"><input id="new-fact" maxlength="200" placeholder="Add a fact: The heater is set to 26 °C."><button type="button" id="add-fact">Add</button></div>
+  <div class="row"><button type="button" data-close>Close</button></div>
+</dialog>
+
+<dialog id="sheet-dialog">
+  <h2>Care sheet</h2>
+  <p>What you know about your tank, in your words: the fish and plants, their needs, your equipment and routine.
+    The chat believes this over its general knowledge.</p>
+  <textarea id="sheet" spellcheck="false"></textarea>
+  <div class="row"><span id="sheet-said" class="hint"></span><button type="button" id="save-sheet">Save</button><button type="button" data-close>Close</button></div>
+</dialog>
+
+<script>
+const log = document.getElementById('log');
+const text = document.getElementById('text');
+const TIER_UP = { 0: 1, 1: 2, 3: 2 };
+let chatId = new URLSearchParams(location.hash.slice(1)).get('c');
+let busy = false;
+
+const el = (tag, cls, txt) => Object.assign(document.createElement(tag), cls ? { className: cls } : {}, txt != null ? { textContent: txt } : {});
+const api = (path, body) => fetch(path, body === undefined ? {} : {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+}).then((r) => r.json());
+
+// A little Markdown, safely: everything is escaped first.
+const esc = (s) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const inline = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/`([^`]+)`/g, '<code>$1</code>');
+function render(md) {
+  const out = [];
+  let list = null;
+  for (const line of md.split('\n')) {
+    const item = line.match(/^\s*(?:[-*•]|\d+[.)])\s+(.*)/);
+    if (item) {
+      const kind = /^\s*\d/.test(line) ? 'ol' : 'ul';
+      if (!list || list.kind !== kind) { list = { kind, items: [] }; out.push(list); }
+      list.items.push(inline(item[1]));
+    } else {
+      list = null;
+      if (line.trim()) out.push('<p>' + inline(line) + '</p>');
+    }
+  }
+  return out.map((b) => typeof b === 'string' ? b : `<${b.kind}>${b.items.map((i) => '<li>' + i + '</li>').join('')}</${b.kind}>`).join('');
+}
+
+function userMsg(t) {
+  const m = el('div', 'msg user');
+  m.append(el('div', 'body', t));
+  log.append(m);
+  return m;
+}
+
+function botMsg() {
+  const m = el('div', 'msg bot');
+  const meta = el('div', 'meta');
+  const body = el('div', 'body');
+  m.append(meta, body);
+  log.append(m);
+  return { m, meta, body };
+}
+
+function badge(meta, tier, name, model) {
+  meta.replaceChildren(el('span', 'badge t' + tier, name + (model ? ' · ' + model : '')));
+}
+
+function empty() {
+  const e = el('div', 'empty');
+  e.append(el('h2', null, 'Ask about your tank'));
+  e.append(el('p', null, 'It knows what NODE knows: the care log, the light, the camera\'s days, your care sheet and what you tell it.'));
+  for (const q of ['When did I last change the water?', 'Is my tank healthy today?', 'Why are my plant leaves melting?', 'Look at the tank: is there algae?']) {
+    const b = el('button', null, q);
+    b.type = 'button';
+    b.onclick = () => ask(q);
+    e.append(b);
+  }
+  log.replaceChildren(e);
+}
+
+async function loadChats() {
+  const chats = await api('api/chats');
+  const ul = document.getElementById('chats');
+  ul.replaceChildren(...chats.map((c) => {
+    const li = el('li', c.id === chatId ? 'current' : '');
+    const a = el('a', null, c.title);
+    a.href = '#c=' + c.id;
+    a.title = c.at.replace('T', ' ');
+    const del = el('button', 'del', '✕');
+    del.type = 'button';
+    del.setAttribute('aria-label', 'Delete this chat');
+    del.onclick = async () => {
+      await api('api/chats/delete', { id: c.id });
+      if (c.id === chatId) { chatId = null; location.hash = ''; empty(); }
+      loadChats();
+    };
+    li.append(a, del);
+    return li;
+  }));
+}
+
+async function openChat(id) {
+  chatId = id;
+  if (!id) return empty();
+  const r = await fetch('api/chats/' + id);
+  if (!r.ok) { chatId = null; return empty(); }
+  const chat = await r.json();
+  log.replaceChildren();
+  const names = { 0: 'From your data', 1: 'Quick', 2: 'Deep', 3: 'Looked at the tank' };
+  for (const m of chat.messages) {
+    if (m.role === 'user') userMsg(m.content);
+    else {
+      const b = botMsg();
+      badge(b.meta, m.tier, names[m.tier] || '', '');
+      b.body.innerHTML = render(m.content);
+    }
+  }
+  log.scrollTop = log.scrollHeight;
+  loadChats();
+}
+
+async function ask(q, tier) {
+  if (busy || !q.trim()) return;
+  busy = true;
+  document.getElementById('send').disabled = true;
+  if (log.querySelector('.empty')) log.replaceChildren();
+  userMsg(q);
+  const b = botMsg();
+  const wait = el('div', 'waiting', 'Thinking…');
+  b.body.append(wait);
+  const started = Date.now();
+  const tick = setInterval(() => {
+    wait.textContent = 'Thinking… ' + Math.round((Date.now() - started) / 1000) + ' s' + (wait.dataset.note || '');
+  }, 1000);
+  let reply = '';
+  let answered = null;
+  try {
+    const res = await fetch('api/ask', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat: chatId, text: q, tier }),
+    });
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let cut;
+      while ((cut = buf.indexOf('\n\n')) >= 0) {
+        const block = buf.slice(0, cut);
+        buf = buf.slice(cut + 2);
+        const event = (block.match(/^event: (.*)$/m) || [])[1];
+        const data = JSON.parse((block.match(/^data: (.*)$/m) || [])[1] || 'null');
+        if (event === 'chat') {
+          if (chatId !== data.id) { chatId = data.id; history.replaceState(null, '', '#c=' + data.id); loadChats(); }
+        } else if (event === 'tier') {
+          answered = data.tier;
+          badge(b.meta, data.tier, data.name, data.model);
+          if (data.tier === 2) wait.dataset.note = ' (the big model reads first, then writes)';
+        } else if (event === 'token') {
+          if (wait.isConnected) { clearInterval(tick); wait.remove(); }
+          reply += data;
+          b.body.innerHTML = render(reply);
+          log.scrollTop = log.scrollHeight;
+        } else if (event === 'remembered') {
+          const r = el('div', 'remembered', 'Remembered: ' + data.text + ' ');
+          const undo = el('button', null, 'Undo');
+          undo.type = 'button';
+          undo.onclick = async () => { await api('api/memory/forget', { id: data.id }); r.textContent = 'Forgotten: ' + data.text; };
+          r.append(undo);
+          b.m.append(r);
+        }
+      }
+    }
+  } catch (err) {
+    b.body.textContent = 'No answer: is the chat server running?';
+  }
+  clearInterval(tick);
+  if (wait.isConnected) wait.remove();
+  if (answered != null && TIER_UP[answered] != null) {
+    const harder = el('button', null, 'Think harder');
+    harder.type = 'button';
+    harder.onclick = () => { harder.parentElement.remove(); ask(q, TIER_UP[answered]); };
+    const act = el('div', 'actions');
+    act.append(harder);
+    b.m.append(act);
+  }
+  busy = false;
+  document.getElementById('send').disabled = false;
+  text.focus();
+}
+
+document.getElementById('ask').onsubmit = (e) => {
+  e.preventDefault();
+  const q = text.value.trim();
+  text.value = '';
+  text.style.height = '';
+  ask(q);
+};
+text.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); document.getElementById('ask').requestSubmit(); }
+});
+text.addEventListener('input', () => { text.style.height = ''; text.style.height = text.scrollHeight + 'px'; });
+document.getElementById('new').onclick = () => { chatId = null; history.replaceState(null, '', location.pathname); empty(); loadChats(); text.focus(); };
+window.addEventListener('hashchange', () => openChat(new URLSearchParams(location.hash.slice(1)).get('c')));
+document.getElementById('menu').onclick = () => document.getElementById('side').classList.toggle('open');
+
+// -- memory and the care sheet --------------------------------------------------------------------------------------
+async function loadFacts() {
+  const facts = await api('api/memory');
+  document.getElementById('facts').replaceChildren(...(facts.length ? facts.map((f) => {
+    const li = el('li');
+    const input = el('input');
+    input.value = f.text;
+    input.maxLength = 200;
+    input.onchange = () => api('api/memory/edit', { id: f.id, text: input.value });
+    const del = el('button', null, 'Delete');
+    del.type = 'button';
+    del.onclick = async () => { await api('api/memory/forget', { id: f.id }); loadFacts(); };
+    li.append(input, del);
+    return li;
+  }) : [el('li', null, 'Nothing remembered yet.')]));
+}
+document.getElementById('open-memory').onclick = () => { loadFacts(); document.getElementById('memory').showModal(); };
+document.getElementById('add-fact').onclick = async () => {
+  const input = document.getElementById('new-fact');
+  if (!input.value.trim()) return;
+  await api('api/memory/add', { text: input.value });
+  input.value = '';
+  loadFacts();
+};
+document.getElementById('open-sheet').onclick = async () => {
+  document.getElementById('sheet').value = (await api('api/sheet')).text;
+  document.getElementById('sheet-said').textContent = '';
+  document.getElementById('sheet-dialog').showModal();
+};
+document.getElementById('save-sheet').onclick = async () => {
+  await api('api/sheet', { text: document.getElementById('sheet').value });
+  document.getElementById('sheet-said').textContent = 'Saved.';
+};
+for (const b of document.querySelectorAll('[data-close]')) b.onclick = () => b.closest('dialog').close();
+
+openChat(chatId);
+loadChats();
+</script>
+</body>
+</html>

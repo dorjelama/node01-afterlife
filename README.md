@@ -12,6 +12,10 @@ Tap it or wave at it and it listens: ask the time, set a timer, have it remind y
 English or Nepali, with no cloud AI. Run [a small AI model on your own server](#ai-on-your-own-server)
 and it understands loosely worded English too, without anything you say leaving your LAN.
 
+The whole project is about giving unused hardware a second life: an old phone becomes the face
+on your desk and the eye on your aquarium, and an old laptop becomes the AI server behind it,
+with an [aquarium chat](#aquarium-chat) of its own. No cloud, no subscription.
+
 <p align="left">
   <img alt="platform" src="https://img.shields.io/badge/platform-Android%2011%2B%20(API%2030)-000000">
   <img alt="language" src="https://img.shields.io/badge/Kotlin-2.4.0-000000">
@@ -48,7 +52,7 @@ the page's **WEBCAM** buttons turn the phone into one or the other (see
 | **Looks after your aquarium** | Tell it when you feed the fish or change the water and it keeps the schedule, reminds you of what is overdue, and warns about feeding twice. While the tank's light is on the rear camera watches it, beside the face's camera, and keeps pictures and video for training; once a day the AI on your server describes the picture. See [Aquarium](#aquarium) |
 | **Shows its view** | The page's **CAMERA** section shows what the front camera sees, small and live (320×240), only while you have it showing in a tab that is in view. Nothing is recorded. See [Privacy](#privacy) |
 | **Shows the PC's load** | Leave the page's PowerShell lines running and the PC's CPU, memory and disk activity sit small and dim in the bottom-left corner — a chip, a memory stick and a disk, each with its number. Stop the script and they are gone within 15 seconds |
-| **Shows its own state** | Small in the bottom-right corner, as bright as the time: a sparkle, whole while the AI server answers and broken up while it does not, and a speaker with an X beside it in quiet mode. A swipe hides them with the other corner readouts |
+| **Shows its own state** | Small in the bottom-right corner, as bright as the time: a sparkle, whole while the AI server answers and broken up while it does not, with the server's CPU temperature beside it while `server/node-temp.sh` sends it (a note at 85 °C; the script stops Ollama at 95 °C and starts it again under 70 °C), and a speaker with an X beside it in quiet mode. A swipe hides them with the other corner readouts |
 | **Tells the time** | The time, 12-hour (`12:48`), in small grey dots in the top-right corner. A running timer takes its place, and in the dark it steps aside for the large knock clock |
 | **Counts a timer down** | While a timer or focus session runs, the time left ticks in grey dot digits in the top-right corner — `24:59`, and whole minutes past an hour. Glance and see how long is left without asking |
 | **Tells the time in the dark** | Knock the desk in a dark room and the time appears in dots where the eyes are, for six seconds, with the backlight barely lifted and not a sound |
@@ -396,6 +400,48 @@ would read the water's temperature every minute and send it to NODE over Wi-Fi, 
 how much is dissolved in the water between changes, and a smart plug could switch the light.
 None of this is built yet.
 
+## Aquarium chat
+
+A chat page about your tank, like ChatGPT but on your own server and about nothing else, in
+`server/aquarium-chat/`. It is not part of the phone's app: one Python file (standard library
+only) and one HTML page, beside Ollama on the laptop.
+
+**What it knows.** What NODE knows, read fresh for every question: the phone's care log and live
+state (`GET tank`), the camera's days from the collector's `~/node-data/training/days.csv`, a
+**care sheet** you write on the page (your fish, plants, equipment, routine: it is believed over
+the model's general knowledge), the **lasting facts** remembered from your chats, and the titles of
+past chats. All of it goes to the model as a few hundred words of plain lines, so even the small
+model reads it quickly. It says when your data does not cover a question, and never invents a
+measurement: there is no test kit, so ammonia, nitrate, pH and temperature are unknown unless you
+say them.
+
+**Tiers, cheapest first**, chosen by simple rules, and shown on each answer:
+
+| Tier | For | Model | Time |
+|---|---|---|---|
+| From your data | "When did I last change the water?", "how long has the light been on?" | none: read straight from the data | instant |
+| Quick | everything else that is simple | `qwen2.5:3b`, NODE's own | seconds |
+| Deep | why, what should I do, explain, troubleshooting | the larger model (`CHAT_DEEP`) | a minute or two, streamed |
+| Looked at the tank | "look", "is there algae?" | `gemma3:4b` with the tank's newest picture | about two minutes; can be wrong |
+
+**Think harder** under an answer asks again one tier up.
+
+**Memory.** The conversation itself; lasting facts ("The owner has 6 neon tetras."), which the
+quick model picks out of what you say and saves at once, each shown as *Remembered: …* with an
+**Undo**, and all listed under **Memory** to edit or delete; and past chats, kept on the server.
+
+**Run it** on the server, where the collector already keeps the phone's address:
+
+```bash
+mkdir -p ~/aquarium-chat-app && cp server/aquarium-chat/chat.py server/aquarium-chat/chat.html ~/aquarium-chat-app/
+(crontab -l; echo "@reboot cd $HOME/aquarium-chat-app && /usr/bin/python3 chat.py >> $HOME/aquarium-chat/server.log 2>&1") | crontab -
+cd ~/aquarium-chat-app && python3 chat.py      # prints the address, with its key, once
+```
+
+It answers on port 8090, at an address with a random key in it, like the phone's page: plain
+HTTP, for your own network only. Chats, memory and the care sheet live in `~/aquarium-chat/`.
+`python3 -m unittest test_chat` tests the parts that decide things.
+
 ## Webcam mode
 
 The phone is the companion or a webcam, never both at once. On the page, **WEBCAM → Webcam**
@@ -601,6 +647,9 @@ Everything configurable is a constant — there is no settings screen, by design
   that must happen whether you are at the desk or not.
 
 ## Project structure
+
+Beside the app, `server/` holds what runs on the laptop: `node-collect.py`, the collector, and
+`aquarium-chat/` (`chat.py`, `chat.html`, `test_chat.py`).
 
 ```
 app/src/main/java/dev/node01/afterlife/
