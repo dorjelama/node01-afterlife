@@ -556,6 +556,35 @@ class NodeActivity : Activity() {
         ?.listFiles { f -> f.isDirectory && DAY_DIR.matches(f.name) }?.sortedByDescending { it.name }
         ?.firstNotNullOfOrNull { day -> day.listFiles { f -> f.name.endsWith(".jpg") }?.maxByOrNull { it.name } }
 
+    /**
+     * For DJSERVER's collector, on a server thread: the tank's finished clips, the labels, and the training files
+     * of today and yesterday -- older ones it has fetched already -- each with its size, so a file that grew is
+     * fetched again.
+     */
+    private fun dataList(): String {
+        val files = JSONArray()
+        fun add(path: String, f: File) {
+            files.put(JSONObject().put("path", path).put("size", f.length()))
+        }
+        getExternalFilesDir(TANK_VIDEO)?.listFiles { f -> LoopRecorder.CLIP_NAME.matches(f.name) }
+            ?.forEach { add("tank-video/${it.name}", it) }
+        getExternalFilesDir(TRAINING)?.let { root ->
+            File(root, LABELS).takeIf { it.isFile }?.let { add("training/$LABELS", it) }
+            val since = LocalDate.now().minusDays(1).format(DAY_NAME)
+            root.listFiles { f -> f.isDirectory && DAY_DIR.matches(f.name) && f.name >= since }?.forEach { day ->
+                day.listFiles { f -> f.isFile }?.forEach { add("training/${day.name}/${it.name}", it) }
+            }
+        }
+        return JSONObject().put("files", files).toString()
+    }
+
+    /** One of [dataList]'s files, by a path HttpServer.DATA_PATH has already checked; null if it is gone. */
+    private fun dataFile(path: String): File? {
+        val top = path.substringBefore('/')
+        val root = getExternalFilesDir(if (top == "training") TRAINING else TANK_VIDEO) ?: return null
+        return File(root, path.substringAfter('/')).takeIf { it.isFile }
+    }
+
     /** The newest picture's bytes, for the page; on a server thread. */
     private fun tankPhoto(): ByteArray? = newestPhoto()?.let { runCatching { it.readBytes() }.getOrNull() }
 
@@ -1921,6 +1950,8 @@ class NodeActivity : Activity() {
             tankPhoto = ::tankPhoto,
             onTankDescribe = { mainExecutor.execute { if (server === http) onTankCapture() } },
             onTankLabel = { text -> mainExecutor.execute { if (server === http) onTankLabel(text) } },
+            dataList = ::dataList,
+            dataFile = ::dataFile,
         )
         server = http
         try {

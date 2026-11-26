@@ -79,8 +79,9 @@ class TankWatch(
 
     private companion object {
         const val MINUTE_MS = 60_000L
-        // About 0.9 GB an hour; three days of a tank lit twelve hours a day.
-        const val VIDEO_BITRATE = 2_000_000
+        // About 0.55 GB an hour: plenty for a tank that mostly sits still, and a month of it fits on DJSERVER.
+        // The phone keeps about a week as a buffer, in case the server is away.
+        const val VIDEO_BITRATE = 1_200_000
         const val VIDEO_CAP_BYTES = 32_000_000_000L
     }
 }

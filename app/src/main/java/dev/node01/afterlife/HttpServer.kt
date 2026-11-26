@@ -37,6 +37,8 @@ import kotlin.concurrent.thread
  * - `POST /<key>/tank/describe` takes a fresh picture of the tank now and has the model on the server describe it
  *                         (a minute or two)
  * - `POST /<key>/tank/label` what is really in that picture, as a form: `text`; kept beside it for training
+ * - `GET  /<key>/data`     for DJSERVER's collector: the tank's finished clips and the last two days' training
+ *                         files, with sizes, as JSON; `GET data/<path>` fetches one
  *
  * Every path sits under a random key shown on the phone's screen; anything
  * else is a 404. It is plain HTTP, so anyone able to sniff the Wi-Fi can read
@@ -79,6 +81,10 @@ class HttpServer(
     private val tankPhoto: () -> ByteArray?,
     private val onTankDescribe: () -> Unit,
     private val onTankLabel: (text: String) -> Unit,
+    /** For DJSERVER's collector: the tank's files to fetch, with their sizes, as JSON; on the connection's thread. */
+    private val dataList: () -> String,
+    /** One of those files, by a path [DATA_PATH] has already checked, or null if it is gone. */
+    private val dataFile: (path: String) -> java.io.File?,
 ) {
     @Volatile
     private var socket: ServerSocket? = null
@@ -199,6 +205,8 @@ class HttpServer(
                         respond(out, 204)
                         onTankDone(form["job"].orEmpty())
                     }
+                    Route.DataList -> send(out, 200, "application/json", dataList().toByteArray())
+                    is Route.DataFile -> sendFile(out, dataFile(r.path))
                     Route.Clips -> send(out, 200, "text/html; charset=utf-8", clipList())
                     is Route.Clip -> sendClip(out, r.name)
                     Route.NotFound -> notFound(out)
@@ -297,6 +305,17 @@ class HttpServer(
         file.inputStream().use { it.copyTo(out, OUT_BUFFER_BYTES) }
     }
 
+    private fun sendFile(out: OutputStream, file: java.io.File?) {
+        if (file == null) return notFound(out)
+        val type = when (file.extension) {
+            "jpg" -> "image/jpeg"
+            "mp4" -> "video/mp4"
+            else -> "text/plain; charset=utf-8"
+        }
+        out.write(head(200, type, file.length()))
+        file.inputStream().use { it.copyTo(out, OUT_BUFFER_BYTES) }
+    }
+
     private fun notFound(out: OutputStream) = send(out, 404, "text/plain", "not found\n".toByteArray())
 
     private fun send(out: OutputStream, status: Int, type: String, body: ByteArray) {
@@ -339,6 +358,8 @@ class HttpServer(
         data object TankPhoto : Route
         data object TankDescribe : Route
         data object TankLabel : Route
+        data object DataList : Route
+        data class DataFile(val path: String) : Route
         data object Clips : Route
         data class Clip(val name: String) : Route
         data object NotFound : Route
@@ -378,6 +399,9 @@ class HttpServer(
             413 to "Content Too Large",
         )
 
+        /** The only files the collector may fetch: the tank's finished clips and its training data. */
+        val DATA_PATH = Regex("""tank-video/NODE_\d{8}_\d{6}\.mp4|training/(\d{8}/(\d{6}\.jpg|minutes\.csv)|labels\.jsonl)""")
+
         /** Pure, so the key check is unit-tested. Wrong method is a 404 too. */
         internal fun route(method: String, path: String, key: String): Route {
             val prefix = "/$key/".toByteArray()
@@ -408,6 +432,10 @@ class HttpServer(
                 method == "GET" && rest == "tank/photo" -> Route.TankPhoto
                 method == "POST" && rest == "tank/describe" -> Route.TankDescribe
                 method == "POST" && rest == "tank/label" -> Route.TankLabel
+                method == "GET" && rest == "data" -> Route.DataList
+                // The fixed pattern is the path-traversal guard, as for clips.
+                method == "GET" && rest.startsWith("data/") && DATA_PATH.matches(rest.removePrefix("data/")) ->
+                    Route.DataFile(rest.removePrefix("data/"))
                 method == "GET" && rest == "rec/" -> Route.Clips
                 // The fixed name pattern is the path-traversal guard.
                 method == "GET" && rest.startsWith("rec/") && LoopRecorder.CLIP_NAME.matches(clip) -> Route.Clip(clip)

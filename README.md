@@ -346,8 +346,23 @@ kept 60 days), a `minutes.csv` beside them with each picture's light, green and 
 (`"from":"you"`). Yours come from the page's **TRAINING** section: write what is really in the
 newest picture, or what is wrong with it — "no yellow fish; a loach on the sand" — and it is kept
 beside that picture. The latest is also handed to "how is the tank?", to be believed over the AI.
-With the video, that is roughly 10 GB a day of a tank lit twelve hours; the phone keeps at least
-2 GB free whatever happens. Copy it off with `adb pull`.
+The video, at 1.2 Mbps, is about 6.5 GB a day of a tank lit twelve hours; the phone keeps about a
+week of it as a buffer, and at least 2 GB free whatever happens.
+
+**Collected on your server.** `server/node-collect.py` runs on the server from cron every five
+minutes: it asks the phone what it has (`GET data`), fetches what is new or has grown into
+`~/node-data/` (`tank-video/`, `training/`), and keeps video 30 days, or less while the disk is
+short of 20 GB free. Pictures, numbers and labels are kept. It writes only the paths the phone may
+serve, whatever the phone answers. To set it up on the server:
+
+```bash
+scp server/node-collect.py <you>@<server>:
+echo 'http://<phone>:8081/<key>/' > ~/.config/node-collect && chmod 600 ~/.config/node-collect
+(crontab -l; echo "*/5 * * * * /usr/bin/python3 $HOME/node-collect.py") | crontab -
+```
+
+`~/node-data/collect.log` says what each run fetched. Give the phone a fixed address in your
+router, or update `~/.config/node-collect` when it changes.
 
 ### Later: real sensors
 
