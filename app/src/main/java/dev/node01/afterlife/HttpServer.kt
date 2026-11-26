@@ -34,6 +34,7 @@ import kotlin.concurrent.thread
  * - `POST /<key>/tank`     the aquarium's details, as a form: `name`, `litres`, `kind`, `livestock`, `every.<JOB>` (days)
  * - `POST /<key>/tank/done` an aquarium job done, as a form: `job` (`FEED`, `WATER_CHANGE`, ...)
  * - `GET  /<key>/tank/photo` the rear camera's newest picture of the tank, as a JPEG; 404 before the first
+ * - `POST /<key>/tank/describe` has the model on the server describe that picture now (a minute or two)
  *
  * Every path sits under a random key shown on the phone's screen; anything
  * else is a 404. It is plain HTTP, so anyone able to sniff the Wi-Fi can read
@@ -43,7 +44,7 @@ import kotlin.concurrent.thread
  * only in webcam mode; in face mode `video` and `audio` stay open but silent.
  *
  * [onClaude], [onNote], [onFace], [onSay], [onUsage], [onTask], [onPc], [onMode], [activity], [onWatch], [tank],
- * [onTank], [onTankDone] and [tankPhoto] are called on the connection's thread.
+ * [onTank], [onTankDone], [tankPhoto] and [onTankDescribe] are called on the connection's thread.
  *
  * One instance per session: [start], then [stop], then discard.
  */
@@ -73,6 +74,7 @@ class HttpServer(
     private val onTankDone: (job: String) -> Unit,
     /** The newest picture of the tank as a JPEG, or null if there is none yet; on the connection's thread. */
     private val tankPhoto: () -> ByteArray?,
+    private val onTankDescribe: () -> Unit,
 ) {
     @Volatile
     private var socket: ServerSocket? = null
@@ -174,6 +176,10 @@ class HttpServer(
                     }
                     Route.Tank -> send(out, 200, "application/json", tank().toByteArray())
                     Route.TankPhoto -> tankPhoto()?.let { send(out, 200, "image/jpeg", it) } ?: notFound(out)
+                    Route.TankDescribe -> readBody(head, input, out)?.let {
+                        respond(out, 204)
+                        onTankDescribe()
+                    }
                     Route.TankSetUp -> readBody(head, input, out)?.let { body ->
                         val form = parseForm(String(body, Charsets.UTF_8))
                         respond(out, 204)
@@ -322,6 +328,7 @@ class HttpServer(
         data object TankSetUp : Route
         data object TankDone : Route
         data object TankPhoto : Route
+        data object TankDescribe : Route
         data object Clips : Route
         data class Clip(val name: String) : Route
         data object NotFound : Route
@@ -389,6 +396,7 @@ class HttpServer(
                 method == "POST" && rest == "tank" -> Route.TankSetUp
                 method == "POST" && rest == "tank/done" -> Route.TankDone
                 method == "GET" && rest == "tank/photo" -> Route.TankPhoto
+                method == "POST" && rest == "tank/describe" -> Route.TankDescribe
                 method == "GET" && rest == "rec/" -> Route.Clips
                 // The fixed name pattern is the path-traversal guard.
                 method == "GET" && rest.startsWith("rec/") && LoopRecorder.CLIP_NAME.matches(clip) -> Route.Clip(clip)

@@ -110,6 +110,10 @@ reacts, chirps and adds a line here. The log stays on the phone for a week.</p>
 <h2>AQUARIUM</h2>
 <p id="tank-state" class="said" role="status"></p>
 <img id="tank-photo" alt="The tank, as the rear camera last saw it" hidden>
+<p id="tank-described"></p>
+<div class="row">
+  <button type="button" id="tank-describe">Describe it now</button>
+</div>
 <div id="tank-jobs"></div>
 <ul id="tank-log" aria-label="The aquarium's week"></ul>
 <form id="tank-form">
@@ -385,6 +389,9 @@ const loadTank = async () => {
     photo.onload = () => { photo.hidden = false; };
     photo.onerror = () => { photo.hidden = true; };
     photo.src = 'tank/photo?' + Date.now();
+    // "2026-11-26 12:10  A planted aquarium with...": when, then the words.
+    document.getElementById('tank-described').textContent = tank.described
+      ? 'The AI on your server, ' + tank.described.slice(5, 16) + ' (it can be wrong): ' + tank.described.slice(18) : '';
     state.textContent = 'Water, going by your care: ' + tank.risk
       + (tank.why.length ? ' (' + tank.why.join('; ') + ')' : '') + '.';
     document.getElementById('tank-jobs').replaceChildren(...tank.jobs.map((j) => {
@@ -421,6 +428,15 @@ const loadTank = async () => {
     document.getElementById('tank-log').replaceChildren(...(lines.length ? lines : [logLine('Nothing logged yet.')]));
   } catch (err) {
     tankSaid.textContent = 'Not loaded: is NODE Companion open on the phone?';
+  }
+};
+document.getElementById('tank-describe').onclick = async () => {
+  try {
+    const res = await fetch('tank/describe', { method: 'POST' });
+    if (!res.ok) throw new Error(res.status);
+    tankSaid.textContent = 'Asked. The server takes a minute or two; this page shows it when it is done.';
+  } catch (err) {
+    tankSaid.textContent = 'Not sent: is NODE Companion open on the phone?';
   }
 };
 tankForm.onsubmit = async (e) => {

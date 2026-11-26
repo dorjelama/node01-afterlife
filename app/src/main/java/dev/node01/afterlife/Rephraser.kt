@@ -91,6 +91,24 @@ class Rephraser(private val server: String = SERVER, private val model: String =
         return clean(raw)?.takeIf { !asks(it) }
     }
 
+    /**
+     * One or two plain sentences on what a photo of the tank shows, from [VISION_MODEL]; null if the server gave
+     * none. A minute or two on the server's CPU, and not one sentence at a time: call it off the main thread, and
+     * it does not hold up [rephrase] or [chat]. Only a description: asked whether anything was wrong, gemma3:4b
+     * found green water in a photo of a cardboard label.
+     */
+    fun describe(jpeg: ByteArray): String? = runCatching {
+        val image = android.util.Base64.encodeToString(jpeg, android.util.Base64.NO_WRAP)
+        val body = JSONObject()
+            .put("model", VISION_MODEL)
+            .put("stream", false)
+            // Not kept loaded: it would sit in the server's memory beside MODEL all day for one look.
+            .put("keep_alive", "5m")
+            .put("messages", JSONArray(listOf(JSONObject().put("role", "user").put("content", LOOK).put("images", JSONArray(listOf(image))))))
+            .put("options", JSONObject().put("temperature", 0).put("top_k", 1).put("seed", 0).put("num_predict", LOOK_TOKENS))
+        post(body, LOOK_READ_MS).lines().joinToString(" ") { it.trim() }.trim().take(MAX_LOOK_CHARS).ifBlank { null }
+    }.getOrNull()
+
     /** The model's reply to [messages], greedy so the same input always gets the same reply; null if the server gave none. */
     private fun send(messages: List<Pair<String, String>>, maxTokens: Int): String? = try {
         val body = JSONObject()
@@ -100,9 +118,17 @@ class Rephraser(private val server: String = SERVER, private val model: String =
             .put("keep_alive", -1)
             .put("messages", JSONArray(messages.map { (role, text) -> JSONObject().put("role", role).put("content", text) }))
             .put("options", JSONObject().put("temperature", 0).put("top_k", 1).put("seed", 0).put("num_predict", maxTokens))
+        post(body, READ_MS).also { reachable = true }
+    } catch (e: Exception) {
+        reachable = false
+        null
+    }
+
+    /** [body] to Ollama's chat, and the reply's text; throws if there is none. */
+    private fun post(body: JSONObject, readMs: Int): String {
         val connection = (URL("$server/api/chat").openConnection() as HttpURLConnection).apply {
             connectTimeout = CONNECT_MS
-            readTimeout = READ_MS
+            readTimeout = readMs
             doOutput = true
             setRequestProperty("Content-Type", "application/json")
         }
@@ -110,15 +136,11 @@ class Rephraser(private val server: String = SERVER, private val model: String =
             connection.outputStream.use { it.write(body.toString().toByteArray()) }
             // Not 200: most likely the model is not pulled on the server.
             if (connection.responseCode != 200) throw IOException("HTTP ${connection.responseCode}")
-            JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
+            return JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
                 .getJSONObject("message").getString("content")
-                .also { reachable = true }
         } finally {
             connection.disconnect()
         }
-    } catch (e: Exception) {
-        reachable = false
-        null
     }
 
     companion object {
@@ -128,9 +150,23 @@ class Rephraser(private val server: String = SERVER, private val model: String =
         /** qwen2.5:3b beat gemma3:4b there: as many right, 1.6 s a sentence against 31 (README). */
         const val MODEL = "qwen2.5:3b"
 
+        /** The model that can see: what [describe] asks, once a day, about the tank's photo. */
+        const val VISION_MODEL = "gemma3:4b"
+
         // A few seconds is enough to find a server on the LAN; an answer can take most of a minute if it had to load.
         private const val CONNECT_MS = 3_000
         private const val READ_MS = 90_000
+
+        // About 100 s for one 1280x720 photo on the server's CPU, measured; room for loading the model too.
+        private const val LOOK_READ_MS = 300_000
+        private const val LOOK_TOKENS = 80
+        private const val MAX_LOOK_CHARS = 300
+
+        // Told it "may not" be an aquarium: told it was, gemma described algae on a photo of a box.
+        private const val LOOK =
+            "This photo comes from a camera that is meant to point at a home aquarium, but it may not. In one or two " +
+                "plain sentences, say what the photo actually shows. If it is an aquarium: how clear the water is, " +
+                "the plants, and any fish you can see. Do not guess. Reply with those sentences only."
 
         /** Rewritten at start, and while the server is away, to see that it answers; it also loads the model there. */
         const val WARM_UP = "is it getting late"

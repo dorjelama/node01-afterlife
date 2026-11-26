@@ -36,6 +36,7 @@ import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
@@ -96,6 +97,9 @@ class NodeActivity : Activity() {
 
     /** Looks in a row with the fish unusually still: one alone could be a fish hiding behind a plant. */
     private var stillLooks = 0
+
+    /** The model that can see is describing a picture of the tank: one at a time. */
+    private var describing = false
 
     /** The face is up (not the webcam, not stopped): what a tank look hands the front camera back to. */
     private var faceOn = false
@@ -374,6 +378,12 @@ class NodeActivity : Activity() {
             mainExecutor.execute {
                 tankSeen = TankLook.describe(stats, greener, still)
                 tankGreener = greener
+                // Once a day, after noon with the light on: the picture to the model that can see.
+                val today = LocalDate.now().toString()
+                if (stats.lightsOn && LocalTime.now().hour >= TANK_AI_HOUR && prefs.getString(KEY_TANK_AI_DAY, null) != today) {
+                    prefs.edit().putString(KEY_TANK_AI_DAY, today).apply()
+                    describeTank(look.jpeg)
+                }
                 stillLooks = if (still) stillLooks + 1 else 0
                 if (stillLooks == STILL_LOOKS) {
                     inbox.add(TANK_STILL_NOTE, 0L, System.currentTimeMillis(), Inbox.Kind.NOTE)
@@ -382,6 +392,38 @@ class NodeActivity : Activity() {
                     reevaluate()
                 }
             }
+        }
+    }
+
+    /**
+     * [jpeg] described by the model that can see, on the server: a minute or two, on a thread of its own. Kept
+     * as the tank's description, logged, and read by the model's notes and the page. Never an alert by itself.
+     */
+    private fun describeTank(jpeg: ByteArray) {
+        val model = rephraser?.takeIf { it.reachable }
+        if (model == null || describing) {
+            Log.d(TAG, "tank: not described: " + if (describing) "already describing" else "the server is away")
+            return
+        }
+        describing = true
+        thread(name = "node-tank-describe", isDaemon = true) {
+            val started = SystemClock.elapsedRealtime()
+            val words = model.describe(jpeg)
+            Log.d(TAG, "tank: described in ${SystemClock.elapsedRealtime() - started} ms: ${words != null}")
+            mainExecutor.execute {
+                describing = false
+                if (words == null) return@execute
+                prefs.edit().putString(KEY_TANK_AI, LocalDateTime.now().format(AI_STAMP) + "  " + words).apply()
+                tankLog("described: $words")
+            }
+        }
+    }
+
+    /** From the page: describe the newest picture now, rather than wait for tomorrow's. */
+    private fun onTankDescribe() {
+        thread(name = "node-tank-photo", isDaemon = true) {
+            val jpeg = tankPhoto() ?: return@thread
+            mainExecutor.execute { describeTank(jpeg) }
         }
     }
 
@@ -1228,7 +1270,11 @@ class NodeActivity : Activity() {
      * up. Without an answer, the fixed one.
      */
     private fun tankStatus(question: String, model: Rephraser, facts: Assistant.Facts) {
-        val notes = facts.tank?.notes(facts.nowMs, camera = tankSeen, greener = tankGreener) ?: return say(Assistant.reply(Command.TankStatus, Lang.EN, facts), Lang.EN, speak = true)
+        val seen = listOfNotNull(
+            tankSeen,
+            prefs.getString(KEY_TANK_AI, null)?.let { "A small AI's description of a photo of the tank, which can be wrong, from ${it.take(16)}: ${it.drop(18)}" },
+        ).joinToString(" ").ifBlank { null }
+        val notes = facts.tank?.notes(facts.nowMs, camera = seen, greener = tankGreener) ?: return say(Assistant.reply(Command.TankStatus, Lang.EN, facts), Lang.EN, speak = true)
         thinking = true
         reevaluate()
         thread(name = "node-tank", isDaemon = true) {
@@ -1287,7 +1333,8 @@ class NodeActivity : Activity() {
         return JSONObject().put(
             "tank",
             JSONObject().put("name", t.name).put("litres", t.litres).put("kind", t.kind).put("livestock", t.livestock)
-                .put("jobs", jobs).put("risk", risk.name.lowercase()).put("why", JSONArray(why)),
+                .put("jobs", jobs).put("risk", risk.name.lowercase()).put("why", JSONArray(why))
+                .put("described", prefs.getString(KEY_TANK_AI, null) ?: JSONObject.NULL),
         ).put("log", JSONArray(log)).toString()
     }
 
@@ -1737,6 +1784,7 @@ class NodeActivity : Activity() {
                 }
             },
             tankPhoto = ::tankPhoto,
+            onTankDescribe = { mainExecutor.execute { if (server === http) onTankDescribe() } },
         )
         server = http
         try {
@@ -1964,6 +2012,12 @@ class NodeActivity : Activity() {
         const val TANK_STILL_NOTE = "The fish look unusually still. Check on them?"
         /** `2026-11-26 10:42:05  ` before each log line's own words. */
         const val STAMP_CHARS = 21
+        /** The model's latest description of the tank, `2026-11-26 12:10  words`, and the day it was last asked. */
+        const val KEY_TANK_AI = "tank_ai"
+        const val KEY_TANK_AI_DAY = "tank_ai_day"
+        val AI_STAMP: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+        /** The day's description waits for the first lit look from this hour, when the tank has been lit a while. */
+        const val TANK_AI_HOUR = 12
 
         /** An activity counts while your face was seen this recently: a cup at your mouth can hide it. */
         const val ACTIVITY_PRESENT_MS = 10_000L
