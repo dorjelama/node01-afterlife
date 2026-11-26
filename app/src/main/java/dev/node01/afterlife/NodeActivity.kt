@@ -93,6 +93,9 @@ class NodeActivity : Activity() {
 
     /** When the tank's light usually comes on and for how long; see [noteLight]. */
     private var light = LightSchedule()
+
+    /** The water since the last water change, as the camera sees it; see [WaterWatch]. */
+    private var water = WaterWatch()
     private var watchedMinutes = 0
     private var darkMinutes = 0
 
@@ -268,6 +271,7 @@ class NodeActivity : Activity() {
         loadRephraser()
         tank = Tank.decode(prefs.getString(KEY_TANK, null))
         light = LightSchedule.decode(prefs.getString(KEY_LIGHT, null))
+        water = WaterWatch.decode(prefs.getString(KEY_WATER, null))
     }
 
     /**
@@ -363,6 +367,11 @@ class NodeActivity : Activity() {
             cam.start()
         }
     }
+
+    private fun statsOf(look: TankCam.Look) = TankLook.Stats(
+        TankLook.brightness(look.frames.first()), TankLook.green(look.argb), TankLook.motion(look.frames),
+        TankLook.clarity(look.frames.first()),
+    )
 
     /** A quick look is over: measured and kept like a minute's watching, and the watch started if the light is on. */
     private fun onTankLook(look: TankCam.Look?) {
@@ -467,7 +476,7 @@ class NodeActivity : Activity() {
         val dir = getExternalFilesDir(null) ?: return
         thread(name = "node-tank-look", isDaemon = true) {
             val now = LocalDateTime.now()
-            val stats = TankLook.Stats(TankLook.brightness(look.frames.first()), TankLook.green(look.argb), TankLook.motion(look.frames))
+            val stats = statsOf(look)
             keepTraining(now, look.jpeg, stats)
             if (!compare) return@thread
             val past = File(dir, TANK_STATS).takeIf { it.isFile }?.let { runCatching { it.readLines() }.getOrNull() }.orEmpty()
@@ -477,8 +486,24 @@ class NodeActivity : Activity() {
             AskedLog.add(dir, now, stats.encode(), TANK_STATS)
             Log.d(TAG, "tank: look ${stats.encode()} greener=$greener still=$still")
             mainExecutor.execute {
-                tankSeen = TankLook.describe(stats, greener, still)
-                tankGreener = greener
+                // The water against itself just after the last change: turning faster than usual wants a change sooner.
+                val wall = System.currentTimeMillis()
+                var turning = false
+                if (stats.lightsOn) {
+                    water = water.look(stats.green, stats.clarity, wall)
+                    prefs.edit().putString(KEY_WATER, water.encode()).apply()
+                    turning = water.faster(stats.green, stats.clarity, wall)
+                    if (turning && prefs.getString(KEY_WATER_RAISED, null) != LocalDate.now().toString()) {
+                        prefs.edit().putString(KEY_WATER_RAISED, LocalDate.now().toString()).apply()
+                        inbox.add(TANK_WATER_FASTER, 0L, wall, Inbox.Kind.NOTE)
+                        saveInbox()
+                        tankLog("the water is turning faster than usual since the last change")
+                        reevaluate()
+                    }
+                }
+                tankSeen = TankLook.describe(stats, greener || turning, still) +
+                    if (turning) " Since the last water change it is greening or clouding faster than usual." else ""
+                tankGreener = greener || turning
                 // Once a day, at the first lit look: the picture to the model that can see.
                 val today = LocalDate.now().toString()
                 if (stats.lightsOn && prefs.getString(KEY_TANK_AI_DAY, null) != today) {
@@ -541,7 +566,7 @@ class NodeActivity : Activity() {
     /** A picture taken on request: measured, kept, and then described. */
     private fun captured(look: TankCam.Look) {
         thread(name = "node-tank-capture", isDaemon = true) {
-            val stats = TankLook.Stats(TankLook.brightness(look.frames.first()), TankLook.green(look.argb), TankLook.motion(look.frames))
+            val stats = statsOf(look)
             val photo = keepTraining(LocalDateTime.now(), look.jpeg, stats) ?: return@thread
             Log.d(TAG, "tank: captured ${photo.name}")
             mainExecutor.execute { describeTank(photo) }
@@ -581,7 +606,12 @@ class NodeActivity : Activity() {
             val name = now.format(PHOTO_NAME) + ".jpg"
             val photo = File(day, name).apply { writeBytes(jpeg) }
             val csv = File(day, "minutes.csv")
-            if (!csv.exists()) csv.writeText("photo,brightness,green,motion\n")
+            if (!csv.exists()) {
+                csv.writeText(CSV_HEADER + "\n")
+            } else if (!csv.useLines { it.first() }.endsWith("clarity")) {
+                // A day begun before clarity was kept gets the new header, once.
+                csv.writeText(CSV_HEADER + "\n" + csv.readText().substringAfter('\n'))
+            }
             csv.appendText("$name,${stats.encode().replace(' ', ',')}\n")
             val oldest = now.toLocalDate().minusDays(TRAINING_DAYS).format(DAY_NAME)
             root.listFiles { f -> f.isDirectory && DAY_DIR.matches(f.name) && f.name < oldest }?.forEach { it.deleteRecursively() }
@@ -1507,6 +1537,10 @@ class NodeActivity : Activity() {
     private fun tankDone(job: Tank.Job, wall: Long, how: String = "done") {
         tank = (tank ?: Tank.start(wall)).done(job, wall)
         saveTank()
+        if (job == Tank.Job.WATER_CHANGE) {
+            water = water.changed(wall)
+            prefs.edit().putString(KEY_WATER, water.encode()).apply()
+        }
         val showing = inbox.due(wall)?.text
         if (showing == Assistant.tankDue(job, Lang.EN) || showing == Assistant.tankDue(job, Lang.NE)) {
             inbox.dismiss(wall)
@@ -2265,6 +2299,10 @@ class NodeActivity : Activity() {
         const val KEY_LIGHT_STATE = "tank_light_state"
         const val KEY_LIGHT_LATE = "tank_light_late"
         const val KEY_LIGHT_LONG = "tank_light_long"
+        const val KEY_WATER = "tank_water"
+        const val KEY_WATER_RAISED = "tank_water_raised"
+        const val TANK_WATER_FASTER = "The water is greening or clouding faster than usual. A water change soon?"
+        const val CSV_HEADER = "photo,brightness,green,motion,clarity"
         const val TANK_FED_AGAIN = "The fish look fed again: they were fed at %s. Go easy, leftover food fouls the water."
         const val TANK_LIGHT_LATE = "The tank light hasn't come on today. Timer or bulb?"
         const val TANK_LIGHT_LONG = "The tank light has been on much longer than usual. Is its timer stuck?"

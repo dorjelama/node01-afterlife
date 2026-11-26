@@ -28,6 +28,12 @@ class TankLookTest {
     }
 
     @Test
+    fun clarityIsTheSpread() {
+        assertEquals(0.0, TankLook.clarity(grey(100)), 1e-9)
+        assertEquals(50.0, TankLook.clarity(ByteArray(100) { (if (it % 2 == 0) 50 else 150).toByte() }), 1e-9)
+    }
+
+    @Test
     fun motionIsTheChangeBetweenFrames() {
         assertEquals(0.0, TankLook.motion(listOf(grey(100), grey(100), grey(100))), 1e-9)
         assertEquals(10.0, TankLook.motion(listOf(grey(100), grey(110), grey(100))), 1e-9)
@@ -70,9 +76,10 @@ class TankLookTest {
 
     @Test
     fun keptAsALogLine() {
-        val s = Stats(118, 0.412, 3.07)
-        assertEquals("118 0.412 3.07", s.encode())
+        val s = Stats(118, 0.412, 3.07, 41.2)
+        assertEquals("118 0.412 3.07 41.2", s.encode())
         assertEquals(s, TankLook.decode(s.encode()))
+        assertEquals("an older line, without clarity", Stats(118, 0.412, 3.07), TankLook.decode("118 0.412 3.07"))
         assertNull(TankLook.decode("feeding done"))
     }
 

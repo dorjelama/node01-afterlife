@@ -13,12 +13,23 @@ import kotlin.math.abs
  */
 object TankLook {
 
-    /** One look: mean luma 0..255, the green share of the colour 0..1, and the mean change between frames. */
-    data class Stats(val brightness: Int, val green: Double, val motion: Double) {
+    /**
+     * One look: mean luma 0..255, the green share of the colour 0..1, the mean change between frames, and the
+     * spread of luma -- the picture's contrast, which cloudy water flattens.
+     */
+    data class Stats(val brightness: Int, val green: Double, val motion: Double, val clarity: Double = 0.0) {
         val lightsOn: Boolean get() = brightness >= LIGHTS_ON
 
-        /** For the week-long stats log: `118 0.412 3.07`. */
-        fun encode() = "$brightness ${"%.3f".format(java.util.Locale.ROOT, green)} ${"%.2f".format(java.util.Locale.ROOT, motion)}"
+        /** For the week-long stats log: `118 0.412 3.07 41.2`. */
+        fun encode() = "$brightness ${"%.3f".format(java.util.Locale.ROOT, green)} ${"%.2f".format(java.util.Locale.ROOT, motion)} " +
+            "%.1f".format(java.util.Locale.ROOT, clarity)
+    }
+
+    /** The spread of a grey frame's luma, its standard deviation: higher for a crisp picture, lower through haze. */
+    fun clarity(luma: ByteArray): Double {
+        if (luma.isEmpty()) return 0.0
+        val mean = luma.sumOf { it.toInt() and 0xff }.toDouble() / luma.size
+        return kotlin.math.sqrt(luma.sumOf { ((it.toInt() and 0xff) - mean).let { d -> d * d } } / luma.size)
     }
 
     /** Mean luma of a grey frame, 0..255. */
@@ -69,11 +80,16 @@ object TankLook {
             (if (greener) "and the water greener than last week." else "and the water no greener than last week.")
     }
 
-    /** A stats log line back, after its date: null if it is not one. */
+    /** A stats log line back, after its date, with or without its clarity: null if it is not one. */
     fun decode(line: String): Stats? {
         val parts = line.trim().split(' ')
-        if (parts.size != 3) return null
-        return Stats(parts[0].toIntOrNull() ?: return null, parts[1].toDoubleOrNull() ?: return null, parts[2].toDoubleOrNull() ?: return null)
+        if (parts.size !in 3..4) return null
+        return Stats(
+            parts[0].toIntOrNull() ?: return null,
+            parts[1].toDoubleOrNull() ?: return null,
+            parts[2].toDoubleOrNull() ?: return null,
+            parts.getOrNull(3)?.let { it.toDoubleOrNull() ?: return null } ?: 0.0,
+        )
     }
 
     private fun median(values: List<Double>): Double = values.sorted().let { s ->
