@@ -49,14 +49,18 @@ object TankLook {
     }
 
     /**
-     * The most separate moving things between any two frames of a burst ([w] wide): the pixels that changed by
-     * [MOVED], joined where they touch, counting blobs of [MIN_BLOB] or more. Two fish side by side are one;
-     * a fish behind a plant, none. So: at most the fish seen moving together.
+     * Separate moving things between two frames ([w] wide): the pixels that changed by [MOVED], joined where they
+     * touch, counting blobs of [MIN_BLOB] or more. Two fish side by side are one; a fish behind a plant, none. So:
+     * at most the fish seen moving together. Over a burst, the 75th percentile of its frame pairs, not the most:
+     * a minute's 300 pairs always hold a flicker or an exposure step that lights up blobs everywhere.
      */
-    fun movers(frames: List<ByteArray>, w: Int): Int = frames.zipWithNext { a, b ->
-        val moved = BooleanArray(a.size) { abs((a[it].toInt() and 0xff) - (b[it].toInt() and 0xff)) >= MOVED }
-        blobs(moved, w)
-    }.maxOrNull() ?: 0
+    fun movers(frames: List<ByteArray>, w: Int): Int {
+        val counts = frames.zipWithNext { a, b ->
+            val moved = BooleanArray(a.size) { abs((a[it].toInt() and 0xff) - (b[it].toInt() and 0xff)) >= MOVED }
+            blobs(moved, w)
+        }.sorted()
+        return if (counts.isEmpty()) 0 else counts[(counts.size - 1) * 3 / 4]
+    }
 
     /** Blobs of [MIN_BLOB] or more set cells, joined across their four sides. */
     private fun blobs(set: BooleanArray, w: Int): Int {

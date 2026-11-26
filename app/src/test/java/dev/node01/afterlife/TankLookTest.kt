@@ -50,6 +50,11 @@ class TankLookTest {
         val edge = still.copyOf().apply { this[9] = 200.toByte(); this[10] = 200.toByte() }
         assertEquals("a row's end does not join the next row's start", 0, TankLook.movers(listOf(still, edge), w))
         assertEquals(0, TankLook.movers(listOf(still), w))
+        // A flicker: pairs of pixels lit across every other row, 15 blobs at once.
+        val flicker = ByteArray(100) { i -> (if ((i / w) % 2 == 0 && (i % w) % 4 < 2) 200 else 50).toByte() }
+        assertEquals(15, TankLook.movers(listOf(still, flicker), w))
+        // Four pairs with two fish, and one flicker: the typical moment, not the wild one.
+        assertEquals(2, TankLook.movers(listOf(still, two, still, two, still, flicker), w))
     }
 
     @Test
