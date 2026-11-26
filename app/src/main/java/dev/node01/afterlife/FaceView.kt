@@ -108,6 +108,9 @@ class FaceView @JvmOverloads constructor(
     private var handPoints: FloatArray? = null
     private var handAspect = 4f / 3f
     private var pcStats: PcStats? = null
+
+    /** Bottom-right icons: quiet mode, then the AI server's sparkle, whole when up, broken when down. */
+    private var statusText: String? = null
     private val glyphDots = FloatArray(2 * ICON_W * GLYPH_H * MAX_GLYPHS)
 
     /** Starts asleep, so the first look shown is a waking up. */
@@ -262,6 +265,14 @@ class FaceView @JvmOverloads constructor(
     fun showPc(stats: PcStats?) {
         if (stats == pcStats) return
         pcStats = stats
+        kick()
+    }
+
+    /** Small icons in the bottom-right: a muted speaker while [quiet], and the AI server, up or down. Nothing unless [shown]. */
+    fun showStatus(shown: Boolean, quiet: Boolean, aiUp: Boolean) {
+        val text = if (!shown) null else (if (quiet) "Q " else "") + if (aiUp) "A" else "O"
+        if (text == statusText) return
+        statusText = text
         kick()
     }
 
@@ -668,6 +679,13 @@ class FaceView @JvmOverloads constructor(
         pcStats?.let {
             val row = rows - 1 - USAGE_ROW - ((GLYPH_H - 1) * SMALL).roundToInt()
             drawSmall(canvas, "c${it.cpu} r${it.ram} d${it.disk}", USAGE_COL, row, pcPaint)
+        }
+        // Opposite the PC's load: the same row, right-aligned like the time.
+        statusText?.let {
+            val row = rows - 1 - USAGE_ROW - ((GLYPH_H - 1) * SMALL).roundToInt()
+            val col = cols - 1 - USAGE_COL - ceil((glyphsWidth(it) - 1) * SMALL).toInt()
+            // As bright as the time, not the PC's dim grey: easy to miss down at the bottom edge.
+            drawSmall(canvas, it, col, row, smallPaint)
         }
         // Opposite the usage, out of the eyes' way: a countdown while one runs, the time otherwise,
         // its last dot level with the usage's first from the other edge.
@@ -1265,8 +1283,8 @@ class FaceView @JvmOverloads constructor(
         /** The longest readout: the PC's "c100 r100 d100". */
         const val MAX_GLYPHS = 14
 
-        /** What each of [GLYPHS] draws, in order: the PC's icons are c, r and d. */
-        const val GLYPH_CHARS = "0123456789%crd"
+        /** What each of [GLYPHS] draws, in order: the PC's icons are c, r and d; quiet Q; the AI server A up, O down. */
+        const val GLYPH_CHARS = "0123456789%crdQAO"
 
         /**
          * 0-9 and "%", each a row of five, top to bottom; then the PC icons,
@@ -1290,6 +1308,12 @@ class FaceView @JvmOverloads constructor(
             "..#.#.." + ".#####." + "#######" + ".#####." + "#######" + ".#####." + "..#.#..",
             "........." + "#########" + "#########" + "#########" + "#.#.#.#.#" + "#.#.#.#.#" + ".........",
             "..#####.." + ".#######." + "#########" + "####.####" + "#########" + ".#######." + "..#####..",
+            // Quiet: a speaker with an X beside it.
+            "...#....." + "..##....." + "####..#.#" + "####...#." + "####..#.#" + "..##....." + "...#.....",
+            // The AI server: a sparkle, whole while it answers...
+            "...#..." + "...#..." + "..###.." + "#######" + "..###.." + "...#..." + "...#...",
+            // ...and broken up while it does not.
+            "...#..." + "......." + "..#.#.." + "#.....#" + "..#.#.." + "......." + "...#...",
         ).map { s -> BooleanArray(s.length) { s[it] == '#' } }.toTypedArray()
 
         // Motion.

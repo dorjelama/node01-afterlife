@@ -282,7 +282,10 @@ class NodeActivity : Activity() {
                             "${SystemClock.elapsedRealtime() - warm} ms" else "server not answering")
                     }
                     up = now
-                    mainExecutor.execute { rephraser = model.takeIf { now } }
+                    mainExecutor.execute {
+                        rephraser = model.takeIf { now }
+                        reevaluate()
+                    }
                 }
                 Thread.sleep(MODEL_RETRY_MS)
             }
@@ -813,6 +816,7 @@ class NodeActivity : Activity() {
         face.showTime(if (nightClock || !detailsShown) null else time)
         // A script that has stopped sending leaves nothing behind on the face.
         face.showPc(pc?.takeIf { detailsShown && now - pcAtMs <= PC_FRESH_MS })
+        face.showStatus(detailsShown, quiet, rephraser != null)
         // Nobody's hand for a while: back to the face, and the model unloaded, so the phone stays cool.
         if (hands != null && now - handSeenMs > HANDS_IDLE_MS) stopHands()
         if (taskList.visibility == View.VISIBLE && now >= tasksUntilMs) closeTasks()

@@ -331,7 +331,9 @@ object Assistant {
             // After the volume: "quieter" and "quiet down" are a step down, not silence. "unmute" before "mute".
             has("unmute", "you can talk", "you can speak", "talk again", "speak again", "sound on") ->
                 Command.Quiet(on = false)
-            word("quiet", "silent", "mute", "shh", "chup") || has("चुप") -> Command.Quiet(on = true)
+            word("quiet", "silent", "mute", "shh", "chup") || has("चुप") ||
+                // Online recognition hears "quiet" as "quite"; only alone, so "quite late" stays itself.
+                Regex("""^(be |go |keep )?quite( mode| please| now)?$""").matches(t) -> Command.Quiet(on = true)
             has("sing", "a song", "गीत", "गाउ") -> Command.Sing
 
             has("coin", "heads or tails", "सिक्का") -> Command.Coin

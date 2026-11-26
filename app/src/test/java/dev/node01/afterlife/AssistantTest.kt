@@ -5,6 +5,7 @@ import dev.node01.afterlife.ClaudeSessions.State
 import dev.node01.afterlife.ClaudeSessions.Summary
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -313,6 +314,9 @@ class AssistantTest {
         assertEquals(Command.Quiet(true), parse("be quiet"))
         assertEquals(Command.Quiet(true), parse("silent mode"))
         assertEquals(Command.Quiet(true), parse("mute"))
+        assertEquals(Command.Quiet(true), parse("quite"))
+        assertEquals(Command.Quiet(true), parse("be quite"))
+        assertNotEquals(Command.Quiet(true), parse("it's quite late"))
         assertEquals(Command.Quiet(false), parse("unmute"))
         assertEquals(Command.Quiet(false), parse("you can talk now"))
         assertEquals(Command.Sing, parse("sing me a song"))
